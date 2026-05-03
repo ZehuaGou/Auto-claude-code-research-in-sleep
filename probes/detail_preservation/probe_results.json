@@ -1,0 +1,145 @@
+{
+  "config": {
+    "n_timesteps": 1000,
+    "n_sensors": 10,
+    "n_anomalies": 4,
+    "window_size": 100
+  },
+  "normal_statistics": {
+    "means": [
+      0.23937854294943617,
+      0.24938056540525855,
+      -0.27832601955748193,
+      0.06065229895216509,
+      -0.4397440370656133,
+      -0.31167074728118954,
+      -0.042797590546379036,
+      0.4459084344123784,
+      0.12982462367903497,
+      -0.02883554091929643
+    ],
+    "stds": [
+      0.7666797899144747,
+      0.7495806878361189,
+      0.7542099083809511,
+      0.7905686338946589,
+      0.8064378517327124,
+      0.8212654071960446,
+      0.7193324925763487,
+      0.7499655703290328,
+      0.7228140745548035,
+      0.7243125990555512
+    ],
+    "sensor_names": [
+      "sensor_0",
+      "sensor_1",
+      "sensor_2",
+      "sensor_3",
+      "sensor_4",
+      "sensor_5",
+      "sensor_6",
+      "sensor_7",
+      "sensor_8",
+      "sensor_9"
+    ]
+  },
+  "results": [
+    {
+      "anomaly_id": 1,
+      "anomaly_type": "point_spike",
+      "ground_truth": {
+        "sensor_id": 1,
+        "sensor_name": "sensor_1",
+        "timestamp": 100,
+        "magnitude_sigma": 5.381630569594317,
+        "expected_text": "sensor_1: point_spike, deviation=5.38考 at t=100"
+      },
+      "extracted_hint": {
+        "sensor": "[sensor_1] score=5.38 peak_at=50 window_mean=0.150 window_std=0.871 pattern=point_spike via=z_score",
+        "magnitude": 5.38,
+        "pattern": "point_spike"
+      },
+      "accuracy": {
+        "sensor_correct": true,
+        "magnitude_gt": 5.381630569594317,
+        "magnitude_extracted": 5.38,
+        "magnitude_error_pct": 0.03,
+        "pattern_classified": "point_spike",
+        "pattern_expected": "unknown"
+      }
+    },
+    {
+      "anomaly_id": 2,
+      "anomaly_type": "level_shift",
+      "ground_truth": {
+        "sensor_id": 5,
+        "sensor_name": "sensor_5",
+        "timestamp": 300,
+        "magnitude_sigma": 4.582640750989849,
+        "expected_text": "sensor_5: level_shift, deviation=4.58考 at t=300"
+      },
+      "extracted_hint": {
+        "sensor": "[sensor_5] score=4.16 peak_at=50 window_mean=0.097 window_std=1.243 pattern=level_shift via=z_score",
+        "magnitude": 4.16,
+        "pattern": "level_shift"
+      },
+      "accuracy": {
+        "sensor_correct": true,
+        "magnitude_gt": 4.582640750989849,
+        "magnitude_extracted": 4.16,
+        "magnitude_error_pct": 9.22,
+        "pattern_classified": "level_shift",
+        "pattern_expected": "unknown"
+      }
+    },
+    {
+      "anomaly_id": 3,
+      "anomaly_type": "pattern_change",
+      "ground_truth": {
+        "sensor_id": 9,
+        "sensor_name": "sensor_9",
+        "timestamp": 500,
+        "magnitude_sigma": 5.183072811008632,
+        "expected_text": "sensor_9: pattern_change, deviation=5.18考 at t=500"
+      },
+      "extracted_hint": {
+        "sensor": "[sensor_9] score=2.58 peak_at=56 window_mean=-0.094 window_std=0.831 pattern=pattern_change via=z_score",
+        "magnitude": 2.58,
+        "pattern": "pattern_change"
+      },
+      "accuracy": {
+        "sensor_correct": true,
+        "magnitude_gt": 5.183072811008632,
+        "magnitude_extracted": 2.58,
+        "magnitude_error_pct": 50.22,
+        "pattern_classified": "pattern_change",
+        "pattern_expected": "unknown"
+      }
+    },
+    {
+      "anomaly_id": 4,
+      "anomaly_type": "point_spike",
+      "ground_truth": {
+        "sensor_id": 5,
+        "sensor_name": "sensor_5",
+        "timestamp": 700,
+        "magnitude_sigma": 3.563489302191626,
+        "expected_text": "sensor_5: point_spike, deviation=3.56考 at t=700"
+      },
+      "extracted_hint": {
+        "sensor": "[sensor_5] score=3.23 peak_at=50 window_mean=-0.565 window_std=0.774 pattern=point_spike via=z_score",
+        "magnitude": 3.23,
+        "pattern": "point_spike"
+      },
+      "accuracy": {
+        "sensor_correct": true,
+        "magnitude_gt": 3.563489302191626,
+        "magnitude_extracted": 3.23,
+        "magnitude_error_pct": 9.36,
+        "pattern_classified": "point_spike",
+        "pattern_expected": "unknown"
+      }
+    }
+  ],
+  "all_extracted_hints_passed": false
+}
