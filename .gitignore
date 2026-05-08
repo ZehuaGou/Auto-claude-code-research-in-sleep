@@ -44,3 +44,6 @@ patent/
 
 # OMC runtime state
 .omc/
+
+# Local MCP config - may contain API keys
+.mcp.json
