@@ -48,6 +48,17 @@ allowed-tools: Bash(*), Read, Write, Edit
 - created_at:
 - status: done / blocked / failed / needs_review
 
+## Isolation Evidence
+- isolation_mode: manual_subsession | codex_thread | protocol_only
+- physical_new_session: yes | no
+- codex_thread_id: <id> | none
+- allowed_input_files: <exact file list>
+- forbidden_context: generator_trace, raw IDEA_CARDS, old praise, user preference, previous scores
+- actual_backend: codex | llm-chat | other
+- actual_model:
+- fallback_used: True | False
+- fallback_reason: None | <reason>
+
 ## Input Files
 - ...
 
@@ -72,6 +83,13 @@ allowed-tools: Bash(*), Read, Write, Edit
 ## Do Not Assume
 列出主 session 不能擅自假设的东西。
 ```
+
+### Isolation Evidence Rules
+
+- 缺少 Isolation Evidence 的 handoff 不得标记为 done
+- protocol_only 对关键 Phase（review / novelty / adversarial / final）只允许 PASS_WITH_WARNINGS
+- codex_thread handoff 必须包含 codex_thread_id
+- manual_subsession handoff 必须注明 physical_new_session=yes
 
 ## Hard Rules
 

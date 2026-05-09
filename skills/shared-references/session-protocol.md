@@ -64,20 +64,41 @@ created → active → idle → active → ... → closed
 
 每个 handoff 必须包含：
 1. task_id 和 role
-2. 输入输出文件列表
-3. 明确判断（decision）
-4. 证据（evidence）
-5. 失败模式（failure modes）
-6. 未解决问题（unresolved questions）
-7. 下一步建议（next action）
-8. 不允许主 session 擅自假设的事项（do not assume）
+2. **Isolation Evidence**（必填）：
+   - isolation_mode（manual_subsession | codex_thread | protocol_only）
+   - physical_new_session（yes | no）
+   - codex_thread_id（codex_thread 时必须填写）
+   - allowed_input_files（精确文件列表）
+   - forbidden_context（明确排除的内容）
+   - actual_backend / actual_model
+   - fallback_used / fallback_reason
+3. 输入输出文件列表
+4. 明确判断（decision）
+5. 证据（evidence）
+6. 失败模式（failure modes）
+7. 未解决问题（unresolved questions）
+8. 下一步建议（next action）
+9. 不允许主 session 擅自假设的事项（do not assume）
+
+### Isolation Evidence Rules
+
+- 所有关键 gate（review / novelty / adversarial / final）handoff 必须包含 Isolation Evidence
+- 缺少 Isolation Evidence 的 handoff 不能标记为 done
+- **protocol_only** 对关键审查只允许 PASS_WITH_WARNINGS，不能完全 PASS：
+  - Phase 3 (review): 不允许 protocol_only 完全 PASS
+  - Phase 4 (novelty): 不允许 protocol_only 完全 PASS
+  - Phase 5 (adversarial): 不允许 protocol_only 完全 PASS
+  - Phase 6 (final): 不允许 protocol_only 完全 PASS
+- **codex_thread** handoff 必须记录 codex_thread_id
+- **manual_subsession** handoff 必须记录 physical_new_session=yes
 
 ### Handoff Status Rules
 
 - `draft`：刚生成模板，不能作为最终判断
-- `needs_review`：handoff 仍有 TODO 或 evidence 不足，不能作为最终判断
-- `done`：Decision / Evidence / Next Action 已填写且无 TODO，**必须**由 `tools/session_registry.py` 自动检查确认
+- `needs_review`：handoff 仍有 TODO、evidence 不足、或 Isolation Evidence 缺失
+- `done`：Decision / Evidence / Next Action / Isolation Evidence 已填写且无 TODO，**必须**由 `tools/session_registry.py` 自动检查确认
 - 如果 handoff 文件包含 `TODO:` 但请求标记为 `done`，工具自动降级为 `needs_review`
+- 标记为 done 但 handoff 含 TODO 的 task > INVALID_DONE_WITH_TODO，通过 `tools/session_registry.py audit` 检测
 - 只有 `done` 状态才会将 session 设为 idle 并清空 current_task
 - 主 session 不应信任 `draft` / `needs_review` handoff 作为最终结论
 

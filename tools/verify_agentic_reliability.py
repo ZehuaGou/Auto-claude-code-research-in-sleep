@@ -990,6 +990,202 @@ else:
         check(f"{c} exec-review SKILL.md exists", False)
 
 # ---------------------------------------------------------------------------
+# 26. session_registry.py audit command
+# ---------------------------------------------------------------------------
+print("\n=== 26. session_registry.py audit ===")
+session_reg = ROOT / "tools" / "session_registry.py"
+if session_reg.exists():
+    content = session_reg.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "26a. session_registry.py has audit command",
+        "cmd_audit" in content,
+    )
+    check(
+        "26b. session_registry.py has INVALID_DONE_WITH_TODO detection",
+        "INVALID_DONE_WITH_TODO" in content or "invalid_done_with_todo" in content,
+    )
+    check(
+        "26c. session_registry.py handoff template includes Isolation Evidence",
+        "Isolation Evidence" in content,
+    )
+    check(
+        "26d. session_registry.py handoff template includes isolation_mode",
+        "isolation_mode" in content,
+    )
+    check(
+        "26e. session_registry.py handoff template includes codex_thread_id",
+        "codex_thread_id" in content,
+    )
+else:
+    for c in ["26a", "26b", "26c", "26d", "26e"]:
+        check(f"{c} session_registry.py exists", False)
+
+# ---------------------------------------------------------------------------
+# 27. session-orchestrator SKILL isolation model
+# ---------------------------------------------------------------------------
+print("\n=== 27. session-orchestrator isolation model ===")
+orch_skill = ROOT / "skills" / "session-orchestrator" / "SKILL.md"
+if orch_skill.exists():
+    content = orch_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "27a. session-orchestrator mentions manual_subsession",
+        "manual_subsession" in content,
+    )
+    check(
+        "27b. session-orchestrator mentions codex_thread",
+        "codex_thread" in content,
+    )
+    check(
+        "27c. session-orchestrator mentions protocol_only",
+        "protocol_only" in content,
+    )
+    check(
+        "27d. session-orchestrator has Three Acceptable Isolation Modes",
+        "Three Acceptable Isolation Modes" in content,
+    )
+else:
+    for c in ["27a", "27b", "27c", "27d"]:
+        check(f"{c} session-orchestrator SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 28. session-protocol.md has Isolation Evidence requirements
+# ---------------------------------------------------------------------------
+print("\n=== 28. session-protocol.md Isolation Evidence ===")
+protocol = ROOT / "skills" / "shared-references" / "session-protocol.md"
+if protocol.exists():
+    content = protocol.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "28a. session-protocol mentions Isolation Evidence",
+        "Isolation Evidence" in content,
+    )
+    check(
+        "28b. session-protocol restricts protocol_only for critical phases",
+        "protocol_only" in content and "Phase 3" in content and "Phase 4" in content,
+    )
+else:
+    for c in ["28a", "28b"]:
+        check(f"{c} session-protocol.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 29. idea-discovery SKILL mentions isolation_mode in critical phases
+# ---------------------------------------------------------------------------
+print("\n=== 29. idea-discovery isolation references ===")
+idea_disc = ROOT / "skills" / "idea-discovery" / "SKILL.md"
+if idea_disc.exists():
+    content = idea_disc.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "29a. idea-discovery mentions isolation_mode",
+        "isolation_mode" in content,
+    )
+    check(
+        "29b. idea-discovery mentions codex_thread",
+        "codex_thread" in content,
+    )
+    check(
+        "29c. idea-discovery mentions Isolation requirement for review",
+        "Isolation requirement" in content and "review" in content.lower(),
+    )
+    check(
+        "29d. idea-discovery mentions protocol_only is not acceptable",
+        "protocol_only is not acceptable" in content or "protocol_only" in content and "not acceptable" in content,
+    )
+else:
+    for c in ["29a", "29b", "29c", "29d"]:
+        check(f"{c} idea-discovery SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 30. research-lit gate has isolation_mode in artifact header
+# ---------------------------------------------------------------------------
+print("\n=== 30. research-lit isolation ===")
+research_lit = ROOT / "skills" / "research-lit" / "SKILL.md"
+if research_lit.exists():
+    content = research_lit.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "30a. research-lit evidence audit mentions isolation_mode",
+        "isolation_mode" in content,
+    )
+    check(
+        "30b. research-lit evidence audit mentions codex_thread_id",
+        "codex_thread_id" in content,
+    )
+else:
+    for c in ["30a", "30b"]:
+        check(f"{c} research-lit SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 31. idea-creator gate has isolation requirements
+# ---------------------------------------------------------------------------
+print("\n=== 31. idea-creator isolation ===")
+idea_creator = ROOT / "skills" / "idea-creator" / "SKILL.md"
+if idea_creator.exists():
+    content = idea_creator.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "31a. idea-creator shortlist audit mentions isolation_mode",
+        "isolation_mode" in content,
+    )
+    check(
+        "31b. idea-creator shortlist audit mentions codex_thread_id",
+        "codex_thread_id" in content,
+    )
+else:
+    for c in ["31a", "31b"]:
+        check(f"{c} idea-creator SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 32. exec-review & novelty-check have isolation fields in artifact header
+# ---------------------------------------------------------------------------
+print("\n=== 32. exec-review & novelty-check isolation fields ===")
+exec_skill = ROOT / "skills" / "exec-review" / "SKILL.md"
+if exec_skill.exists():
+    content = exec_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "32a. exec-review artifact header includes isolation_mode",
+        "isolation_mode" in content,
+    )
+    check(
+        "32b. exec-review artifact header includes codex_thread_id",
+        "codex_thread_id" in content,
+    )
+else:
+    for c in ["32a", "32b"]:
+        check(f"{c} exec-review SKILL.md exists", False)
+
+novelty_skill = ROOT / "skills" / "novelty-check" / "SKILL.md"
+if novelty_skill.exists():
+    content = novelty_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "32c. novelty-check artifact header includes isolation_mode",
+        "isolation_mode" in content,
+    )
+    check(
+        "32d. novelty-check artifact header includes codex_thread_id",
+        "codex_thread_id" in content,
+    )
+else:
+    for c in ["32c", "32d"]:
+        check(f"{c} novelty-check SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 33. No false claim of automatic multi-process isolation
+# ---------------------------------------------------------------------------
+print("\n=== 33. No false multi-process claim ===")
+for fname, label in [
+    ("skills/session-orchestrator/SKILL.md", "session-orchestrator"),
+    ("skills/shared-references/session-protocol.md", "session-protocol"),
+    ("skills/session-handoff/SKILL.md", "session-handoff"),
+]:
+    f = ROOT / fname
+    if f.exists():
+        content = f.read_text(encoding="utf-8", errors="ignore")
+        check(
+            f"33a. {label} does NOT claim automatic multi-process isolation",
+            "auto" not in content or "不会自动" in content or "not auto" in content.lower(),
+            f"{label} may claim automatic multi-process isolation" if "auto" in content and "不会自动" not in content else "",
+        )
+    else:
+        check(f"33a. {label} exists", False)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'='*40}")

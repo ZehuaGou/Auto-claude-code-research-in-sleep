@@ -159,6 +159,19 @@ After generation, run deduplication against the existing idea bank:
 
 ### Phase 2 Codex Gate: Idea Shortlist Audit (idea_shortlist_auditor)
 
+**This is an isolated judgment gate, not a generation continuation.**
+
+**Isolation requirement:** idea_shortlist_auditor must run as
+`codex_thread` or `manual_subsession`. `protocol_only` only yields
+PASS_WITH_WARNINGS — cannot give full PASS.
+
+The auditor must NOT read:
+- Raw generation trace from `RUNS/<run_id>/IDEA_CARDS/`
+- Generator prompts or intermediate outputs
+- Old scores, previous reviews, or user preferences
+
+Default input: IDEA_BANK.md + CANONICAL_IDEAS/* + verified GAP_MAP only.
+
 After dedup and canonicalization, run a shortlist audit via Codex to kill weak ideas before they proceed to Phase 3:
 
 1. **Gate invocation**: Use Codex MCP for the audit — this is a judgment gate.
@@ -192,13 +205,16 @@ mcp__codex__codex:
 
 4. **Artifact header**: The output MUST begin with:
    ```
+   isolation_mode: codex_thread|manual_subsession
+   codex_thread_id: <id>|none
    primary_backend: codex
    actual_backend: codex|llm-chat
+   actual_model: DEFAULT|<model>
    fallback_used: True|False
    fallback_reason: None|<reason>
    ```
 
-5. **Fallback**: If Codex unavailable, fallback to `LLM_IDEA_SHORTLIST_AUDITOR_FALLBACK_MODEL`. Mark with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`.
+5. **Fallback**: If Codex unavailable, fallback to `LLM_IDEA_SHORTLIST_AUDITOR_FALLBACK_MODEL`. Mark with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`. Isolation mode becomes `protocol_only` — verdict max is PASS_WITH_WARNINGS.
 
 ### Phase 5: Write Ideas to Research Wiki (if active)
 

@@ -10,6 +10,7 @@ Commands:
   assign <session_id> <desc>    Assign a task to a session
   tasks                         List all tasks
   handoff <task_id> [status]    Generate handoff file (default: draft; auto-downgrades to needs_review if TODO remains)
+  audit [--repair]              Audit session/task integrity; --repair fixes invalid states
 """
 from __future__ import annotations
 
@@ -316,6 +317,15 @@ def cmd_handoff(args: List[str]):
 - created_at: {task.get("created_at", "")}
 - status: {requested_status}
 
+## Isolation Evidence
+- isolation_mode: TODO: manual_subsession | codex_thread | protocol_only
+- physical_new_session: TODO: yes | no
+- codex_thread_id: TODO: if codex_thread, provide thread id
+- allowed_input_files: TODO: list exact files read by this session
+- forbidden_context: generator_trace, raw IDEA_CARDS, old praise, user preference, previous scores
+- actual_backend: TODO: codex | llm-chat | other
+- actual_model: TODO
+
 ## Input Files
 {_format_list(task.get("input_files", []))}
 
@@ -391,6 +401,95 @@ TODO: Add next action for main_architect.
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def cmd_audit(args: List[str]):
+    """Audit session/task integrity. With --repair, fix invalid states."""
+    do_repair = "--repair" in args
+    sess_dir = get_sessions_dir()
+    registry_file = sess_dir / "SESSION_REGISTRY.json"
+    tasks_file = sess_dir / "ACTIVE_TASKS.json"
+    handoffs_dir = get_handoffs_dir()
+
+    registry = _read_json(registry_file)
+    tasks_data = _read_json(tasks_file)
+
+    sessions = registry.get("sessions", []) if isinstance(registry, dict) else []
+    tasks = tasks_data.get("tasks", []) if isinstance(tasks_data, dict) else []
+
+    invalid_done_no_handoff: List[Dict] = []
+    invalid_done_with_todo: List[Dict] = []
+    repaired_count = 0
+    repaired_tasks: List[str] = []
+
+    for t in tasks:
+        task_id = t.get("task_id", "")
+        status = t.get("status", "")
+        handoff_path = t.get("handoff")
+
+        if status != "done":
+            continue
+
+        # Check 1: status=done but no handoff file
+        if not handoff_path:
+            invalid_done_no_handoff.append({"task_id": task_id, "status": status, "assigned_session": t.get("assigned_session", "")})
+            if do_repair:
+                t["status"] = "needs_review"
+                t["updated_at"] = datetime.now(timezone.utc).isoformat()
+                repaired_count += 1
+                repaired_tasks.append(task_id)
+            continue
+
+        # Check 2: status=done but handoff contains TODO
+        hf = Path(handoff_path) if not isinstance(handoff_path, Path) else handoff_path
+        if hf.exists():
+            content = hf.read_text(encoding="utf-8", errors="ignore")
+            if "TODO:" in content:
+                invalid_done_with_todo.append({"task_id": task_id, "status": status, "handoff_file": str(hf), "assigned_session": t.get("assigned_session", "")})
+                if do_repair:
+                    t["status"] = "needs_review"
+                    t["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    repaired_count += 1
+                    repaired_tasks.append(task_id)
+                    # Update handoff metadata status to match
+                    updated_content = content.replace("- status: done", "- status: needs_review")
+                    if "- status: needs_review" in updated_content:
+                        hf.write_text(updated_content, encoding="utf-8")
+        else:
+            # Handoff path recorded but file missing
+            invalid_done_no_handoff.append({"task_id": task_id, "status": status, "handoff_missing": str(hf), "assigned_session": t.get("assigned_session", "")})
+            if do_repair:
+                t["status"] = "needs_review"
+                t["updated_at"] = datetime.now(timezone.utc).isoformat()
+                repaired_count += 1
+                repaired_tasks.append(task_id)
+
+    # Repair session states
+    if do_repair and repaired_tasks:
+        _write_json(tasks_file, tasks_data)
+        for s in sessions:
+            if s.get("current_task") in repaired_tasks:
+                s["status"] = "active"
+                s["updated_at"] = datetime.now(timezone.utc).isoformat()
+        _write_json(registry_file, registry)
+
+    # Build report
+    total_invalid = len(invalid_done_no_handoff) + len(invalid_done_with_todo)
+    verdict = "PASS" if total_invalid == 0 else ("PASS_WITH_WARNINGS" if do_repair and repaired_count > 0 else "FAIL")
+
+    report = {
+        "total_sessions": len(sessions),
+        "total_tasks": len(tasks),
+        "done_tasks": sum(1 for t in tasks if t.get("status") == "done"),
+        "needs_review_tasks": sum(1 for t in tasks if t.get("status") == "needs_review"),
+        "invalid_done_no_handoff": len(invalid_done_no_handoff),
+        "invalid_done_no_handoff_details": invalid_done_no_handoff,
+        "invalid_done_with_todo": len(invalid_done_with_todo),
+        "invalid_done_with_todo_details": invalid_done_with_todo,
+        "repaired_count": repaired_count,
+        "verdict": verdict,
+    }
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
 def _format_list(items: list) -> str:
     if not items:
         return "- (none)"
@@ -419,9 +518,11 @@ def main():
         cmd_tasks(args)
     elif cmd == "handoff":
         cmd_handoff(args)
+    elif cmd == "audit":
+        cmd_audit(args)
     else:
         print(f"Unknown command: {cmd}", file=sys.stderr)
-        print("Usage: session_registry.py <init|register|list|close|assign|tasks|handoff> [args...]", file=sys.stderr)
+        print("Usage: session_registry.py <init|register|list|close|assign|tasks|handoff|audit> [args...]", file=sys.stderr)
         sys.exit(1)
 
 

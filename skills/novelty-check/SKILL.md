@@ -149,9 +149,14 @@ fallback 输出必须标记 `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`。
 不允许 silent fallback。
 
 ### Artifact Header
-每个 novelty report 输出文件开头必须包含模型追踪 header：
+每个 novelty report 输出文件开头必须包含模型追踪 header + 隔离证据：
 
 ```
+isolation_mode: manual_subsession|codex_thread|protocol_only
+codex_thread_id: <id>|none
+task_id: <session task id>|none
+allowed_input_files: <exact file list>
+forbidden_context_checked: true|false
 primary_backend: codex|llm-chat
 primary_model: <model name or "DEFAULT">
 actual_backend: codex|llm-chat
@@ -159,6 +164,12 @@ actual_model: <model name or "DEFAULT">
 fallback_used: True|False
 fallback_reason: None|<reason>
 ```
+
+**隔离要求：**
+- 若 `actual_backend=codex`：必须记录 `codex_thread_id`
+- 若无 `codex_thread_id` 也无 physical_new_session evidence：isolation_mode 为 `protocol_only`
+- `protocol_only` 结果不能作为完全 PASS — 最高 PASS_WITH_WARNINGS
+- 缺少 isolation_mode 或 codex_thread_id（当 codex 时）：标记 NEEDS_ISOLATION_EVIDENCE
 
 如果从 Codex fallback 到 LLM，必须额外包含：
 ```

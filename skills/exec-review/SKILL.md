@@ -32,9 +32,14 @@ allowed-tools: Bash(*), Read, Write, Grep, Glob, mcp__codex__codex, mcp__llm-cha
 
 ## Artifact Header
 
-Every output markdown file MUST begin with a model tracking header:
+Every output markdown file MUST begin with a model tracking header including isolation evidence:
 
 ```
+isolation_mode: manual_subsession|codex_thread|protocol_only
+codex_thread_id: <id>|none
+task_id: <session task id>|none
+allowed_input_files: <exact file list>
+forbidden_context_checked: true|false
 primary_backend: codex|llm-chat
 primary_model: <model name or "DEFAULT">
 actual_backend: codex|llm-chat
@@ -42,6 +47,12 @@ actual_model: <model name or "DEFAULT">
 fallback_used: True|False
 fallback_reason: None|<reason>
 ```
+
+**Isolation rules:**
+- If `actual_backend=codex`: must record `codex_thread_id`
+- If no `codex_thread_id` and no `physical_new_session`: isolation_mode is `protocol_only`
+- `protocol_only` results cannot yield full PASS — max is PASS_WITH_WARNINGS
+- Missing isolation_mode or codex_thread_id (when codex): mark as NEEDS_ISOLATION_EVIDENCE
 
 If fallback from Codex to LLM occurred, also include:
 ```

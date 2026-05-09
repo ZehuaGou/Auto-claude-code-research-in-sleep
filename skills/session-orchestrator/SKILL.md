@@ -60,19 +60,35 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob
 
 ## Context Isolation Model
 
-当前 session-orchestrator 是**文件级 session registry + handoff protocol**，不是自动多进程管理器。
+session-orchestrator 是**文件级 session registry + handoff 协议**，不是自动多进程管理器。当前系统不声称已实现真实多进程隔离。
 
 ### What This Tool Does
 - 注册逻辑 session（registry）
 - 分配和跟踪 task（active tasks）
-- 生成 handoff 模板文件
+- 生成 handoff 模板文件（包含 Isolation Evidence）
 - 维护 session 状态机（active / idle / closed / failed）
+- 审计 task 完整性（`audit` / `audit --repair`）
 
 ### What This Tool Does NOT Do
 - **不会自动启动多个真实 Claude/Claude Code 进程**
 - **不会自动隔离模型上下文** — 如果外层 Agent 不新开窗口，所有 session 共享同一上下文
 - **不会自动创建 tmux panel 或子进程**
 - **不会阻止主 session 读取副 session 日志** — 这是约定而非强制
+
+### Three Acceptable Isolation Modes
+
+上下文的真实隔离有三种可接受模式：
+
+| 模式 | 关键词 | 隔离程度 | 适用阶段 |
+|------|--------|----------|----------|
+| **manual_subsession** | 用户手动开新终端 / 新 Claude Code 会话 | 真实会话级隔离 | Phase 1/2/3/4/5/6 均可 |
+| **codex_thread** | 使用独立 Codex MCP thread，prompt 不含主 session 上下文 | 模型级隔离 | 关键 judgment gate（Phase 3/4/5/final） |
+| **protocol_only** | 仅文件级 registry + handoff，无真实进程/线程隔离 | 无隔离 | **仅** Phase 0（paper-ingest）/ 非关键任务 |
+
+**protocol_only 限制：**
+- 只能作为 fallback，不得用于 Phase 3（review）、Phase 4（novelty）、Phase 5（adversarial）、Phase 6（final selection）
+- protocol_only 对关键审查只允许 PASS_WITH_WARNINGS，不允许完全 PASS
+- 标记为 protocol_only 的 handoff 不得作为 gate 决策的唯一依据
 
 ### How Real Isolation Works
 
@@ -82,6 +98,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob
 2. 新会话只读取该角色所需的 `input_files`
 3. 完成后通过 `/session-handoff` 写 handoff 文件
 4. 主 session **只读 handoff**，不读副 session 的全量过程日志
+5. 对于关键 judgment gate，优先使用 Codex MCP 独立 thread（codex_thread mode）
 
 ```
 ┌─────────────────────┐     ┌──────────────────────┐
@@ -92,22 +109,44 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob
 │  assign tasks        │     │  read input_files     │
 │  make decisions      │     │  do the work          │
 └─────────────────────┘     └──────────────────────┘
+
+┌─────────────────────┐     ┌──────────────────────┐
+│  Main Session        │     │  Codex Thread         │
+│  (orchestrator)      │     │  (critical gate)      │
+│                      │     │                       │
+│  read handoff only   │◄────│  write handoff        │
+│  assign tasks        │     │  isolated prompt      │
+│  make decisions      │     │  codex_thread_id      │
+└─────────────────────┘     └──────────────────────┘
 ```
 
-### Recommended Usage for Real Isolation
+### Isolation Evidence Requirement
 
-1. 主 session 运行 `/session-orchestrator init` + `register` + `assign`
-2. 用户手动打开新的 Claude Code 终端（新 session）
-3. 新 session 中只运行 `/session-handoff` 查看任务，读取指定 input_files
-4. 完成工作后写 handoff 文件（先用 `tools/session_registry.py handoff <task_id> draft` 生成模板）
-5. 填写 Decision / Evidence 等字段后，再执行 `handoff <task_id> done`（自动检查 TODO）
-6. 主 session 读取 handoff，判断下一步
+每个关键 gate 的 handoff 必须包含 Isolation Evidence 字段：
 
-### Why Not Automatic Multi-Process
+```
+## Isolation Evidence
+- isolation_mode: manual_subsession | codex_thread | protocol_only
+- physical_new_session: yes | no
+- codex_thread_id: <id> | none
+- allowed_input_files: ...
+- forbidden_context: generator_trace, raw IDEA_CARDS, old praise, ...
+- actual_backend: codex | llm-chat | other
+- actual_model: ...
+```
 
-- 自动启动多个 Claude Code 进程需要平台级 API（tmux / OS process management）
-- 多数用户环境（特别是 Windows）不支持可靠的子进程隔离
-- 文件级 handoff 足够覆盖 90% 的上下文污染场景，无需复杂基础设施
+**缺少 Isolation Evidence 的 handoff：**
+- 不能作为关键 gate 的最终决策
+- 必须标记 needs_review
+- 主 session 读取时需明确标记 ISOLATION_EVIDENCE_MISSING
+
+### Handoff Integrity: Done Must Not Contain TODO
+
+- 如果 handoff 标记为 `done` 但仍包含 `TODO:` 字段 → **INVALID_DONE_WITH_TODO**
+- 通过 `tools/session_registry.py audit` 可检测
+- 通过 `tools/session_registry.py audit --repair` 自动降级为 `needs_review`
+- 如果 `requested_status=done` 且 handoff 含 TODO → 工具自动 downgrade 为 `needs_review`
+- 主 session 不应信任含 TODO 的 done 状态
 
 ## Failure Handling
 

@@ -74,6 +74,11 @@ details). Only PASS or PASS_WITH_WARNINGS allows entry to Phase 2.
 FAIL stops the pipeline. Audit output stored at
 `idea-stage/AGENTIC/EVIDENCE_AUDIT/PHASE1_EVIDENCE_AUDIT.md`.
 
+**Isolation requirement:** evidence_integrity_auditor must run as
+`codex_thread` or `manual_subsession`. `protocol_only` is not acceptable
+for this gate. Handoff must include `isolation_mode` and `codex_thread_id`
+if applicable.
+
 **🚦 Checkpoint:** Present the landscape summary to the user. Ask:
 
 ```
@@ -111,6 +116,11 @@ idea_shortlist_auditor via Codex (see `/idea-creator` SKILL.md for details).
 Killed candidates are excluded from Phase 3 onward. Audit output stored at
 `idea-stage/AGENTIC/SHORTLIST_AUDIT/PHASE2_SHORTLIST_AUDIT.md`.
 
+**Isolation requirement:** idea_shortlist_auditor must run as
+`codex_thread` or `manual_subsession`. `protocol_only` is not acceptable —
+it can only yield PASS_WITH_WARNINGS, not full PASS. Handoff must include
+Isolation Evidence.
+
 **🚦 Checkpoint:** Present the generated ideas to the user:
 
 ```
@@ -134,12 +144,14 @@ For each active canonical candidate, invoke `/exec-review` via Codex:
 /exec-review "idea-stage/AGENTIC/CANONICAL_IDEAS/CAND_002.md"
 ```
 
-**Backend:** Codex MCP (via `LLM_IDEA_REVIEWER_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable.
+**Backend:** Codex MCP (via `LLM_IDEA_REVIEWER_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable. Default isolation_mode: `codex_thread`.
 
 **Rules:**
 - One candidate at a time — reviewer sees only one CAND_*.md
 - No generator trace, no previous scores, no user preferences
 - Output: `idea-stage/AGENTIC/REVIEWS/CAND_XXX_review.md` with verdict `go | revise | kill`
+
+**Isolation requirement:** review MUST use `codex_thread` or `manual_subsession`. `protocol_only` is not acceptable — cannot yield full PASS. Review artifact header must include `isolation_mode` and `codex_thread_id` if applicable.
 
 **This phase runs ONLY on canonical candidates (CAND_*.md), never on raw IDEA_CARDS.**
 
@@ -154,9 +166,11 @@ For each `go` or `revise` candidate, run `/novelty-check` via Codex:
 /novelty-check "CAND_002"
 ```
 
-**Backend:** Codex MCP (via `LLM_NOVELTY_CHECKER_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable.
+**Backend:** Codex MCP (via `LLM_NOVELTY_CHECKER_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable. Default isolation_mode: `codex_thread`.
 
 **Output:** `idea-stage/AGENTIC/NOVELTY/CAND_XXX_novelty.md`
+
+**Isolation requirement:** novelty check MUST use `codex_thread` or `manual_subsession`. `protocol_only` is not acceptable. Novelty report artifact header must include `isolation_mode` and `codex_thread_id`.
 
 **Verdict options:**
 - `confirmed_novel` / `likely_incremental` / `already_done` / `insufficient_evidence`
@@ -174,9 +188,11 @@ For each surviving candidate (not killed, not `already_done`), run an adversaria
 /exec-review "idea-stage/AGENTIC/CANONICAL_IDEAS/CAND_001.md" — role: adversarial_reviewer
 ```
 
-**Backend:** Codex MCP (via `LLM_ADVERSARIAL_REVIEWER_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable.
+**Backend:** Codex MCP (via `LLM_ADVERSARIAL_REVIEWER_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable. Default isolation_mode: `codex_thread`.
 
 **Output:** `idea-stage/AGENTIC/ADVERSARIAL/CAND_XXX_adversarial.md`
+
+**Isolation requirement:** adversarial review MUST use `codex_thread` or `manual_subsession`. `protocol_only` is not acceptable.
 
 The adversarial reviewer identifies only weaknesses — no praise, no improvement suggestions.
 
@@ -189,13 +205,15 @@ The main architect (current Agent) reads only:
 - `NOVELTY/CAND_*_novelty.md` — novelty assessments
 - `ADVERSARIAL/CAND_*_adversarial.md` — adversarial critiques
 
-**Backend:** Codex MCP (via `LLM_FINAL_SELECTOR_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable.
+**Backend:** Codex MCP (via `LLM_FINAL_SELECTOR_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable. Default isolation_mode: `codex_thread`.
 
 Does NOT read:
 - Generator traces or raw run logs
 - Job execution details
 - Raw `RUNS/<run_id>/IDEA_CARDS/` content
 - `CANONICAL_IDEAS/.meta/` (provenance metadata)
+
+**Isolation requirement:** final_selector MUST use `codex_thread` or `manual_subsession`. `protocol_only` is not acceptable. Output must include `isolation_mode` and `codex_thread_id`.
 
 **Output:** `FINAL_SELECTION/IDEA_SELECTION_REPORT.md`
 

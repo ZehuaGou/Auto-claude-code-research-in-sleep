@@ -491,6 +491,12 @@ The tools `tools/agentic_idea_discovery.py` and `tools/isolated_job_runner.py` m
 
 ## Phase 1 Codex Gate: Evidence Integrity Audit (evidence_integrity_auditor)
 
+**This is NOT a routine continuation. This is an isolated judgment gate.**
+
+**Isolation requirement:** evidence_integrity_auditor must run as
+`codex_thread` or `manual_subsession`. `protocol_only` only yields
+PASS_WITH_WARNINGS.
+
 When called from `/idea-discovery`, after literature survey and gap extraction, run an evidence integrity audit via Codex before passing results to Phase 2:
 
 1. **Trigger**: After LITERATURE_INDEX.md and GAP_MAP.md are produced.
@@ -531,10 +537,13 @@ mcp__codex__codex:
 
 5. **Artifact header**: The output MUST begin with:
    ```
+   isolation_mode: codex_thread|manual_subsession
+   codex_thread_id: <id>|none
    primary_backend: codex
    actual_backend: codex|llm-chat
+   actual_model: DEFAULT|<model>
    fallback_used: True|False
    fallback_reason: None|<reason>
    ```
 
-6. **Fallback**: If Codex is unavailable, fallback to `LLM_EVIDENCE_AUDITOR_FALLBACK_MODEL`. Mark output with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`.
+6. **Fallback**: If Codex is unavailable, fallback to `LLM_EVIDENCE_AUDITOR_FALLBACK_MODEL`. Mark output with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`. Isolation mode becomes `protocol_only` — verdict max is PASS_WITH_WARNINGS.
