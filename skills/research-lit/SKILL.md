@@ -424,3 +424,67 @@ python3 "$WIKI_SCRIPT" ingest_paper research-wiki/ \
 - Note if a paper directly competes with or supports our approach
 - **Never fail because a MCP server is not configured** — always fall back gracefully to the next data source
 - Zotero/Obsidian tools may have different names depending on how the user configured the MCP server (e.g., `mcp__zotero__search` or `mcp__zotero-mcp__search_items`). Try the most common patterns and adapt.
+
+## Reliability Additions
+
+### Paper Ingest Priority
+找到重要论文后，优先使用 `/paper-ingest` 转为结构化 Markdown，不要默认读 PDF。
+调研阶段只读 abstract + introduction（遵循 `shared-references/paper-ingest-protocol.md`）。
+需要深度阅读时，按 staged reading 规则读对应章节。
+
+### Top-K Deep Ingest
+- literature survey 阶段只记录候选论文（metadata + abstract），不深度下载所有论文。
+- 对 top 5-10 篇 closest prior work，调用 `/paper-ingest <paper_id> --deep`。
+- deep ingest 包括：PDF 下载 + HTML/PDF 正文提取 + 章节自动切分。
+- 不要对所有搜索结果无限下载 PDF。
+- 输出 LITERATURE_INDEX.md 时标记哪些论文已有 literature-md 全文（有 `full.md` 或提取报告）。
+
+### Staged Reading
+- 调研阶段：只读 abstract + introduction
+- 查新阶段：再读 method + related_work
+- baseline 复现：再读 experiments + appendix
+- 写作 related work：读 related_work + conclusion
+
+### Research Wiki
+如果 `research-wiki/` 存在，继续更新 research-wiki。
+如果不存在，跳过（不影响现有流程）。
+
+## Agentic Idea Discovery Additions
+
+The following additions support the agentic /idea-discovery pipeline. They activate when `/research-lit` is called within `/idea-discovery`.
+
+### Agentic Artifacts
+
+When called from `/idea-discovery`, additionally output:
+
+- `idea-stage/AGENTIC/RUNS/<run_id>/LITERATURE_INDEX.md` — structured paper-by-paper index extracted from the full survey, suitable for downstream gap extraction
+- `idea-stage/AGENTIC/RUNS/<run_id>/GAP_MAP.md` — structured research gap map (internal helper may scaffold the directories)
+
+Each entry in LITERATURE_INDEX.md should include:
+- Paper ID, title, venue, year
+- Core problem addressed
+- Method summary (1-2 sentences)
+- Key results
+- Stated limitations
+- Relevance to research direction
+
+### Gap Extraction Rules
+
+If a GAP_MAP.md is produced (for downstream agentic flows), each gap must contain:
+
+- **Gap statement** — clear one-sentence description of the gap
+- **Closest prior work** — which paper(s) come closest, and why they fall short
+- **Evidence from literature** — specific citations that establish this gap
+- **Why prior work does not solve it** — technical or conceptual barrier
+- **Fake gap risk** — could this gap be an artifact of incomplete search?
+- **Possible evaluation signal** — what metric or experiment could confirm this gap
+
+### Quality Gate
+
+- If fewer than 3 credible gaps can be formed from the literature, mark the handoff as `needs_review` rather than forcing generation.
+- Gap extractor must NOT generate ideas — only extract gaps from literature.
+- If gap extraction fails (GAP_MAP missing expected fields), stop and flag `needs_review`.
+
+### Internal Helpers
+
+The tools `tools/agentic_idea_discovery.py` and `tools/isolated_job_runner.py` may be called internally for directory scaffolding and job execution. Users should not call these directly.

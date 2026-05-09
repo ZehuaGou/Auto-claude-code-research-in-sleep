@@ -238,3 +238,16 @@ Suggest follow-up skills:
 - Handle both arXiv ID formats: new (`2301.07041`) and old (`cs/0601001`)
 - PAPER_DIR is created automatically if it does not exist
 - If the arXiv API is unreachable, report the error clearly and suggest using `/research-lit` with `- sources: web` as a fallback
+
+## Reliability Additions
+
+### Default: No Download
+默认不需要下载 PDF。搜索后使用 `/paper-ingest` 获取结构化 Markdown 即可。
+仅当用户明确请求 download 或复现需要时才下载 PDF。
+
+### Paper Ingest After Download
+下载 PDF 后，可调用 `/paper-ingest <arxiv-id>` 转成结构化 Markdown。
+输出到 `literature-md/<paper_id>/`。如果 `research-wiki/` 存在，同时更新 research-wiki。
+
+### Staged Reading
+需要阅读论文时，遵循 `shared-references/paper-ingest-protocol.md` 的分阶段读取规则。

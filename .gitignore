@@ -45,5 +45,82 @@ patent/
 # OMC runtime state
 .omc/
 
+# ===== Secrets / credentials =====
+.env.*
+!.env.example
+*.key
+*.pem
+*.token
+*.secret
+secrets/
+credentials/
+.local/
+
+# ===== Local papers / literature =====
+papers/
+literature/
+literature-md/
+*.pdf
+
+# ===== Datasets / experiment outputs =====
+data/
+datasets/
+outputs/
+results/
+checkpoints/
+runs/
+wandb/
+logs/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.npy
+*.npz
+
+# ===== ARIS runtime states =====
+.aris/
+# Only allow specific template/placeholder files
+!.aris/README.md
+!.aris/calls/.gitkeep
+!.aris/sessions/.gitkeep
+
+# ===== Generated config reports =====
+config/status.json
+config/CONFIG_CHECK.md
+
+# ===== Temp / tmp =====
+tmp/
+temp/
+*.tmp
+
+# ===== Generated research artifacts =====
+idea-stage/
+novelty-stage/
+review-stage/
+refine-logs/
+experiment_queue/
+EXPERIMENT_LOG.md
+EXPERIMENT_TRACKER.md
+CLAIMS_FROM_RESULTS.md
+
+# ===== Project-specific generated research files =====
+research/
+docs/research_contract.md
+docs/research_contract.lock.json
+
+# ===== Local reports generated during implementation / verification =====
+IMPLEMENTATION_PLAN.md
+IMPLEMENTATION_REPORT.md
+VERIFY_REPORT.md
+REMOVE_1M_CHECK_REPORT.md
+COMMIT_READY_REPORT.md
+SMOKE_TEST_REPORT.md
+
+# ===== Python / cache =====
+.pytest_cache/
+.venv/
+venv/
+
 # Local MCP config - may contain API keys
 .mcp.json

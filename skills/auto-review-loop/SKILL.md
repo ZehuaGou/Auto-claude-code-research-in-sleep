@@ -456,6 +456,28 @@ mcp__codex__codex-reply:
     Same format: Score, Verdict, Remaining Weaknesses, Minimum Fixes.
 ```
 
+## Reliability Additions
+
+### Call Ledger Integration
+所有 Codex MCP 调用必须写入 ledger：
+```bash
+python3 tools/llm_call_ledger.py start auto-review-loop reviewer codex
+# Codex 调用...
+python3 tools/llm_call_ledger.py finish
+```
+
+### Fallback Handling
+当 Codex 不可用（卡住、失败、额度不足、权限失败、超时）时：
+1. 写 current_call.json 标记失败原因。
+2. fallback 到对应 LLM fallback（默认 `LLM_FALLBACK_MODEL`）。
+3. 在输出中标记 `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`。
+4. 完成调用后写 llm_calls.jsonl。
+5. 不允许 silent fallback。
+
+### Status Visibility
+status skill 可以通过读取 `current_call.json` 看到当前 Codex 调用状态。
+如果 `current_call.json` 的 status 为 started 且超过 30 分钟，提示可能 stuck。
+
 ## Review Tracing
 
 After each `mcp__codex__codex` or `mcp__codex__codex-reply` reviewer call, save the trace following `shared-references/review-tracing.md`. Use `tools/save_trace.sh` or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).

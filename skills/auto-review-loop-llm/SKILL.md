@@ -241,6 +241,32 @@ mcp__llm-chat__chat:
     Be brutally honest. If the work is ready, say so clearly.
 ```
 
+## Reliability Additions
+
+### Updated DeepSeek Configuration
+DeepSeek 配置示例更新为：
+```json
+{
+  "LLM_API_KEY": "your-deepseek-key",
+  "LLM_BASE_URL": "https://api.deepseek.com",
+  "LLM_MODEL": "deepseek-v4-pro",
+  "LLM_FALLBACK_MODEL": "deepseek-v4-flash",
+  "LLM_THINKING": "enabled",
+  "LLM_REASONING_EFFORT": "high"
+}
+```
+### Call Ledger Integration
+每次 LLM Chat 调用必须写入 ledger：
+```bash
+python3 tools/llm_call_ledger.py start auto-review-loop-llm reviewer llm-chat $LLM_MODEL
+# LLM 调用...
+python3 tools/llm_call_ledger.py finish
+```
+
+### Role-Based Model Override
+支持传入 role 对应的 model/thinking/reasoning_effort。
+读取环境变量中对应角色的模型配置（如 `LLM_IDEA_REVIEWER_FALLBACK_MODEL`）。
+
 ## Output Protocols
 
 > Follow these shared protocols for all output files:

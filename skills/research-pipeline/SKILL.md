@@ -254,3 +254,32 @@ When Workflow 3 finishes, update the pipeline report with:
 | 4. Auto Review | 1-4 hours (depends on experiments) | Yes ✅ |
 
 **Sweet spot**: Run Stage 1-2 in the evening, launch Stage 3-4 before bed, wake up to a reviewed paper.
+
+## Reliability Additions
+
+本 pipeline 已集成以下可靠性增强（soft gate，不破坏原有流程）：
+
+### Paper Ingest
+在文献调研阶段，优先使用 `/paper-ingest` 将论文转为结构化 Markdown，避免整篇 PDF 进上下文。调研只读 abstract + introduction，查新再读 method + related_work。
+
+### Baseline Repro Gate
+在 Stage 2（实现）前，检查 `research/BASELINE_REPRODUCTION_REPORT.md` 是否存在。
+- 如果存在：继续。
+- 如果不存在：提示运行 `/baseline-repro`，但允许跳过（soft gate）。
+
+### Research Contract Gate
+在 Stage 2（实现）前，检查 `docs/research_contract.md` 是否存在。
+- 如果存在：继续。
+- 如果不存在：提示运行 `/research-contract`，但允许跳过（soft gate）。
+- pilot/sanity 阶段允许 provisional contract。
+
+### Research Assurance Gate
+在 Stage 4（auto review）或 Stage 5（paper writing）前，提示运行 `/research-assurance`。
+- 检查 `research/CLAIM_EVIDENCE_TABLE.md` 是否存在。
+- 检查 claim 是否有实验证据支撑。
+- soft gate：提示但不强制。
+
+### Status / Model Usage Status
+每个大阶段结束时，提示用户可查看：
+- `/status` — 当前项目和实验状态
+- `/model-usage-status` — 模型调用状态和 fallback 记录

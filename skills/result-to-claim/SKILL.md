@@ -204,6 +204,30 @@ if research-wiki/ exists:
 - If Codex MCP is unavailable (call fails), CC makes its own judgment and marks it `[pending Codex review]` — do not block the pipeline.
 - Always record the verdict and reasoning in findings.md, regardless of outcome.
 
+## Reliability Additions
+
+### Contract-Aware Judgment
+必须读取 `docs/research_contract.md`（如果存在）来对照 success/failure signals。
+结果必须注明每个 claim 对应 contract 中的哪个 signal。
+
+### Experiment Audit Dependency
+如果 `EXPERIMENT_AUDIT.json` 存在，必须读取 integrity_status。
+如果 integrity_status == "fail"，相关 claim 自动标记 "needs caveat"。
+
+### Evidence Table
+每次 judgment 后更新 `research/CLAIM_EVIDENCE_TABLE.md`。
+每条 claim 记录 claim_supported (yes/partial/no)、对应 experiment、result file、metric。
+
+### Codex-First Priority
+result judge 优先 Codex。
+Codex 失败时 fallback 到 `LLM_RESULT_JUDGE_FALLBACK_MODEL`。
+fallback 输出必须标记 `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`。
+
+### Anti-Overclaim Rules
+- partial 不能扩大成 yes。
+- 单数据集正结果不能写成普遍 claim。
+- 必须注明 caveats 和 scope 限制。
+
 ## Review Tracing
 
 After each `mcp__codex__codex` or `mcp__codex__codex-reply` reviewer call, save the trace following `shared-references/review-tracing.md`. Use `tools/save_trace.sh` or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).

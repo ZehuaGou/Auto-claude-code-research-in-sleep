@@ -85,6 +85,69 @@ Output a structured report:
 - If the method is not novel but the FINDING would be, say so explicitly
 - Always check the most recent 6 months of arXiv — the field moves fast
 
+### Canonical Idea Input
+
+This skill supports structured canonical idea input:
+
+**Input formats:**
+- `CAND_001` — looks up `idea-stage/AGENTIC/CANONICAL_IDEAS/CAND_001.md`
+- `CANONICAL_IDEAS/CAND_001.md` — explicit file path
+- Free-text idea description (existing behavior)
+
+**When the input is a CAND_*.md file:**
+1. Read ONLY that candidate file + relevant literature sections.
+2. Do NOT read:
+   - Other candidates in CANONICAL_IDEAS/
+   - Generator traces (RUNS/<run_id>/IDEA_CARDS/)
+   - Previous novelty scores
+   - User preferences or praise
+3. Output written to: `idea-stage/AGENTIC/NOVELTY/CAND_XXX_novelty.md`
+
+### Verdict Requirements
+
+The output verdict MUST be one of:
+- `confirmed_novel` — clearly novel based on evidence
+- `likely_incremental` — incremental contribution, may still be publishable
+- `already_done` — same or highly similar work exists
+- `insufficient_evidence` — cannot determine from available literature
+
+**Hard Rules:**
+- `insufficient_evidence` must NOT be treated as `confirmed_novel`. If evidence is insufficient, state what additional search would be needed.
+- `insufficient_evidence` cannot enter final selection's `top_idea_found` path.
+- `already_done` must kill or exclude the candidate from further phases.
+- `likely_incremental` can only be backup or revise — should not directly become `top_idea_found`, unless the final_selector explicitly explains why the incremental contribution is still worth pursuing.
+
+## Reliability Additions
+
+### Codex-First Review
+novelty 生死判断使用 Codex 优先。
+如果 Codex 不可用，fallback 到 `LLM_NOVELTY_CHECKER_FALLBACK_MODEL`。
+fallback 输出必须标记 `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`。
+
+### Paper Ingest Sections
+读取 paper-ingest 输出的 Markdown 章节进行查新，不要直接塞 PDF。
+查新按 staged reading 规则读：
+- abstract.md + introduction.md 确定背景和问题
+- method.md 理解方法细节
+- related_work.md 对比最接近工作
+
+### Deep Ingest for Closest Prior Work
+- 对 candidate 的 closest prior work，优先读取 `literature-md/<paper_id>/abstract.md`、`introduction.md`、`method.md`、`related_work.md`。
+- 如果这些文件不存在或是占位内容（例如 `[Section not extracted]`），先调用 `/paper-ingest <paper_id> --deep`。
+- novelty verdict 不得只基于标题/摘要，除非标记 `insufficient_evidence`。
+- deep ingest 后使用 `section_index.json` 检查哪些章节有可用内容。
+
+### Structured Verdict
+输出必须区分四种 verdict：
+- `confirmed_novel` — 确认新颖
+- `likely_incremental` — 可能是增量工作
+- `already_done` — 已有相同/高度相似工作
+- `insufficient_evidence` — 证据不足
+
+### Call Ledger
+所有 Codex / LLM 调用写入 `.aris/calls/llm_calls.jsonl`。
+不允许 silent fallback。
+
 ## Review Tracing
 
 After each `mcp__codex__codex` or `mcp__codex__codex-reply` reviewer call, save the trace following `shared-references/review-tracing.md`. Use `tools/save_trace.sh` or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).

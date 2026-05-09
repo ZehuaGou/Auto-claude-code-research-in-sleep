@@ -259,6 +259,20 @@ if EXPERIMENT_AUDIT.json exists AND integrity_status == "fail":
 
 Motivated by community-reported integrity issues (#57, #131) where executor agents created fake ground truth and self-normalized scores.
 
+## Reliability Additions
+
+### Codex-First Priority
+auditor 优先使用 Codex。
+Codex 失败时 fallback 到 `LLM_EXPERIMENT_AUDITOR_FALLBACK_MODEL`。
+fallback 必须在输出中标记 `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK` 和 degraded 状态。
+
+### Call Ledger
+每次 Codex / LLM 调用写入 `.aris/calls/llm_calls.jsonl`。
+启动调用时写 `current_call.json`，完成时标记 completed 或 failed。
+
+### Fallback Visibility
+/status 和 /model-usage-status 可以看到当前 audit 调用的状态和 fallback 记录。
+
 ## Review Tracing
 
 After each `mcp__codex__codex` or `mcp__codex__codex-reply` reviewer call, save the trace following `shared-references/review-tracing.md`. Use `tools/save_trace.sh` or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).

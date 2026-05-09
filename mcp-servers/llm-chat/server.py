@@ -10,7 +10,9 @@ Environment Variables:
 
 Supported Providers (examples):
     OpenAI:      LLM_BASE_URL=https://api.openai.com/v1 LLM_MODEL=gpt-4o
-    DeepSeek:    LLM_BASE_URL=https://api.deepseek.com/v1 LLM_MODEL=deepseek-chat
+    DeepSeek:    LLM_BASE_URL=https://api.deepseek.com LLM_MODEL=deepseek-v4-pro
+                 LLM_FALLBACK_MODEL=deepseek-v4-flash LLM_THINKING=enabled LLM_REASONING_EFFORT=high
+                 (V4 API does not use /v1 suffix; supports thinking/reasoning_effort)
     Kimi:        LLM_BASE_URL=https://api.moonshot.cn/v1 LLM_MODEL=moonshot-v1-32k
     MiniMax:     LLM_BASE_URL=https://api.minimax.io/v1 LLM_MODEL=MiniMax-M2.7
 """
@@ -31,6 +33,11 @@ BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
 DEFAULT_MODEL = os.environ.get("LLM_MODEL", "gpt-4o")
 FALLBACK_MODEL = os.environ.get("LLM_FALLBACK_MODEL", "gpt-4o")
 SERVER_NAME = os.environ.get("LLM_SERVER_NAME", "llm-chat")
+
+# Optional model parameters
+LLM_THINKING = os.environ.get("LLM_THINKING", "")
+LLM_REASONING_EFFORT = os.environ.get("LLM_REASONING_EFFORT", "")
+LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "4096"))
 
 # Debug logging
 DEBUG_LOG = os.path.join(tempfile.gettempdir(), f"{SERVER_NAME}-mcp-debug.log")
@@ -74,17 +81,23 @@ def send_response(response):
     sys.stdout.write(output)
     sys.stdout.flush()
 
-def call_llm(messages, model=None):
+def call_llm(messages, model=None, thinking=None, reasoning_effort=None, max_tokens=None):
     """Call LLM Chat Completions API with 504 retry and fallback"""
     if not API_KEY:
         return None, "LLM_API_KEY environment variable not set"
 
     use_model = model or DEFAULT_MODEL
+
     url = f"{BASE_URL.rstrip('/')}/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {API_KEY}"
     }
+
+    # Apply parameter precedence: call arg > env var > default
+    effective_thinking = thinking or LLM_THINKING or ""
+    effective_reasoning_effort = reasoning_effort or LLM_REASONING_EFFORT or ""
+    effective_max_tokens = max_tokens or LLM_MAX_TOKENS or 4096
 
     # Try: original model → retry same model → fallback model
     for attempt in range(3):
@@ -92,10 +105,17 @@ def call_llm(messages, model=None):
         payload = {
             "model": current_model,
             "messages": messages,
-            "max_tokens": 4096
+            "max_tokens": effective_max_tokens,
         }
 
-        debug_log(f"Calling LLM API (attempt {attempt + 1}): model={current_model}")
+        # Add thinking if enabled
+        if effective_thinking and effective_thinking != "disabled":
+            payload["thinking"] = {"type": effective_thinking}
+        # Add reasoning_effort if set
+        if effective_reasoning_effort:
+            payload["reasoning_effort"] = effective_reasoning_effort
+
+        debug_log(f"Calling LLM API (attempt {attempt + 1}): model={current_model}, thinking={effective_thinking}")
 
         try:
             with httpx.Client(timeout=300.0) as client:
@@ -121,6 +141,15 @@ def call_llm(messages, model=None):
                     debug_log(f"API success on retry (attempt {attempt + 1}), response length: {len(content)}")
                 else:
                     debug_log(f"API success, response length: {len(content)}")
+
+                # Log cache info if available
+                if "usage" in data:
+                    usage = data["usage"]
+                    cache_hit = usage.get("prompt_cache_hit_tokens")
+                    cache_miss = usage.get("prompt_cache_miss_tokens")
+                    if cache_hit is not None or cache_miss is not None:
+                        debug_log(f"Cache: hit={cache_hit}, miss={cache_miss}")
+
                 return content, None
         except Exception as e:
             debug_log(f"API exception on attempt {attempt + 1}: {str(e)}")
@@ -184,6 +213,18 @@ def handle_request(request):
                             "system": {
                                 "type": "string",
                                 "description": "Optional system prompt"
+                            },
+                            "thinking": {
+                                "type": "string",
+                                "description": "Thinking mode: enabled|disabled (default: from LLM_THINKING env var)"
+                            },
+                            "reasoning_effort": {
+                                "type": "string",
+                                "description": "Reasoning effort: low|medium|high|max (default: from LLM_REASONING_EFFORT env var)"
+                            },
+                            "max_tokens": {
+                                "type": "number",
+                                "description": f"Max response tokens (default: {LLM_MAX_TOKENS})"
                             }
                         },
                         "required": ["prompt"]
@@ -200,14 +241,17 @@ def handle_request(request):
             prompt = arguments.get("prompt", "")
             model = arguments.get("model", DEFAULT_MODEL)
             system = arguments.get("system", "")
+            thinking = arguments.get("thinking", "")
+            reasoning_effort = arguments.get("reasoning_effort", "")
+            max_tokens = arguments.get("max_tokens", 0)
 
             messages = []
             if system:
                 messages.append({"role": "system", "content": system})
             messages.append({"role": "user", "content": prompt})
 
-            debug_log(f"Tool call: chat, prompt length: {len(prompt)}")
-            content, error = call_llm(messages, model)
+            debug_log(f"Tool call: chat, prompt length: {len(prompt)}, model={model}, thinking={thinking}")
+            content, error = call_llm(messages, model, thinking, reasoning_effort, max_tokens)
 
             if error:
                 return {

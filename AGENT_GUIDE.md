@@ -47,7 +47,8 @@ Parameters pass through workflow chains automatically.
 
 | Workflow | Invoke | Input | Output | When to use |
 |----------|--------|-------|--------|-------------|
-| W1: Idea Discovery | `/idea-discovery "direction"` | research direction | IDEA_REPORT.md, EXPERIMENT_PLAN.md | Starting new research |
+| W1: Idea Discovery | `/idea-discovery "direction"` | research direction | IDEA_SELECTION_REPORT.md, IDEA_BANK, CANONICAL_IDEAS | Starting new research (lit → ideas → review → novelty → selection) |
+| Idea Bank Management | `/idea-bank status` | status/dedup/candidate | IDEA_BANK summary | Inspect and manage idea candidates across runs |
 | W1.5: Experiment Bridge | `/experiment-bridge` | EXPERIMENT_PLAN.md | running code, EXPERIMENT_LOG.md | Have a plan, need to implement |
 | W2: Auto Review | `/auto-review-loop "scope"` | paper + results | improved paper | Iterative improvement |
 | W3: Paper Writing | `/paper-writing "NARRATIVE_REPORT.md"` | narrative report | paper/main.pdf | Ready to write |
@@ -60,6 +61,7 @@ Parameters pass through workflow chains automatically.
 | `/alphaxiv "arxiv-id"` | Paper lookup | LLM-optimized summary with tiered fallback |
 | `/research-lit "topic"` | Literature survey | Finds papers, builds landscape |
 | `/idea-creator "direction"` | Idea generation | Brainstorms and ranks ideas |
+| `/idea-bank status` | Idea bank management | Inspect, dedup, and manage canonical candidates across runs |
 | `/novelty-check "idea"` | Novelty verification | Checks against existing work |
 | `/research-review "draft"` | External review | GPT-5.4 xhigh deep critique |
 | `/experiment-audit` | Integrity check | Cross-model audit of eval code |
@@ -75,6 +77,24 @@ Parameters pass through workflow chains automatically.
 | `/meta-optimize` | Self-improvement | Analyze usage, propose skill edits |
 | `/analyze-results` | Result analysis | Statistics and comparison tables |
 | `/ablation-planner` | Ablation design | Reviewer-perspective ablations |
+| `/config-check` | Configuration check | ARIS .env, Codex, Feishu configuration check |
+| `/model-usage-status` | Model usage | Recent Codex/LLM calls, fallbacks, failures |
+| `/status` | Project status | Unified pipeline/session/experiment/reviewer status |
+| `/paper-ingest "arxiv-id"` | Paper ingestion | Convert papers to structured Markdown sections |
+| `/research-contract "idea"` | Research contract | Freeze hypothesis, signals, metrics before experiments |
+| `/baseline-repro "repo"` | Baseline reproduction | Establish and verify baseline anchor |
+| `/research-assurance` | Assurance check | Verify contract, baseline, audit, claims before paper |
+| `/exec-review "file"` | One-shot review | Independent review of idea/contract/result |
+| `/panel-review "topic"` | Panel review | Multi-round reviewer session for complex debates |
+| `/session-orchestrator` | Session management | Multi-session research workflow with handoffs |
+| `/session-handoff "task"` | Session handoff | Write structured handoff between sessions |
+
+## Internal Tools
+
+Some helper tools exist under `tools/` for scaffolding, ledger, status,
+output validation, and contributor testing. Normal users should invoke
+slash skills, not Python scripts. Only contributors/debuggers should
+call these tools directly.
 
 ## Artifact Contracts
 
@@ -82,7 +102,7 @@ Skills communicate through plain-text files:
 
 | Artifact | Created by | Consumed by |
 |----------|-----------|-------------|
-| `IDEA_REPORT.md` | idea-discovery | experiment-bridge |
+| `idea-stage/AGENTIC/FINAL_SELECTION/IDEA_SELECTION_REPORT.md` | idea-discovery | research-contract / experiment-bridge only after explicit user request |
 | `EXPERIMENT_PLAN.md` | experiment-plan | experiment-bridge |
 | `EXPERIMENT_LOG.md` | experiment-bridge | auto-review-loop, result-to-claim |
 | `NARRATIVE_REPORT.md` | auto-review-loop | paper-writing |
@@ -94,6 +114,23 @@ Skills communicate through plain-text files:
 | `CITATION_AUDIT.md/.json` | citation-audit | paper-writing Phase 5.8 submission gate |
 | `research-wiki/` | research-wiki | idea-creator, research-lit, result-to-claim |
 | `.aris/meta/events.jsonl` | hooks (passive) | meta-optimize |
+| `docs/research_contract.md` | research-contract | experiment-bridge, result-to-claim, research-assurance |
+| `docs/research_contract.lock.json` | research-contract | experiment-bridge |
+| `research/BASELINE.md` | baseline-repro | experiment-bridge, research-assurance |
+| `research/BASELINE_REPRODUCTION_REPORT.md` | baseline-repro | experiment-bridge, research-assurance |
+| `literature-md/<paper_id>/` | paper-ingest | novelty-check, baseline-repro, paper-writing |
+| `.aris/sessions/SESSION_REGISTRY.json` | session-orchestrator | status |
+| `.aris/sessions/ACTIVE_TASKS.json` | session-orchestrator | status |
+| `.aris/sessions/HANDOFFS/` | session-handoff | session-orchestrator |
+| `.aris/calls/llm_calls.jsonl` | llm_call_ledger | model-usage-status, status |
+| `.aris/calls/current_call.json` | llm_call_ledger | model-usage-status, status |
+| `research/CLAIM_EVIDENCE_TABLE.md` | research-assurance, result-to-claim | paper-writing |
+| `research/ASSURANCE_REPORT.md` | research-assurance | paper-writing, submission |
+| `idea-stage/AGENTIC/RUNS/<run_id>/` | research-lit / idea-discovery | idea-creator |
+| `idea-stage/AGENTIC/IDEA_BANK.md` | idea-creator / idea-discovery | exec-review, novelty-check, idea-bank |
+| `idea-stage/AGENTIC/IDEA_BANK.json` | idea-creator / idea-discovery | idea-bank (machine-readable) |
+| `idea-stage/AGENTIC/CANONICAL_IDEAS/` | idea-creator / idea-discovery | exec-review, novelty-check |
+| `idea-stage/AGENTIC/FINAL_SELECTION/IDEA_SELECTION_REPORT.md` | idea-discovery | research-contract, experiment-bridge (user-driven) |
 
 ## Cross-Model Protocol
 
@@ -112,6 +149,12 @@ Read these before invoking review-related skills:
 - `skills/shared-references/citation-discipline.md` — citation rules
 - `skills/shared-references/writing-principles.md` — writing standards
 - `skills/shared-references/venue-checklists.md` — venue formatting
+- `skills/shared-references/env-config-policy.md` — .env reading rules, variable conventions
+- `skills/shared-references/model-routing.md` — role-based model routing definitions
+- `skills/shared-references/transport-routing.md` — MCP/exec-review/panel-review suitability
+- `skills/shared-references/research-contract.md` — contract protocol for skills
+- `skills/shared-references/paper-ingest-protocol.md` — paper ingestion protocol and staged reading
+- `skills/shared-references/session-protocol.md` — session management protocol
 
 ## Research Wiki (Optional)
 
@@ -139,3 +182,7 @@ Codex reasoning is **always xhigh** regardless of effort.
 - Each skill's behavior: read its `skills/<name>/SKILL.md`
 - System-wide rules: read `skills/shared-references/*.md`
 - This guide is a routing index, not the specification
+
+## User Documentation
+
+- `docs/RESEARCH_RELIABILITY_ENHANCEMENT_GUIDE_CN.md` — 中文完整使用与贡献指南（面向用户和贡献者，涵盖所有新增 skill/tool/artifact 的详细用法）

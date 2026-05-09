@@ -317,6 +317,32 @@ Ready for Workflow 2:
 - **Vast.ai lifecycle.** If using vast.ai instances, destroy them after all experiments complete and results are downloaded. Running instances cost money every second — don't leave them idle. Use `/vast-gpu destroy` or `/vast-gpu destroy-all` when done.
 - **Modal lifecycle.** If using `gpu: modal`, no cleanup is needed — Modal auto-scales to zero after each run. But always show cost estimates before running and verify the spending limit is set at https://modal.com/settings (NEVER through CLI).
 
+## Reliability Additions
+
+### Research Contract Gate
+在 Phase 4（部署 full experiment）前，检查 `docs/research_contract.md` 是否存在：
+- 如果存在：验证 contract 中的 success/failure signals、metrics、data split 与实验计划一致。
+- 如果不存在：提示先运行 `/research-contract`。
+- pilot/sanity 阶段可软通过（标记 provisional）。
+
+### Baseline Report Gate
+在 Phase 4 前，检查 `research/BASELINE_REPRODUCTION_REPORT.md` 是否存在：
+- 如果存在：验证 baseline 复现可信度。
+- 如果不存在：提示先运行 `/baseline-repro`。
+- soft gate：允许跳过但记录 warning。
+
+### Experiment Code Review
+在 Phase 3（实现代码）后，使用 `LLM_EXPERIMENT_CODE_REVIEWER_MODEL` 审查：
+- 检查代码是否符合 research contract。
+- 检查有没有偷偷改 data split / metric / baseline / 评估函数。
+- 检查是否从零重写了不该重写的框架。
+
+### Pre-Implementation Code Scan
+实现代码前，优先扫描现有代码和 base repo（如果 `BASE_REPO` 设置了），标识可复用的部分。
+
+### Session Handoff
+每个 milestone 完成后记录 session handoff，输出到 `.aris/sessions/HANDOFFS/`。
+
 ## Composing with Other Skills
 
 ```

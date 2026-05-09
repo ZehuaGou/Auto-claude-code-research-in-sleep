@@ -688,3 +688,20 @@ then /paper-writing for the final writing step.
 | 5. Improvement | 15-30 min | Yes ✅ |
 
 **Total: ~45-90 min** for a full paper from narrative report to polished PDF.
+
+## Reliability Additions
+
+### Evidence Table Check
+在 Phase 3（paper-write）前，检查 `research/CLAIM_EVIDENCE_TABLE.md` 是否存在：
+- 如果存在：读取该表，确保 paper 中的每个 claim 都有 evidence 支撑。
+- 如果不存在：提示运行 `/research-assurance`，但允许跳过（soft gate）。
+- 没有 evidence 的 claim 不允许进入论文。
+
+### Degraded Review Warning
+如果某 claim 的 evidence 来自 degraded review（fallback 到 LLM），必须在论文中提醒用户。
+
+### Citation Rules
+只引用：
+- 已经通过 citation-audit 的引用
+- 或明确标记为"待验证"的引用
+不可引用不存在的论文或捏造的引用。
