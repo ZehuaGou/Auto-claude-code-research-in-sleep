@@ -68,6 +68,12 @@ Invoke `/research-lit` to map the research landscape and extract gaps:
   - `idea-stage/AGENTIC/RUNS/<run_id>/GAP_MAP.md`
 - Identify structural gaps and recurring limitations
 
+**Codex Gate — Evidence Integrity Audit:** After literature survey, run
+evidence_integrity_auditor via Codex (see `/research-lit` SKILL.md for
+details). Only PASS or PASS_WITH_WARNINGS allows entry to Phase 2.
+FAIL stops the pipeline. Audit output stored at
+`idea-stage/AGENTIC/EVIDENCE_AUDIT/PHASE1_EVIDENCE_AUDIT.md`.
+
 **🚦 Checkpoint:** Present the landscape summary to the user. Ask:
 
 ```
@@ -100,6 +106,11 @@ Invoke `/idea-creator` with the landscape context:
 
 **Quality gate:** If fewer than 3 ideas, mark `needs_review` and stop.
 
+**Codex Gate — Idea Shortlist Audit:** After dedup and canonicalization, run
+idea_shortlist_auditor via Codex (see `/idea-creator` SKILL.md for details).
+Killed candidates are excluded from Phase 3 onward. Audit output stored at
+`idea-stage/AGENTIC/SHORTLIST_AUDIT/PHASE2_SHORTLIST_AUDIT.md`.
+
 **🚦 Checkpoint:** Present the generated ideas to the user:
 
 ```
@@ -114,14 +125,16 @@ Which should I review in depth? Or should I adjust direction?
 (If no response, I'll review all active candidates.)
 ```
 
-### Phase 3: Independent Review
+### Phase 3: Independent Review (Codex Gate)
 
-For each active canonical candidate, invoke `/exec-review`:
+For each active canonical candidate, invoke `/exec-review` via Codex:
 
 ```
 /exec-review "idea-stage/AGENTIC/CANONICAL_IDEAS/CAND_001.md"
 /exec-review "idea-stage/AGENTIC/CANONICAL_IDEAS/CAND_002.md"
 ```
+
+**Backend:** Codex MCP (via `LLM_IDEA_REVIEWER_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable.
 
 **Rules:**
 - One candidate at a time — reviewer sees only one CAND_*.md
@@ -132,14 +145,16 @@ For each active canonical candidate, invoke `/exec-review`:
 
 **Killed candidates** are excluded from further phases.
 
-### Phase 4: Novelty Check
+### Phase 4: Novelty Check (Codex Gate)
 
-For each `go` or `revise` candidate, run `/novelty-check`:
+For each `go` or `revise` candidate, run `/novelty-check` via Codex:
 
 ```
 /novelty-check "CAND_001"
 /novelty-check "CAND_002"
 ```
+
+**Backend:** Codex MCP (via `LLM_NOVELTY_CHECKER_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable.
 
 **Output:** `idea-stage/AGENTIC/NOVELTY/CAND_XXX_novelty.md`
 
@@ -151,19 +166,21 @@ For each `go` or `revise` candidate, run `/novelty-check`:
 Candidates with verdict `already_done` are excluded from further phases.
 `insufficient_evidence` cannot enter the `top_idea_found` path.
 
-### Phase 5: Adversarial Review
+### Phase 5: Adversarial Review (Codex Gate)
 
-For each surviving candidate (not killed, not `already_done`), run an adversarial critique via `/exec-review` (or directly via Codex if available):
+For each surviving candidate (not killed, not `already_done`), run an adversarial critique via Codex:
 
 ```
 /exec-review "idea-stage/AGENTIC/CANONICAL_IDEAS/CAND_001.md" — role: adversarial_reviewer
 ```
 
+**Backend:** Codex MCP (via `LLM_ADVERSARIAL_REVIEWER_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable.
+
 **Output:** `idea-stage/AGENTIC/ADVERSARIAL/CAND_XXX_adversarial.md`
 
 The adversarial reviewer identifies only weaknesses — no praise, no improvement suggestions.
 
-### Phase 6: Final Selection
+### Phase 6: Final Selection (Codex Gate)
 
 The main architect (current Agent) reads only:
 - `IDEA_BANK.md` — candidate status overview
@@ -171,6 +188,8 @@ The main architect (current Agent) reads only:
 - `REVIEWS/CAND_*_review.md` — review verdicts
 - `NOVELTY/CAND_*_novelty.md` — novelty assessments
 - `ADVERSARIAL/CAND_*_adversarial.md` — adversarial critiques
+
+**Backend:** Codex MCP (via `LLM_FINAL_SELECTOR_PRIMARY=codex`). Fallback to deepseek-v4-pro if Codex unavailable.
 
 Does NOT read:
 - Generator traces or raw run logs

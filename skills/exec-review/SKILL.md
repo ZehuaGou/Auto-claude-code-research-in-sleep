@@ -30,6 +30,24 @@ allowed-tools: Bash(*), Read, Write, Grep, Glob, mcp__codex__codex, mcp__llm-cha
 - `review-stage/exec_reviews/<id>.md`
 - `review-stage/exec_reviews/<id>.json`
 
+## Artifact Header
+
+Every output markdown file MUST begin with a model tracking header:
+
+```
+primary_backend: codex|llm-chat
+primary_model: <model name or "DEFAULT">
+actual_backend: codex|llm-chat
+actual_model: <model name or "DEFAULT">
+fallback_used: True|False
+fallback_reason: None|<reason>
+```
+
+If fallback from Codex to LLM occurred, also include:
+```
+REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK: true
+```
+
 ## Workflow
 
 1. 读取输入文件。

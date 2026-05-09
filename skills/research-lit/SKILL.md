@@ -488,3 +488,53 @@ If a GAP_MAP.md is produced (for downstream agentic flows), each gap must contai
 ### Internal Helpers
 
 The tools `tools/agentic_idea_discovery.py` and `tools/isolated_job_runner.py` may be called internally for directory scaffolding and job execution. Users should not call these directly.
+
+## Phase 1 Codex Gate: Evidence Integrity Audit (evidence_integrity_auditor)
+
+When called from `/idea-discovery`, after literature survey and gap extraction, run an evidence integrity audit via Codex before passing results to Phase 2:
+
+1. **Trigger**: After LITERATURE_INDEX.md and GAP_MAP.md are produced.
+2. **Gate invocation**: Use Codex MCP for the audit — this is a judgment gate, not a generation task.
+
+```
+mcp__codex__codex:
+  prompt: |
+    You are an evidence integrity auditor. Review the following literature
+    survey outputs and assess whether the evidence is sufficient to proceed
+    to idea generation.
+
+    LITERATURE_INDEX.md:
+    [content]
+
+    GAP_MAP.md:
+    [content]
+
+    Assess:
+    1. Search coverage: Are the key sub-areas covered? Rate 0-10.
+    2. Gap authenticity: Are the identified gaps real, or artifacts of
+       incomplete search?
+    3. Missing evidence: What key papers or directions are clearly missing?
+    4. Verdict: PASS (≥6/10 coverage, gaps are real), PASS_WITH_WARNINGS
+       (some coverage gaps, but usable), or FAIL (search too narrow,
+       gaps are fake or insufficiently supported).
+
+    Do NOT generate ideas. Do NOT suggest research directions.
+    Only audit evidence integrity.
+```
+
+3. **Output**: `idea-stage/AGENTIC/EVIDENCE_AUDIT/PHASE1_EVIDENCE_AUDIT.md`
+
+4. **Gate decision**:
+   - **PASS** → proceed to idea generation
+   - **PASS_WITH_WARNINGS** → proceed but note caveats for Phase 2
+   - **FAIL** → stop pipeline, suggest broader literature search
+
+5. **Artifact header**: The output MUST begin with:
+   ```
+   primary_backend: codex
+   actual_backend: codex|llm-chat
+   fallback_used: True|False
+   fallback_reason: None|<reason>
+   ```
+
+6. **Fallback**: If Codex is unavailable, fallback to `LLM_EVIDENCE_AUDITOR_FALLBACK_MODEL`. Mark output with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`.

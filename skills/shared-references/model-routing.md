@@ -210,3 +210,74 @@
 **模型变量**：fallback: LLM_ADVERSARIAL_REVIEWER_FALLBACK_MODEL、LLM_ADVERSARIAL_REVIEWER_FALLBACK_THINKING、LLM_ADVERSARIAL_REVIEWER_FALLBACK_REASONING_EFFORT
 
 **Codex 优先**：是（可选），默认 API
+
+## 16. evidence_integrity_auditor
+
+**职责**：对 Phase 1 文献调研结果做独立完整性审查。检查 LITERATURE_INDEX.md 和 GAP_MAP.md 中的证据是否充分、gap 是否真实、搜索是否全面。不生成 idea，不做 novelty 判断。
+
+**默认输入**：LITERATURE_INDEX.md、GAP_MAP.md
+**不允许的输入：** RUNS/<run_id>/ 下的原始搜索结果，未加工的外部 API 输出
+
+**默认输出**：idea-stage/AGENTIC/EVIDENCE_AUDIT/PHASE1_EVIDENCE_AUDIT.md
+
+**输出必须包含**：搜索覆盖度评分、gap 真实性评估、关键遗漏风险、PASS / PASS_WITH_WARNINGS / FAIL 结论
+
+**模型变量**：primary: LLM_EVIDENCE_AUDITOR_PRIMARY、fallback: LLM_EVIDENCE_AUDITOR_FALLBACK_MODEL
+
+**Codex 优先**：是
+
+## 17. idea_shortlist_auditor
+
+**职责**：对 Phase 2 生成的 canonical candidates 做独立短名单审查。检查 idea 是否在前人工作中改名重述、method delta 是否足够、最小实验是否明确、claim 是否越界、是否有 fatal flaw。只负责砍掉 weak ideas，不负责提升 idea 质量。
+
+**默认输入**：IDEA_BANK.md、CANONICAL_IDEAS/ 目录下的所有 CAND_*.md
+**不允许的输入：** RUNS/<run_id>/IDEA_CARDS/ 原始卡片、generator trace、review 历史
+
+**默认输出**：idea-stage/AGENTIC/SHORTLIST_AUDIT/PHASE2_SHORTLIST_AUDIT.md
+
+**输出必须包含**：每个 candidate 的 verdict (keep / kill)、kill 理由、prior work rename 检测、method delta 评分、minimum experiment 检查
+
+**模型变量**：primary: LLM_IDEA_SHORTLIST_AUDITOR_PRIMARY、fallback: LLM_IDEA_SHORTLIST_AUDITOR_FALLBACK_MODEL
+
+**Codex 优先**：是
+
+## 18. final_selector
+
+**职责**：在 Phase 6 做最终选择。读取所有评审材料，判断是否有值得推进的 idea。可以输出 top_idea_found、multiple_candidates 或 no strong idea found。不生成新 idea，不做额外查新。
+
+**默认输入**：IDEA_BANK.md、CANONICAL_IDEAS/ 下所有 CAND_*.md、REVIEWS/ 下所有 review、NOVELTY/ 下所有 novelty report、ADVERSARIAL/ 下所有 adversarial review
+**不允许的输入：** RUNS/<run_id>/ 原始运行日志、generator trace、raw API 输出
+
+**默认输出**：idea-stage/AGENTIC/FINAL_SELECTION/IDEA_SELECTION_REPORT.md
+
+**输出必须包含**：结论 (top_idea_found / multiple_candidates / no strong idea found)、每个活跃 candidate 的推荐、理由、风险
+
+**模型变量**：primary: LLM_FINAL_SELECTOR_PRIMARY、fallback: LLM_FINAL_SELECTOR_FALLBACK_MODEL
+
+**Codex 优先**：是
+
+---
+
+## Phase-by-Phase Codex Routing Summary
+
+| Phase | Skill | Role | Codex? | Reason |
+|-------|-------|------|--------|--------|
+| 0 | paper-ingest | — | No | PDF/HTML→Markdown，纯机械转换，无需判断 |
+| 1 | research-lit | literature_scout | No | 元数据搜索整理，无需判断 |
+| 1 | research-lit | evidence_integrity_auditor | **Yes** | 证据完整性生死判断，Codex 独立审查 |
+| 1 | research-lit | gap_extractor | No | 从文献提取 gap，非判断任务 |
+| 2 | idea-creator | idea_generator | No | 发散生成，不需要 Codex 判断 |
+| 2 | idea-creator | idea_deduplicator | No | 机械去重，非判断任务 |
+| 2 | idea-creator | idea_shortlist_auditor | **Yes** | 短名单砍掉 weak ideas，生死判断 |
+| 3 | exec-review | idea_reviewer | **Yes** | 独立审查，Codex 优先 |
+| 3 | exec-review | contract_reviewer | **Yes** | 合同审查，Codex 优先 |
+| 4 | novelty-check | novelty_checker | **Yes** | 查新生死判断，Codex 优先 |
+| 5 | adversarial | adversarial_reviewer | **Yes** | 纯批判找漏洞，Codex 优先 |
+| 6 | idea-discovery | final_selector | **Yes** | 最终选择，Codex 优先 |
+| 7 | experiment-audit | experiment_auditor | **Yes** | 实验结果审查，Codex 优先 |
+| 8 | paper-audit | result_judge | **Yes** | 结果 claim 判断，Codex 优先 |
+| 8 | paper-audit | final_auditor | **Yes** | 最终论文审查，Codex 优先 |
+| — | — | baseline_reviewer | No | baseline 复现审查，deepseek-v4-pro 即可 |
+| — | — | experiment_code_reviewer | No | 实验代码审查，deepseek-v4-pro 即可 |
+| — | — | log_summarizer | No | 轻量日志总结，deepseek-v4-flash |
+| — | — | paper_summarizer | No | 论文摘要，deepseek-v4-flash |

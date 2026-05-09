@@ -827,6 +827,169 @@ else:
         check(f"{c} runner file exists", False)
 
 # ---------------------------------------------------------------------------
+# 20. .env.example has all new Codex roles
+# ---------------------------------------------------------------------------
+print("\n=== 20. .env.example new Codex roles ===")
+env_example = ROOT / ".env.example"
+if env_example.exists():
+    text = env_example.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "20a. LLM_EVIDENCE_AUDITOR_PRIMARY=codex in .env.example",
+        "LLM_EVIDENCE_AUDITOR_PRIMARY=codex" in text,
+    )
+    check(
+        "20b. LLM_IDEA_SHORTLIST_AUDITOR_PRIMARY=codex in .env.example",
+        "LLM_IDEA_SHORTLIST_AUDITOR_PRIMARY=codex" in text,
+    )
+    check(
+        "20c. LLM_FINAL_SELECTOR_PRIMARY=codex in .env.example",
+        "LLM_FINAL_SELECTOR_PRIMARY=codex" in text,
+    )
+    check(
+        "20d. LLM_EVIDENCE_AUDITOR_FALLBACK_MODEL=deepseek-v4-pro in .env.example",
+        "LLM_EVIDENCE_AUDITOR_FALLBACK_MODEL=deepseek-v4-pro" in text,
+    )
+    check(
+        "20e. LLM_IDEA_SHORTLIST_AUDITOR_FALLBACK_MODEL=deepseek-v4-pro in .env.example",
+        "LLM_IDEA_SHORTLIST_AUDITOR_FALLBACK_MODEL=deepseek-v4-pro" in text,
+    )
+    check(
+        "20f. LLM_FINAL_SELECTOR_FALLBACK_MODEL=deepseek-v4-pro in .env.example",
+        "LLM_FINAL_SELECTOR_FALLBACK_MODEL=deepseek-v4-pro" in text,
+    )
+else:
+    for c in ["20a", "20b", "20c", "20d", "20e", "20f"]:
+        check(f"{c} .env.example exists", False)
+
+# ---------------------------------------------------------------------------
+# 21. model-routing.md has all new roles + routing table
+# ---------------------------------------------------------------------------
+print("\n=== 21. model-routing.md new roles ===")
+model_routing = ROOT / "skills" / "shared-references" / "model-routing.md"
+if model_routing.exists():
+    content = model_routing.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "21a. evidence_integrity_auditor section exists",
+        "evidence_integrity_auditor" in content,
+    )
+    check(
+        "21b. idea_shortlist_auditor section exists",
+        "idea_shortlist_auditor" in content,
+    )
+    check(
+        "21c. final_selector section exists",
+        "final_selector" in content,
+    )
+    check(
+        "21d. Phase-by-Phase Codex Routing Summary table exists",
+        "Phase-by-Phase Codex Routing Summary" in content,
+    )
+    check(
+        "21e. evidence_integrity_auditor is Yes in routing table",
+        "evidence_integrity_auditor" in content and "**Yes**" in content,
+    )
+    check(
+        "21f. idea_shortlist_auditor is Yes in routing table",
+        "idea_shortlist_auditor" in content and "**Yes**" in content,
+    )
+else:
+    for c in ["21a", "21b", "21c", "21d", "21e", "21f"]:
+        check(f"{c} model-routing.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 22. research-lit/SKILL.md has evidence_integrity_auditor gate
+# ---------------------------------------------------------------------------
+print("\n=== 22. research-lit SKILL evidence_integrity_auditor ===")
+research_lit = ROOT / "skills" / "research-lit" / "SKILL.md"
+if research_lit.exists():
+    content = research_lit.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "22a. evidence_integrity_auditor section exists in research-lit",
+        "evidence_integrity_auditor" in content,
+    )
+    check(
+        "22b. Evidence Integrity Audit gate description exists",
+        "Evidence Integrity Audit" in content,
+    )
+    check(
+        "22c. Phase 1 Codex Gate header exists",
+        "Phase 1 Codex Gate" in content,
+    )
+else:
+    for c in ["22a", "22b", "22c"]:
+        check(f"{c} research-lit SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 23. idea-creator/SKILL.md has idea_shortlist_auditor gate
+# ---------------------------------------------------------------------------
+print("\n=== 23. idea-creator SKILL idea_shortlist_auditor ===")
+idea_creator = ROOT / "skills" / "idea-creator" / "SKILL.md"
+if idea_creator.exists():
+    content = idea_creator.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "23a. idea_shortlist_auditor section exists in idea-creator",
+        "idea_shortlist_auditor" in content,
+    )
+    check(
+        "23b. Idea Shortlist Audit gate description exists",
+        "Idea Shortlist Audit" in content,
+    )
+    check(
+        "23c. Codex Gate marker exists",
+        "Codex Gate" in content,
+    )
+else:
+    for c in ["23a", "23b", "23c"]:
+        check(f"{c} idea-creator SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 24. novelty-check SKILL no longer hardcodes gpt-5.4
+# ---------------------------------------------------------------------------
+print("\n=== 24. novelty-check no hardcoded gpt-5.4 ===")
+novelty_skill = ROOT / "skills" / "novelty-check" / "SKILL.md"
+if novelty_skill.exists():
+    content = novelty_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "24a. REVIEWER_MODEL = gpt-5.4 is removed",
+        "REVIEWER_MODEL = `gpt-5.4`" not in content,
+        "Still contains hardcoded gpt-5.4" if "REVIEWER_MODEL = `gpt-5.4`" in content else "",
+    )
+    check(
+        "24b. novelty-check uses REVIEWER_BACKEND = codex",
+        "REVIEWER_BACKEND = `codex`" in content,
+    )
+    check(
+        "24c. novelty-check has Artifact Header section",
+        "Artifact Header" in content,
+    )
+else:
+    for c in ["24a", "24b", "24c"]:
+        check(f"{c} novelty-check SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 25. exec-review SKILL has Artifact Header
+# ---------------------------------------------------------------------------
+print("\n=== 25. exec-review artifact header ===")
+exec_skill = ROOT / "skills" / "exec-review" / "SKILL.md"
+if exec_skill.exists():
+    content = exec_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "25a. exec-review has Artifact Header section",
+        "Artifact Header" in content,
+    )
+    check(
+        "25b. exec-review header includes primary_backend field",
+        "primary_backend" in content,
+    )
+    check(
+        "25c. exec-review header includes fallback_used field",
+        "fallback_used" in content,
+    )
+else:
+    for c in ["25a", "25b", "25c"]:
+        check(f"{c} exec-review SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'='*40}")

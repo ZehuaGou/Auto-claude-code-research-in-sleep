@@ -11,7 +11,7 @@ Check whether a proposed method/idea has already been done in the literature: **
 
 ## Constants
 
-- REVIEWER_MODEL = `gpt-5.4` — Model used via Codex MCP. Must be an OpenAI model (e.g., `gpt-5.4`, `o3`, `gpt-4o`)
+- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP for novelty judgments. See `shared-references/model-routing.md` for fallback model configuration.
 
 ## Instructions
 
@@ -41,7 +41,7 @@ For EACH core claim, search using ALL available sources:
 3. **Read abstracts**: For each potentially overlapping paper, WebFetch its abstract and related work section
 
 ### Phase C: Cross-Model Verification
-Call REVIEWER_MODEL via Codex MCP (`mcp__codex__codex`) with xhigh reasoning:
+Call Codex MCP (`mcp__codex__codex`) for the novelty judgment (uses `LLM_NOVELTY_CHECKER_PRIMARY` from model-routing.md):
 ```
 config: {"model_reasoning_effort": "xhigh"}
 ```
@@ -147,6 +147,23 @@ fallback 输出必须标记 `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`。
 ### Call Ledger
 所有 Codex / LLM 调用写入 `.aris/calls/llm_calls.jsonl`。
 不允许 silent fallback。
+
+### Artifact Header
+每个 novelty report 输出文件开头必须包含模型追踪 header：
+
+```
+primary_backend: codex|llm-chat
+primary_model: <model name or "DEFAULT">
+actual_backend: codex|llm-chat
+actual_model: <model name or "DEFAULT">
+fallback_used: True|False
+fallback_reason: None|<reason>
+```
+
+如果从 Codex fallback 到 LLM，必须额外包含：
+```
+REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK: true
+```
 
 ## Review Tracing
 

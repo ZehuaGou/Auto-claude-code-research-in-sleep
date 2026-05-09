@@ -157,6 +157,49 @@ After generation, run deduplication against the existing idea bank:
 4. If uncertain about a pair, keep both as separate candidates.
 5. CANONICAL_IDEAS are the clean input for downstream reviewers/novelty checkers — no generator traces, no old scores, no user preferences.
 
+### Phase 2 Codex Gate: Idea Shortlist Audit (idea_shortlist_auditor)
+
+After dedup and canonicalization, run a shortlist audit via Codex to kill weak ideas before they proceed to Phase 3:
+
+1. **Gate invocation**: Use Codex MCP for the audit — this is a judgment gate.
+
+```
+mcp__codex__codex:
+  prompt: |
+    You are an idea shortlist auditor. Review the following canonical
+    candidates and determine which are worth pursuing.
+
+    IDEA_BANK.md:
+    [content]
+
+    CANONICAL_IDEAS/CAND_*.md:
+    [content]
+
+    For each candidate, assess:
+    1. Prior work rename: Is this an existing method renamed, or genuinely new?
+    2. Method delta: How different is this from the closest prior work?
+    3. Minimum experiment: Is there a clear minimum experiment to test this?
+    4. Claim boundary: Does the idea overclaim what it can deliver?
+    5. Fatal flaw: Is there a fundamental reason this cannot work?
+
+    Verdict per candidate: keep or kill.
+    If kill, provide the single strongest reason.
+```
+
+2. **Output**: `idea-stage/AGENTIC/SHORTLIST_AUDIT/PHASE2_SHORTLIST_AUDIT.md`
+
+3. **Gate decision**: Killed candidates are excluded from Phase 3 onward.
+
+4. **Artifact header**: The output MUST begin with:
+   ```
+   primary_backend: codex
+   actual_backend: codex|llm-chat
+   fallback_used: True|False
+   fallback_reason: None|<reason>
+   ```
+
+5. **Fallback**: If Codex unavailable, fallback to `LLM_IDEA_SHORTLIST_AUDITOR_FALLBACK_MODEL`. Mark with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`.
+
 ### Phase 5: Write Ideas to Research Wiki (if active)
 
 **Skip entirely if `research-wiki/` does not exist.**
