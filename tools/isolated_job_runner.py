@@ -5,7 +5,7 @@ ARIS Isolated Job Runner — API-first task execution engine for Agentic Idea Di
 Backends:
   api              — OpenAI-compatible chat completions via env_loader.
   claude_headless  — Subprocess call to `claude [--bare]` for tool-requiring tasks.
-  codex_optional   — Protocol/documentation only in V1; falls back to api.
+  codex_optional   — Codex required for judgment gates. Falls back to api if unavailable; marks REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK. If role is codex_required, fails with FAIL_REQUIRES_AGENT_MCP_CODEX.
 
 Commands:
   run              Execute a job from a JSON job file.
@@ -140,12 +140,28 @@ def _extract_candidate_id(path: str) -> str:
     return m.group(1) if m else ""
 
 
+# Isolation restricts contamination sources, not evidence sources.
+ALLOWED_EVIDENCE_PATTERNS = [
+    "CANONICAL_IDEAS/CAND_", "LITERATURE_INDEX.md", "GAP_MAP.md",
+    "PHASE1_EVIDENCE_AUDIT", "literature-md/", "external_search_results",
+]
+
+FORBIDDEN_CONTAMINATION_PATTERNS = [
+    "IDEA_CARDS/", "generator_trace", "old_score", "previous_score",
+    "praise", "user_preference", "old_review", "old_novelty",
+    "previous_verdict",
+]
+
+
 def validate_isolated_inputs(job: Dict[str, Any]) -> List[str]:
     """Validate that input files respect role isolation rules.
+
+    "Isolation restricts contamination sources, not evidence sources."
 
     Reviewer must only see one CAND_*.md at a time.
     Novelty checker must not see other candidates or old novelty.
     Adversarial reviewer must only see one candidate + its review + its novelty.
+    All roles allow neutral evidence sources (LITERATURE_INDEX, literature-md, etc.).
 
     Returns a list of violations (empty list = all clear).
     """
@@ -153,6 +169,23 @@ def validate_isolated_inputs(job: Dict[str, Any]) -> List[str]:
     role = job.get("role", "")
     input_files = [Path(f) for f in job.get("input_files", [])]
     input_strs = [str(f) for f in input_files]
+
+    # Check contamination only (evidence sources are allowed)
+    def _is_contamination(path_str: str, extra_forbidden: List[str]) -> bool:
+        norm = path_str.replace("\\", "/")
+        all_forbidden = extra_forbidden + FORBIDDEN_CONTAMINATION_PATTERNS
+        for pat in all_forbidden:
+            if pat.lower() in norm.lower():
+                return True
+        return False
+
+    # Check allowed evidence
+    def _is_allowed_evidence(path_str: str) -> bool:
+        norm = path_str.replace("\\", "/")
+        for pat in ALLOWED_EVIDENCE_PATTERNS:
+            if pat.lower() in norm.lower():
+                return True
+        return False
 
     if role == "idea_reviewer":
         # Must contain exactly one canonical candidate
@@ -162,17 +195,14 @@ def validate_isolated_inputs(job: Dict[str, Any]) -> List[str]:
         elif len(cand_files) > 1:
             violations.append(f"idea_reviewer has {len(cand_files)} CAND inputs (must be exactly 1): {cand_files}")
 
-        # Forbidden paths
-        forbidden_patterns = [
-            "IDEA_CARDS", "RUNS/", "IDEA_BANK.md", "IDEA_BANK.json",
-            "REVIEWS/", "NOVELTY/", "ADVERSARIAL/", "FINAL_SELECTION/",
-            ".meta/", "generator_trace", "old_score", "user_preference", "praise"
-        ]
+        # Forbidden contamination (restrict contamination, NOT evidence)
+        extra_forbidden = ["RUNS/", "IDEA_BANK.md", "IDEA_BANK.json",
+                           "REVIEWS/", "NOVELTY/", "ADVERSARIAL/", "FINAL_SELECTION/", ".meta/"]
         for f in input_strs:
-            norm = f.replace("\\", "/")
-            for pat in forbidden_patterns:
-                if pat.lower() in norm.lower():
-                    violations.append(f"idea_reviewer input contains forbidden path/pattern '{pat}': {f}")
+            if is_canonical_candidate_file(f) or _is_allowed_evidence(f):
+                continue
+            if _is_contamination(f, extra_forbidden):
+                violations.append(f"idea_reviewer input contains contamination (not neutral evidence): {f}")
 
     elif role == "novelty_checker":
         # Must contain exactly one canonical candidate
@@ -182,34 +212,28 @@ def validate_isolated_inputs(job: Dict[str, Any]) -> List[str]:
         elif len(cand_files) > 1:
             violations.append(f"novelty_checker has {len(cand_files)} CAND inputs (must be exactly 1): {cand_files}")
 
-        # May contain LITERATURE_INDEX.md and literature-md/<paper_id>/
-        # Must NOT contain other CAND, IDEA_CARDS, REVIEWS, old NOVELTY
-        forbidden_patterns = [
-            "IDEA_CARDS", "REVIEWS/", "NOVELTY/", "ADVERSARIAL/",
-            "FINAL_SELECTION/", ".meta/"
-        ]
+        # Allows: LITERATURE_INDEX, literature-md, WebSearch/WebFetch results
+        # Forbidden contamination: old review praise, old novelty, generator trace
+        extra_forbidden = ["REVIEWS/", "NOVELTY/", "ADVERSARIAL/", "FINAL_SELECTION/", ".meta/"]
         for f in input_strs:
-            norm = f.replace("\\", "/")
-            for pat in forbidden_patterns:
-                if pat.lower() in norm.lower():
-                    violations.append(f"novelty_checker input contains forbidden path/pattern '{pat}': {f}")
+            if is_canonical_candidate_file(f) or _is_allowed_evidence(f):
+                continue
+            if _is_contamination(f, extra_forbidden):
+                violations.append(f"novelty_checker input contains contamination: {f}")
 
     elif role == "adversarial_reviewer":
-        # Must contain exactly one canonical candidate
         cand_files = [f for f in input_strs if is_canonical_candidate_file(f)]
         if len(cand_files) == 0:
             violations.append("adversarial_reviewer must have exactly one CAND_*.md input")
         elif len(cand_files) > 1:
             violations.append(f"adversarial_reviewer has {len(cand_files)} CAND inputs (must be exactly 1): {cand_files}")
 
-        # Extract candidate_id from the canonical candidate file
         cand_id = ""
         for f in input_strs:
             if is_canonical_candidate_file(f):
                 cand_id = _extract_candidate_id(f)
                 break
 
-        # Must contain review matching this candidate_id
         if cand_id:
             has_matching_review = any(
                 "REVIEWS" in (norm := f.replace("\\", "/")) and cand_id in norm
@@ -220,7 +244,6 @@ def validate_isolated_inputs(job: Dict[str, Any]) -> List[str]:
         else:
             violations.append("adversarial_reviewer: could not determine candidate_id from canonical file")
 
-        # Must contain novelty matching this candidate_id
         if cand_id:
             has_matching_novelty = any(
                 "NOVELTY" in (norm := f.replace("\\", "/")) and cand_id in norm
@@ -231,22 +254,23 @@ def validate_isolated_inputs(job: Dict[str, Any]) -> List[str]:
         else:
             violations.append("adversarial_reviewer: could not determine candidate_id from canonical file")
 
-        # Must NOT contain other candidates or generator trace
-        forbidden_patterns = ["IDEA_CARDS", ".meta/"]
+        # Contamination check: no raw IDEA_CARDS, no generator trace
+        extra_forbidden = [".meta/"]
         for f in input_strs:
-            norm = f.replace("\\", "/")
-            for pat in forbidden_patterns:
-                if pat.lower() in norm.lower():
-                    violations.append(f"adversarial_reviewer input contains forbidden path/pattern '{pat}': {f}")
+            if is_canonical_candidate_file(f) or _is_allowed_evidence(f):
+                continue
+            if _is_contamination(f, extra_forbidden):
+                violations.append(f"adversarial_reviewer input contains contamination: {f}")
 
     elif role == "final_selector":
-        # Must NOT read raw run artifacts
-        forbidden_patterns = ["RUNS/", "IDEA_CARDS", ".meta/"]
+        # Allows: IDEA_BANK, CANONICAL_IDEAS, REVIEWS, NOVELTY, ADVERSARIAL
+        # Forbids: RUNS/, IDEA_CARDS, generator trace
+        extra_forbidden = ["RUNS/"]
         for f in input_strs:
-            norm = f.replace("\\", "/")
-            for pat in forbidden_patterns:
-                if pat.lower() in norm.lower():
-                    violations.append(f"final_selector input contains forbidden path/pattern '{pat}': {f}")
+            if _is_allowed_evidence(f):
+                continue
+            if _is_contamination(f, extra_forbidden):
+                violations.append(f"final_selector input contains contamination: {f}")
 
     return violations
 

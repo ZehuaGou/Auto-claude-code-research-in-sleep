@@ -5,9 +5,14 @@ argument-hint: [research-direction]
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, Agent, Skill, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
-# Workflow 1: Idea Discovery Pipeline (SOLE ENTRY POINT)
+# Workflow 1: Idea Discovery Pipeline (Recommended Entry Point)
 
-`/idea-discovery` is the **single user-facing entry point** for the ARIS research idea discovery pipeline. Users invoke only `/idea-discovery "direction"`. All phases (Phase 1–6) are internal execution steps — users do NOT manually chain `/research-lit`, `/idea-creator`, `/exec-review`, or `/novelty-check` unless debugging.
+`/idea-discovery` is the **recommended single-command entry point** for the ARIS research idea discovery pipeline. ARIS supports two usage modes:
+
+**Mode A (Recommended):** `/idea-discovery "direction"` — auto-executes Phase 1–6 internally.
+**Mode B (Supported):** Manual staged mode — users invoke `/research-lit`, `/idea-creator`, `/exec-review`, `/novelty-check` individually. Each sub-skill still auto-executes its own gate, isolation evidence, and ledger.
+
+Both modes share the same reliability gates. Phase 1–6 are defined consistently regardless of invocation mode.
 
 Orchestrate a complete idea discovery workflow for: **$ARGUMENTS**
 

@@ -176,7 +176,7 @@ if runner.exists():
         viols3 = validate_isolated_inputs(bad_job_novelty)
         check(
             "7. isolated_job_runner rejects old NOVELTY file in novelty_checker input",
-            any("NOVELTY" in v and "forbidden" in v for v in viols3),
+            any("NOVELTY" in v and ("forbidden" in v or "contamination" in v) for v in viols3),
             f"Violations: {viols3}" if viols3 else "No violations returned",
         )
 
@@ -1193,9 +1193,8 @@ idea_disc = ROOT / "skills" / "idea-discovery" / "SKILL.md"
 if idea_disc.exists():
     content = idea_disc.read_text(encoding="utf-8", errors="ignore")
     check(
-        "34a. idea-discovery declares itself as sole user-facing entry point",
-        "single user-facing entry point" in content or "sole entry" in content.lower()
-        or "SINGLE ENTRY" in content,
+        "34a. idea-discovery declares itself as recommended entry point",
+        "recommended" in content.lower() and "entry point" in content.lower(),
     )
     check(
         "34b. idea-discovery defines Phase 1-6 clearly",
@@ -1353,6 +1352,139 @@ if idea_disc.exists():
     )
 else:
     check("40a. idea-discovery SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 41. Two usage modes supported
+# ---------------------------------------------------------------------------
+print("\n=== 41. Two usage modes ===")
+ag = ROOT / "AGENT_GUIDE.md"
+if ag.exists():
+    content = ag.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "41a. AGENT_GUIDE mentions single-command mode and manual staged mode",
+        ("single-command" in content.lower() or "Mode A" in content)
+        and ("manual staged" in content.lower() or "Mode B" in content),
+    )
+else:
+    check("41a. AGENT_GUIDE.md exists", False)
+
+idea_disc = ROOT / "skills" / "idea-discovery" / "SKILL.md"
+if idea_disc.exists():
+    content = idea_disc.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "41b. idea-discovery mentions both Mode A and Mode B",
+        "Mode A" in content and "Mode B" in content,
+    )
+else:
+    check("41b. idea-discovery exists", False)
+
+# ---------------------------------------------------------------------------
+# 42. idea-creator uses DeepSeek for generation, Codex only for shortlist
+# ---------------------------------------------------------------------------
+print("\n=== 42. idea-creator model routing ===")
+idea_creator = ROOT / "skills" / "idea-creator" / "SKILL.md"
+if idea_creator.exists():
+    content = idea_creator.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "42a. idea-creator uses LLM_IDEA_GENERATOR_MODEL/DeepSeek, not Codex, for generation",
+        "DeepSeek" in content or "LLM_IDEA_GENERATOR_MODEL" in content,
+    )
+    check(
+        "42b. idea-creator says Codex only for shortlist auditor gate",
+        "shortlist" in content.lower() and "Codex" in content and "ONLY Codex" in content,
+    )
+    check(
+        "42c. idea-creator reads from Phase 1 outputs first",
+        "Prerequisites" in content or ("LITERATURE_INDEX" in content and "PHASE1" in content),
+    )
+else:
+    for c in ["42a", "42b", "42c"]:
+        check(f"{c} idea-creator SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 43. research-lit auto-gate on every invocation
+# ---------------------------------------------------------------------------
+print("\n=== 43. research-lit auto-gate ===")
+rl = ROOT / "skills" / "research-lit" / "SKILL.md"
+if rl.exists():
+    content = rl.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "43a. research-lit gate runs on every invocation",
+        "every" in content and "invocation" in content,
+    )
+    check(
+        "43b. research-lit default outputs include PHASE1_EVIDENCE_AUDIT",
+        "PHASE1_EVIDENCE_AUDIT" in content,
+    )
+else:
+    for c in ["43a", "43b"]:
+        check(f"{c} research-lit SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 44. exec-review auto-parse + evidence vs contamination
+# ---------------------------------------------------------------------------
+print("\n=== 44. exec-review evidence/contamination ===")
+exec_skill = ROOT / "skills" / "exec-review" / "SKILL.md"
+if exec_skill.exists():
+    content = exec_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "44a. exec-review has Evidence vs. Contamination section",
+        "Evidence vs. Contamination" in content,
+    )
+    check(
+        "44b. exec-review shows /exec-review CAND_001 auto-parse usage",
+        "/exec-review CAND_001" in content or "/exec-review CAND_00" in content,
+    )
+else:
+    for c in ["44a", "44b"]:
+        check(f"{c} exec-review SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 45. novelty-check canonical vs ad hoc mode
+# ---------------------------------------------------------------------------
+print("\n=== 45. novelty-check canonical vs ad hoc ===")
+nov = ROOT / "skills" / "novelty-check" / "SKILL.md"
+if nov.exists():
+    content = nov.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "45a. novelty-check has Canonical Pipeline Mode",
+        "Canonical Pipeline Mode" in content,
+    )
+    check(
+        "45b. novelty-check has Ad Hoc Mode with mode: ad_hoc marker",
+        "ad_hoc" in content or "Ad Hoc Mode" in content,
+    )
+else:
+    for c in ["45a", "45b"]:
+        check(f"{c} novelty-check SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 46. isolated_job_runner evidence/contamination patterns
+# ---------------------------------------------------------------------------
+print("\n=== 46. isolated_job_runner evidence/contamination ===")
+runner = ROOT / "tools" / "isolated_job_runner.py"
+if runner.exists():
+    content = runner.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "46a. isolated_job_runner has ALLOWED_EVIDENCE_PATTERNS",
+        "ALLOWED_EVIDENCE_PATTERNS" in content,
+    )
+    check(
+        "46b. isolated_job_runner has FORBIDDEN_CONTAMINATION_PATTERNS",
+        "FORBIDDEN_CONTAMINATION_PATTERNS" in content,
+    )
+    check(
+        "46c. codex_optional no longer says Protocol/documentation only in V1",
+        "Protocol/documentation only in V1" not in content,
+        "Still says Protocol/documentation only in V1" if "Protocol/documentation only in V1" in content else "",
+    )
+    check(
+        "46d. codex_optional mentions FAIL_REQUIRES_AGENT_MCP_CODEX or codex_required",
+        "FAIL_REQUIRES_AGENT_MCP_CODEX" in content or "codex_required" in content,
+    )
+else:
+    for c in ["46a", "46b", "46c", "46d"]:
+        check(f"{c} isolated_job_runner.py exists", False)
 
 # ---------------------------------------------------------------------------
 # Summary

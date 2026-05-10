@@ -59,6 +59,35 @@ If fallback from Codex to LLM occurred, also include:
 REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK: true
 ```
 
+## Evidence vs. Contamination
+
+**"Isolation restricts contamination sources, not evidence sources."**
+
+The reviewer must NOT be starved of information. It must not be biased by process artifacts.
+
+**Allowed neutral evidence sources:**
+- Current CAND file (exactly one)
+- LITERATURE_INDEX.md (verified)
+- GAP_MAP.md (verified)
+- PHASE1_EVIDENCE_AUDIT.md
+- Relevant literature-md/<paper_id>/ (deep ingest sections)
+- WebSearch / WebFetch for new search results
+- Current job external_search_results
+
+**Forbidden contamination sources:**
+- IDEA_CARDS raw brainstorming
+- Generator trace / RUNS intermediate outputs
+- User preference / old praise
+- Previous scores / old review verdicts
+- Other CAND materials (unless explicitly doing comparative review)
+
+**Usage:**
+```
+/exec-review CAND_001
+```
+System auto-parses to `idea-stage/AGENTIC/CANONICAL_IDEAS/CAND_001.md`.
+One CAND at a time. Codex thread. Auto artifact header + ledger.
+
 ## Workflow
 
 1. 读取输入文件。

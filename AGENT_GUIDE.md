@@ -36,6 +36,28 @@ Workflow-specific:
 
 Parameters pass through workflow chains automatically.
 
+## Usage Modes
+
+ARIS supports two usage modes for research idea discovery:
+
+**Mode A (Recommended): Single-command mode**
+```
+/idea-discovery "research direction"
+```
+System auto-executes Phase 1-6 internally. Each gate auto-records Codex thread, artifact header, and ledger.
+
+**Mode B (Supported): Manual staged mode**
+```
+/research-lit "direction"
+/idea-creator "direction"
+/exec-review CAND_001
+/novelty-check CAND_001
+```
+Each sub-skill still auto-executes its own gate, isolation evidence, and ledger.
+User does NOT need to manually specify allowed_input_files or forbidden_context.
+
+Both modes share the same reliability gates. Mode B is for debugging, incremental work, and ad hoc exploration.
+
 ## Workflow Index
 
 ### Full Pipeline
@@ -47,7 +69,7 @@ Parameters pass through workflow chains automatically.
 
 | Workflow | Invoke | Input | Output | When to use |
 |----------|--------|-------|--------|-------------|
-| W1: Idea Discovery | `/idea-discovery "direction"` | research direction | IDEA_SELECTION_REPORT.md, IDEA_BANK, CANONICAL_IDEAS | Starting new research (lit → ideas → review → novelty → selection) |
+| W1: Idea Discovery | `/idea-discovery "direction"` | research direction | IDEA_SELECTION_REPORT.md, IDEA_BANK, CANONICAL_IDEAS | Starting new research (recommended single-command mode: lit → ideas → review → novelty → adversarial → selection). Manual staged mode also supported via individual sub-skills. |
 | Idea Bank Management | `/idea-bank status` | status/dedup/candidate | IDEA_BANK summary | Inspect and manage idea candidates across runs |
 | W1.5: Experiment Bridge | `/experiment-bridge` | EXPERIMENT_PLAN.md | running code, EXPERIMENT_LOG.md | Have a plan, need to implement |
 | W2: Auto Review | `/auto-review-loop "scope"` | paper + results | improved paper | Iterative improvement |

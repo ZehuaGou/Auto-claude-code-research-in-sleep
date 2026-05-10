@@ -492,12 +492,18 @@ The tools `tools/agentic_idea_discovery.py` and `tools/isolated_job_runner.py` m
 ## Phase 1 Codex Gate: Evidence Integrity Audit (evidence_integrity_auditor)
 
 **This is NOT a routine continuation. This is an isolated judgment gate.**
+**This gate runs automatically on every `/research-lit` invocation — whether called from `/idea-discovery` or manually.**
 
 **Isolation requirement:** evidence_integrity_auditor must run as
 `codex_thread` or `manual_subsession`. `protocol_only` only yields
 PASS_WITH_WARNINGS.
 
-When called from `/idea-discovery`, after literature survey and gap extraction, run an evidence integrity audit via Codex before passing results to Phase 2:
+**Default outputs** of `/research-lit "direction"`:
+- `LITERATURE_INDEX.md`
+- `GAP_MAP.md`
+- `PHASE1_EVIDENCE_AUDIT.md`
+
+After literature survey and gap extraction, run an evidence integrity audit via Codex before results are considered complete:
 
 1. **Trigger**: After LITERATURE_INDEX.md and GAP_MAP.md are produced.
 2. **Gate invocation**: Use Codex MCP for the audit — this is a judgment gate, not a generation task.

@@ -1,7 +1,7 @@
 ---
 name: novelty-check
-description: Verify research idea novelty against recent literature. Use when user says "查新", "novelty check", "有没有人做过", "check novelty", or wants to verify a research idea is novel before implementing.
-argument-hint: [method-or-idea-description]
+description: Verify research idea novelty against recent literature. Canonical pipeline mode (CAND_XXX) or ad hoc mode (free-text). Use when user says "查新", "novelty check", or wants to verify a research idea is novel.
+argument-hint: [CAND_XXX or free-text idea description]
 allowed-tools: WebSearch, WebFetch, Grep, Read, Glob, mcp__codex__codex
 ---
 
@@ -9,9 +9,44 @@ allowed-tools: WebSearch, WebFetch, Grep, Read, Glob, mcp__codex__codex
 
 Check whether a proposed method/idea has already been done in the literature: **$ARGUMENTS**
 
+## Two Modes
+
+### Canonical Pipeline Mode (CAND_XXX input)
+```
+/novelty-check CAND_001
+```
+System auto-parses CAND_001 to `idea-stage/AGENTIC/CANONICAL_IDEAS/CAND_001.md`.
+One CAND at a time. Uses codex_thread. Auto artifact header + ledger.
+Results feed into IDEA_BANK and final selection.
+
+### Ad Hoc Mode (free-text idea description)
+```
+/novelty-check "a method that uses hidden state transition residuals to detect hallucinations"
+```
+Allowed for informal exploration. Output must include `mode: ad_hoc` marker.
+Results are **NOT** allowed to enter IDEA_BANK / final selection / top_idea_found.
+Formal pipeline decisions must use canonical CAND_XXX mode.
+
 ## Constants
 
 - **REVIEWER_BACKEND = `codex`** — Default: Codex MCP for novelty judgments. See `shared-references/model-routing.md` for fallback model configuration.
+
+## Evidence vs. Contamination
+
+**"Isolation restricts contamination sources, not evidence sources."**
+
+**Allowed neutral evidence:**
+- Current CAND file (canonical mode) or user's free-text idea (ad hoc mode)
+- LITERATURE_INDEX.md / GAP_MAP.md / PHASE1_EVIDENCE_AUDIT.md
+- Relevant literature-md/<paper_id>/
+- WebSearch / WebFetch new search results
+
+**Forbidden contamination:**
+- IDEA_CARDS raw brainstorming
+- Generator trace / RUNS/
+- Old praise / user preference / previous scores
+- Old review praise / old novelty conclusions
+- Other CAND materials
 
 ## Instructions
 

@@ -1,6 +1,6 @@
 ---
 name: idea-creator
-description: Generate and canonicalize research ideas from a gap map or research direction. Use when user says "找idea", "generate ideas", "what can we work on", or wants to explore a research area.
+description: Generate and canonicalize research ideas from a gap map or research direction. Divergent generation uses DeepSeek V4 Pro. Codex only used for shortlist audit gate. Use when user says "找idea", "generate ideas", "what can we work on".
 argument-hint: [research-direction]
 allowed-tools: Bash(*), Read, Write, Grep, Glob, WebSearch, WebFetch, Agent, mcp__codex__codex, mcp__codex__codex-reply
 ---
@@ -9,18 +9,41 @@ allowed-tools: Bash(*), Read, Write, Grep, Glob, WebSearch, WebFetch, Agent, mcp
 
 Generate research ideas for: $ARGUMENTS
 
+## Prerequisites
+
+`/idea-creator` reads from existing Phase 1 outputs. Before generating ideas, check:
+1. `LITERATURE_INDEX.md` exists (from `/research-lit`)
+2. `GAP_MAP.md` exists (from `/research-lit`)
+3. `PHASE1_EVIDENCE_AUDIT.md` exists (from `/research-lit` Codex gate)
+
+If these files do not exist, prompt the user to run `/research-lit "direction"` first.
+`/idea-creator` does NOT perform its own full landscape survey.
+
 ## Overview
 
-Given a broad direction or a GAP_MAP.md, generate 8–12 concrete research
+Given a verified GAP_MAP and LITERATURE_INDEX, generate 8–12 concrete research
 ideas, write each as an independent card, deduplicate against the existing
 idea bank, and produce canonical candidates.
+
+**Model routing for idea-creator:**
+- **idea_generator (divergent generation):** Uses DeepSeek V4 Pro (or configured `LLM_IDEA_GENERATOR_MODEL`). Does NOT use Codex for generation.
+- **idea_deduplicator (mechanistic dedup):** Uses DeepSeek V4 Pro (or configured `LLM_IDEA_DEDUPLICATOR_MODEL`). Does NOT use Codex for dedup.
+- **idea_shortlist_auditor (weak idea killer):** Uses Codex MCP (codex_thread). This is the ONLY Codex gate in idea-creator.
 
 **What this skill does NOT do:**
 - `/idea-creator` does NOT perform novelty checks. Use `/novelty-check` for that.
 - `/idea-creator` does NOT do independent review. Use `/exec-review` for that.
-- `/idea-creator` does NOT run pilot experiments. That is an optional user-driven follow-up.
-- `/idea-creator` does NOT enter experiment-bridge. Use `/research-contract` then `/experiment-bridge` for that.
-- `/idea-creator` does NOT make final kill decisions. Use `/exec-review` and `/novelty-check` for independent judgment.
+- `/idea-creator` does NOT run pilot experiments. Use `/experiment-bridge` for that.
+- `/idea-creator` does NOT make final kill decisions beyond shortlist audit.
+- `/idea-creator` does NOT do adversarial review or final selection.
+- `/idea-creator` does NOT write experiment plans.
+
+## Outputs
+
+- `IDEA_CARDS/idea_*.md` — raw generated idea cards
+- `IDEA_BANK.md` / `IDEA_BANK.json` — deduplicated idea bank
+- `CANONICAL_IDEAS/CAND_*.md` — canonical candidates
+- `PHASE2_IDEA_SHORTLIST_AUDIT.md` — Codex shortlist gate output
 
 ## Constants
 
