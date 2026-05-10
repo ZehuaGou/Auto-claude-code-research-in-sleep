@@ -131,7 +131,7 @@ Both modes share the same reliability gates. Mode B is for debugging, incrementa
 | `/ablation-planner` | Ablation design | Reviewer-perspective ablations |
 | `/config-check` | Configuration check | ARIS .env, Codex, Feishu configuration check |
 | `/model-usage-status` | Model usage | Recent Codex/LLM calls, fallbacks, failures |
-| `/status` | Project status | Unified pipeline/session/experiment/reviewer status |
+| `/status` | Project status | AGENTIC-scoped idea discovery workflow status (pipeline phase, sessions, reviews, next step). Use `--all` for full project state. |
 | `/paper-ingest "arxiv-id"` | Paper ingestion | Convert papers to structured Markdown sections |
 | `/research-contract "idea"` | Research contract | Freeze hypothesis, signals, metrics before experiments |
 | `/baseline-repro "repo"` | Baseline reproduction | Establish and verify baseline anchor |

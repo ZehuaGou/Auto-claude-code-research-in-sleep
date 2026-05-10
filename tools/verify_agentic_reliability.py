@@ -2123,6 +2123,99 @@ else:
         check(f"{c} AGENT_GUIDE.md exists", False)
 
 # ---------------------------------------------------------------------------
+# 55. status SKILL.md — current_scope = idea-stage/AGENTIC
+# ---------------------------------------------------------------------------
+print("\n=== 55. status SKILL.md scope ===")
+status_skill = ROOT / "skills" / "status" / "SKILL.md"
+if status_skill.exists():
+    content = status_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "55a. status SKILL mentions current_scope = idea-stage/AGENTIC",
+        "current_scope = idea-stage/AGENTIC" in content,
+        "Missing current_scope = idea-stage/AGENTIC" if "current_scope" not in content else "",
+    )
+    check(
+        "55b. status SKILL mentions --all mode",
+        "--all" in content and "legacy" in content and "experiments" in content,
+        "Missing --all/legacy/experiments mode documentation" if "--all" not in content else "",
+    )
+    check(
+        "55c. status SKILL has Session Filtering section",
+        "Session Filtering" in content or "TEST ONLY" in content,
+    )
+    check(
+        "55d. status SKILL hides TEST ONLY sessions by default",
+        "Hidden" in content and "TEST ONLY" in content,
+    )
+    check(
+        "55e. status SKILL does NOT recommend paper writing from old review-stage",
+        "不得建议 paper writing" in content or "not recommended" in content.lower(),
+    )
+    check(
+        "55f. status SKILL Next Steps references resume_stage_state.py",
+        "resume_stage_state.py" in content,
+    )
+    check(
+        "55g. status SKILL has Hard Rules section forbidding default read of review-stage/",
+        "不得" in content and "review-stage/" in content,
+    )
+else:
+    for c in ["55a", "55b", "55c", "55d", "55e", "55f", "55g"]:
+        check(f"{c} status SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 56. .claude/commands/status.md — AGENTIC scope wrapper
+# ---------------------------------------------------------------------------
+print("\n=== 56. .claude/commands/status.md wrapper ===")
+status_wrapper = ROOT / ".claude" / "commands" / "status.md"
+if status_wrapper.exists():
+    content = status_wrapper.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "56a. status wrapper mentions AGENTIC scope",
+        "AGENTIC" in content,
+        "Missing AGENTIC scope mention" if "AGENTIC" not in content else "",
+    )
+    check(
+        "56b. status wrapper mentions do NOT read review-stage/ by default",
+        "review-stage" in content and "not" in content.lower(),
+    )
+    check(
+        "56c. status wrapper says Next steps from resume_stage_state.py",
+        "resume_stage_state.py" in content,
+    )
+    check(
+        "56d. status wrapper says hide TEST ONLY sessions",
+        "TEST ONLY" in content or "test-only" in content or "test only" in content.lower(),
+    )
+    check(
+        "56e. status wrapper references --all / legacy / experiments modes",
+        "--all" in content or "legacy" in content,
+    )
+else:
+    for c in ["56a", "56b", "56c", "56d", "56e"]:
+        check(f"{c} status wrapper exists", False)
+
+# ---------------------------------------------------------------------------
+# 57. AGENT_GUIDE.md — status entry mentions AGENTIC scope
+# ---------------------------------------------------------------------------
+print("\n=== 57. AGENT_GUIDE.md status entry ===")
+agent_guide = ROOT / "AGENT_GUIDE.md"
+if agent_guide.exists():
+    content = agent_guide.read_text(encoding="utf-8", errors="ignore")
+    status_line = ""
+    for line in content.splitlines():
+        if "/status" in line and "Unified" in line:
+            status_line = line
+            break
+    check(
+        "57a. AGENT_GUIDE status description no longer says Unified pipeline/session/experiment/reviewer",
+        "Unified" not in status_line or "AGENTIC" in status_line,
+        f"Status line: {status_line}" if status_line else "No /status line found",
+    )
+else:
+    check("57a. AGENT_GUIDE.md exists", False)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'='*40}")

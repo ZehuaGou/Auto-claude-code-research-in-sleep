@@ -1,7 +1,7 @@
 ---
 name: status
-description: Show unified ARIS project status: pipeline, sessions, experiments, reviewer calls, model usage, config warnings, and next action.
-argument-hint: [--full]
+description: Show current ARIS idea discovery workflow status (AGENTIC scope by default)
+argument-hint: [--all | legacy | experiments]
 allowed-tools: Bash(*), Read, Grep, Glob
 ---
 
@@ -9,27 +9,53 @@ allowed-tools: Bash(*), Read, Grep, Glob
 
 ## Purpose
 
-统一查看 ARIS 当前状态，不只是实验状态。解决 Calling codex...、实验卡住、reviewer 卡住、用户不知道系统在干什么的问题。
+统一查看 ARIS 当前 **idea discovery workflow** 状态。默认只关注 `idea-stage/AGENTIC/`，不混入旧项目状态。
 
 ## When to Use
 
-- 想知道当前项目整体状态时。
+- 想知道当前 idea discovery pipeline 整体状态时。
 - 怀疑 reviewer 卡住时。
 - pipeline 运行后。
 - 新 session 开始时。
 
+## Scope
+
+```
+current_scope = idea-stage/AGENTIC
+```
+
+| Mode | Command | Scope |
+|------|---------|-------|
+| **Default** | `/status` | Only `idea-stage/AGENTIC/` + `.aris/calls/` (filtered) |
+| Full | `/status --all` | Everything including old projects |
+| Legacy | `/status legacy` | `review-stage/`, old experiments, paper writing |
+| Experiments | `/status experiments` | `EXPERIMENT_LOG.md`, `refine-logs/`, `experiments/` |
+
 ## Inputs
 
-- `.aris/sessions/SESSION_REGISTRY.json`（如存在）
-- `.aris/sessions/ACTIVE_TASKS.json`（如存在）
+### Default mode (AGENTIC scope)
+
+- `idea-stage/AGENTIC/LITERATURE_INDEX.md`
+- `idea-stage/AGENTIC/GAP_MAP.md`
+- `idea-stage/AGENTIC/EVIDENCE_AUDIT/`
+- `idea-stage/AGENTIC/IDEA_BANK.md`
+- `idea-stage/AGENTIC/IDEA_BANK.json`
+- `idea-stage/AGENTIC/CANONICAL_IDEAS/`
+- `idea-stage/AGENTIC/REVIEWS/`
+- `idea-stage/AGENTIC/NOVELTY/`
+- `.aris/calls/llm_calls.jsonl` (filtered to current workflow)
 - `.aris/calls/current_call.json`
-- `.aris/calls/llm_calls.jsonl`
-- `review-stage/REVIEW_STATE.json`（如存在）
-- `experiment_queue/*/queue_state.json`（如存在）
+- `.aris/sessions/SESSION_REGISTRY.json`
+- `.aris/sessions/ACTIVE_TASKS.json`
+
+### Extra inputs for --all / legacy / experiments modes
+
+- `review-stage/REVIEW_STATE.json`
+- `review-stage/AUTO_REVIEW.md`
+- `experiment_queue/*/queue_state.json`
+- `EXPERIMENT_LOG.md`
+- `refine-logs/EXPERIMENT_TRACKER.md`
 - `config/status.json`
-- `review-stage/AUTO_REVIEW.md`（如存在）
-- `EXPERIMENT_LOG.md`（如存在）
-- `refine-logs/EXPERIMENT_TRACKER.md`（如存在）
 
 ## Outputs
 
@@ -37,25 +63,20 @@ allowed-tools: Bash(*), Read, Grep, Glob
 
 ## Workflow
 
-1. 读取 `config/status.json`，展示配置警告。
-2. 读取 `current_call.json`，展示当前是否有模型调用。
-3. 读取 `llm_calls.jsonl`，展示最近一次模型调用。
-4. 读取 `SESSION_REGISTRY.json` 和 `ACTIVE_TASKS.json`，展示活跃 session。
-5. 读取 `queue_state.json`，展示实验队列。
-6. 读取 `REVIEW_STATE.json`，展示 review loop 状态。
-7. 读取 `EXPERIMENT_TRACKER.md` / `EXPERIMENT_LOG.md`，展示实验状态。
-8. 推断当前 pipeline 阶段：
-   - no idea
-   - idea discovery
-   - novelty check
-   - baseline reproduction
-   - research contract
-   - experiment implementation
-   - experiment running
-   - result-to-claim
-   - paper writing
-   - final audit
-9. 输出下一步建议。
+1. **Determine mode**: Check `$ARGUMENTS` for `--all`, `legacy`, or `experiments`. Default is AGENTIC-scoped.
+2. **Read resume state**: Call `tools/resume_stage_state.py` for each phase to determine current stage.
+3. **Read AGENTIC artifacts**: LITERATURE_INDEX.md, GAP_MAP.md, evidence audit, IDEA_BANK, canonical ideas, reviews, novelty reports.
+4. **Read current call**: `current_call.json` — show any active model call.
+5. **Filter llm_calls.jsonl**: Show only calls whose `output_files` reference `idea-stage/AGENTIC/` (or the last 3 completed calls).
+6. **Read active sessions**: `SESSION_REGISTRY.json` and `ACTIVE_TASKS.json` — filter out TEST ONLY sessions by default.
+7. **Infer current pipeline phase** from resume_stage_state.py results:
+   - no_stage / not_started → idea discovery not begun
+   - research-lit incomplete → literature survey
+   - idea-creator incomplete → idea generation
+   - exec-review incomplete → review in progress
+   - novelty-check incomplete → novelty check in progress
+   - All phases complete → ready for final selection
+8. **Output next step** based on resume_stage_state.py actions.
 
 ## Hard Rules
 
@@ -63,40 +84,87 @@ allowed-tools: Bash(*), Read, Grep, Glob
 - 不泄露 API Key。
 - 不读取大型日志全文，只读摘要或 tail。
 - 如果某状态文件不存在，应标记 not initialized，不报错。
+- **Default 模式不得读取并给出建议：**
+  - `review-stage/`（旧 review 状态）
+  - `experiment_queue/`（旧实验队列）
+  - `research/`（旧研究）
+  - `EXPERIMENT_LOG.md`（旧实验日志）
+  - `refine-logs/`（旧实验记录）
+  - 非 AGENTIC 的旧实验/paper-writing stage
+- **Default 模式隐藏 TEST ONLY sessions**：session/task 描述包含 "TEST ONLY"、"test handoff"、"Search papers for test" 时默认隐藏，仅 `--all` 显示。
+- 默认基于 `tools/resume_stage_state.py` 计算 next step，而非手动推断。
+
+## Session Filtering
+
+Default 模式过滤 sessions:
+
+| Session / Task Description | Default | --all |
+|---------------------------|---------|-------|
+| "TEST ONLY: ..." | Hidden | Shown |
+| "test handoff state" | Hidden | Shown |
+| "Search papers for test" | Hidden | Shown |
+| Other tasks | Shown | Shown |
+
+## Failed Calls Filtering
+
+Default 模式只显示当前 workflow 相关失败。旧失败或 fallback DNS 错误标记为 archived warnings，不作为当前 blocker，除非 `output_files` 指向 `idea-stage/AGENTIC/`。
+
+## Next Steps Rules
+
+Default 模式必须基于 `resume_stage_state.py` 计算：
+
+```bash
+python3 tools/resume_stage_state.py research-lit
+python3 tools/resume_stage_state.py idea-creator
+python3 tools/resume_stage_state.py exec-review CAND_001
+python3 tools/resume_stage_state.py exec-review CAND_002
+python3 tools/resume_stage_state.py novelty-check CAND_001
+python3 tools/resume_stage_state.py novelty-check CAND_002
+```
+
+合理 next step 例子：
+- 如果 CAND_002 exec-review needs_resume → 运行 `/exec-review CAND_002`
+- 如果 CAND_002 novelty-check needs_resume → 运行 `/novelty-check CAND_002`
+- **不得建议 paper writing / experiments**，除非 final selection 已完成且用户显式进入实验/写作阶段。
 
 ## Failure Handling
 
 - JSON 损坏则标记 corrupt。
-- queue_state 不存在则说明没有 experiment queue。
+- queue_state 不存在则说明没有 experiment queue（default 模式不读取）。
 - current_call 卡住超过阈值则提示可能 stuck。
+- resume_stage_state.py 调用失败则降级到人工推断。
 
 ## Integration
 
-- `tools/llm_call_ledger.py` — 读取调用记录
-- `tools/config_check.py` — 配置检查
-- `tools/session_registry.py` — session 信息
-- `skills/model-usage-status/SKILL.md` — 模型调用详情
+- `tools/resume_stage_state.py` — 阶段状态检查
+- `tools/llm_call_ledger.py` — 调用记录
+- `.aris/calls/llm_calls.jsonl` — 模型调用日志
+- `.aris/sessions/SESSION_REGISTRY.json` — session 注册
+- `.aris/sessions/ACTIVE_TASKS.json` — 活跃任务
 
 ## Example Invocation
 
 ```
-/status
-/status --full
+/status                    # AGENTIC scope only (default)
+/status --all              # full project scope
+/status legacy             # include old review/experiment state
+/status experiments        # include experiment logs
 ```
 
 ## Expected Output
 
-- 当前阶段
-- 活跃任务
+- 当前 scope (AGENTIC / --all / legacy / experiments)
+- 当前 pipeline phase (from resume_stage_state.py)
+- 活跃任务（filtered, hidden test-only）
 - 活跃模型调用
-- 实验状态
-- fallback 警告
-- 下一步建议
+- AGENTIC 实验/artifact 状态
+- 失败调用（只显示当前 workflow 相关的）
+- 下一步建议（基于 resume_stage_state.py）
 
 ## Failure Example
 
-如果 `.aris/` 目录不存在：
-- 标记各项为 not initialized
+如果 `idea-stage/AGENTIC/` 不存在：
+- 标记 AGENTIC 阶段为 not initialized
 - 建议先运行相关 skill
 
 ## Recovery Step
@@ -104,3 +172,7 @@ allowed-tools: Bash(*), Read, Grep, Glob
 如果 `current_call.json` 卡住：
 - 提示手动检查 `.aris/calls/current_call.json`
 - 如果状态为 started 且超过 30 分钟，提示可能 stuck
+
+如果 `resume_stage_state.py` 调用失败：
+- 降级到人工推断阶段
+- 提示用户检查 tools/ 目录完整性
