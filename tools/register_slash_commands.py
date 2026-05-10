@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Register local ARIS skills as .claude/commands/*.md slash command wrappers.
+Register ALL local ARIS skills as .claude/commands/*.md slash command wrappers.
 
-Scans skills/*/SKILL.md, generates a minimal wrapper that delegates to
-the corresponding SKILL.md, and writes it to .claude/commands/<name>.md.
+Auto-scans skills/*/SKILL.md and generates a wrapper for each one.
+Skills with a dedicated template get a specialized wrapper; all others
+get a generic wrapper that delegates to skills/<name>/SKILL.md.
 
 Does NOT overwrite existing wrappers unless --force is passed.
 
@@ -25,20 +26,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 COMMANDS_DIR = PROJECT_ROOT / ".claude" / "commands"
 SKILLS_DIR = PROJECT_ROOT / "skills"
 
-# Skills that need slash command wrappers
-REQUIRED_COMMANDS = [
-    "research-lit",
-    "idea-creator",
-    "exec-review",
-    "novelty-check",
-    "idea-bank",
-    "idea-discovery",
-    "research-contract",
-    "status",
-]
+# Directories under skills/ that are NOT user-invocable commands
+SKIP_DIRS = {
+    "shared-references",
+    "skills-codex",
+    "skills-codex-claude-review",
+    "skills-codex-gemini-review",
+}
 
-WRAPPER_TEMPLATES = {
-    "exec-review": """\
+# ---- Specialized templates for core pipeline skills ----
+SPECIAL_TEMPLATES: dict[str, str] = {}
+
+SPECIAL_TEMPLATES["exec-review"] = """\
 ---
 description: Run isolated executive review for one canonical research candidate
 argument-hint: CAND_001
@@ -58,8 +57,9 @@ Requirements:
 - Use Codex thread when required by the skill.
 - Write artifact header and ledger as required by the skill.
 - If interrupted or existing artifact is incomplete, use `python tools/resume_stage_state.py exec-review <candidate>` before continuing.
-""",
-    "novelty-check": """\
+"""
+
+SPECIAL_TEMPLATES["novelty-check"] = """\
 ---
 description: Run canonical or ad hoc novelty check with clean evidence isolation
 argument-hint: CAND_001
@@ -79,8 +79,9 @@ Requirements:
 - Use Codex thread when required by the skill.
 - Write artifact header and ledger as required by the skill.
 - If interrupted or existing artifact is incomplete, use `python tools/resume_stage_state.py novelty-check <candidate>` before continuing.
-""",
-    "research-lit": """\
+"""
+
+SPECIAL_TEMPLATES["research-lit"] = """\
 ---
 description: Run literature survey, paper ingest, gap map, and evidence audit
 argument-hint: research direction
@@ -99,8 +100,9 @@ Requirements:
 - Run evidence_integrity_auditor gate as required.
 - Write artifact header and ledger.
 - On resume intent, use `python tools/resume_stage_state.py research-lit`.
-""",
-    "idea-creator": """\
+"""
+
+SPECIAL_TEMPLATES["idea-creator"] = """\
 ---
 description: Generate canonical ideas from verified literature artifacts
 argument-hint: research direction
@@ -119,8 +121,9 @@ Requirements:
 - Run Codex shortlist audit gate.
 - Do not do novelty-check, independent review, final selection, pilot, or experiment.
 - On resume intent, use `python tools/resume_stage_state.py idea-creator`.
-""",
-    "idea-bank": """\
+"""
+
+SPECIAL_TEMPLATES["idea-bank"] = """\
 ---
 description: Manage IDEA_BANK and canonical candidates
 argument-hint: action
@@ -137,8 +140,9 @@ Requirements:
 - Manage IDEA_BANK, IDEA_BANK.json, CANONICAL_IDEAS.
 - Do not run experiments.
 - Do not bypass Codex gates when performing audit-like actions.
-""",
-    "idea-discovery": """\
+"""
+
+SPECIAL_TEMPLATES["idea-discovery"] = """\
 ---
 description: Run full gated idea discovery workflow
 argument-hint: research direction
@@ -155,8 +159,9 @@ Requirements:
 - Run gated workflow only up to final idea selection.
 - Do not auto-run research-contract, baseline-repro, experiment-bridge, pilot, or paper writing.
 - Respect resume/checkpoint rules.
-""",
-    "research-contract": """\
+"""
+
+SPECIAL_TEMPLATES["research-contract"] = """\
 ---
 description: Freeze hypothesis, signals, metrics, baselines, kill conditions, and protocol before experiments
 argument-hint: CAND_001
@@ -177,8 +182,9 @@ Requirements:
 - Only freeze hypothesis / signals / metrics / baselines / kill conditions / protocol.
 - If final selection is not codex_gate or llm_fallback_gate, stop.
 - If selected candidate is not CAND_001, stop.
-""",
-    "status": """\
+"""
+
+SPECIAL_TEMPLATES["status"] = """\
 ---
 description: Show ARIS idea discovery workflow status (AGENTIC scope by default)
 argument-hint: [--all | legacy | experiments]
@@ -196,18 +202,54 @@ Requirements:
 - Prefer filesystem status from tools/resume_stage_state.py and validators over chat memory.
 - Hide TEST ONLY sessions by default.
 - Next steps must come from resume_stage_state.py, not from old project state.
-""",
-}
+"""
+
+# ---- Generic template for all other skills ----
+GENERIC_TEMPLATE = """\
+---
+description: Execute ARIS skill {name}
+argument-hint: arguments
+---
+
+Load and execute `skills/{name}/SKILL.md`.
+
+User arguments:
+`$ARGUMENTS`
+
+Requirements:
+- Treat this slash command as `/{name} $ARGUMENTS`.
+- Follow `skills/{name}/SKILL.md` exactly.
+- Do not bypass the skill's safety, routing, artifact, ledger, or resume rules.
+- If this skill is a critical gate, resolve routing through the configured model route and write artifact headers/ledger as required by the skill.
+- If interrupted or existing artifacts are incomplete, use the relevant validator/resume tool before continuing.
+"""
 
 
-def check_required_commands() -> list[str]:
-    """Return a list of missing required commands."""
-    missing = []
-    for name in REQUIRED_COMMANDS:
-        path = COMMANDS_DIR / f"{name}.md"
-        if not path.exists():
-            missing.append(name)
-    return missing
+def get_all_skills() -> list[str]:
+    """Return sorted list of skill names that have SKILL.md."""
+    names: list[str] = []
+    for p in SKILLS_DIR.iterdir():
+        if not p.is_dir():
+            continue
+        if p.name in SKIP_DIRS:
+            continue
+        if (p / "SKILL.md").exists():
+            names.append(p.name)
+    return sorted(names)
+
+
+def get_existing_wrappers() -> set[str]:
+    """Return set of skill names that already have a wrapper .md file."""
+    if not COMMANDS_DIR.exists():
+        return set()
+    return {p.stem for p in COMMANDS_DIR.glob("*.md")}
+
+
+def generate_wrapper(name: str) -> str:
+    """Generate wrapper content for a given skill name."""
+    if name in SPECIAL_TEMPLATES:
+        return SPECIAL_TEMPLATES[name]
+    return GENERIC_TEMPLATE.format(name=name)
 
 
 def register_command(name: str, force: bool = False) -> bool:
@@ -217,28 +259,15 @@ def register_command(name: str, force: bool = False) -> bool:
         print(f"  SKIP    {name}.md (exists, use --force to overwrite)")
         return False
 
-    template = WRAPPER_TEMPLATES.get(name)
-    if template is None:
-        print(f"  SKIP    {name}.md (no template defined)")
-        return False
-
-    path.write_text(template, encoding="utf-8")
+    content = generate_wrapper(name)
+    path.write_text(content, encoding="utf-8")
     print(f"  WRITE   {name}.md")
     return True
 
 
-def check_skill_exists(name: str) -> bool:
-    """Verify the corresponding skills/<name>/SKILL.md exists."""
-    skill_path = SKILLS_DIR / name / "SKILL.md"
-    exists = skill_path.exists()
-    if not exists:
-        print(f"  WARN    skills/{name}/SKILL.md not found on disk")
-    return exists
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Register local ARIS skills as .claude/commands/*.md wrappers"
+        description="Register ALL local ARIS skills as .claude/commands/*.md wrappers"
     )
     parser.add_argument(
         "--force", action="store_true",
@@ -253,42 +282,56 @@ def main():
     # Ensure commands directory exists
     COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
 
+    all_skills = get_all_skills()
+    existing_wrappers = get_existing_wrappers()
+
     print("=" * 60)
     print("ARIS Slash Command Registration")
     print("=" * 60)
+    print(f"Skills found: {len(all_skills)}")
+    print(f"Wrappers found: {len(existing_wrappers)}")
 
     if args.check_only:
-        missing = check_required_commands()
+        missing = [s for s in all_skills if s not in existing_wrappers]
         if missing:
-            print(f"\nMissing required command wrappers: {missing}")
+            print(f"\nMissing wrappers ({len(missing)}):")
             for name in missing:
-                check_skill_exists(name)
+                print(f"  /{name}  -> skills/{name}/SKILL.md (missing wrapper)")
             print("\nResult: MISSING")
             sys.exit(1)
         else:
-            print("\nAll required command wrappers are present.")
-            for name in REQUIRED_COMMANDS:
-                path = COMMANDS_DIR / f"{name}.md"
-                skill_exists = check_skill_exists(name)
-                status = "OK" if skill_exists else "MISSING SKILL"
-                print(f"  [{status}] {name}.md -> skills/{name}/SKILL.md")
+            print(f"\nAll {len(all_skills)} skills have wrappers.")
+            for name in all_skills:
+                wrapper_path = COMMANDS_DIR / f"{name}.md"
+                content = wrapper_path.read_text(encoding="utf-8", errors="ignore")
+                ref_ok = f"skills/{name}/SKILL.md" in content
+                status = "OK" if ref_ok else "WRONG REF"
+                if not ref_ok:
+                    print(f"  [WARN] {name}.md does not reference skills/{name}/SKILL.md")
+                else:
+                    print(f"  [OK]   {name}.md -> skills/{name}/SKILL.md")
             print("\nResult: ALL OK")
             sys.exit(0)
 
-    # Register commands
+    # Register commands for ALL skills
     written = 0
-    for name in REQUIRED_COMMANDS:
+    skipped = 0
+    for name in all_skills:
         if register_command(name, force=args.force):
             written += 1
-        check_skill_exists(name)
+        else:
+            skipped += 1
 
-    # Summary
-    missing = check_required_commands()
-    if missing:
-        print(f"\nWARNING: Some required commands are still missing: {missing}")
+    # Re-check
+    existing_after = get_existing_wrappers()
+    missing_after = [s for s in all_skills if s not in existing_after]
+
+    print(f"\nWritten: {written}, Skipped: {skipped}")
+    if missing_after:
+        print(f"WARNING: Still missing wrappers for: {missing_after}")
         sys.exit(1)
     else:
-        print(f"\nAll {len(REQUIRED_COMMANDS)} required slash commands are registered.")
+        print(f"All {len(all_skills)} slash commands are registered.")
         print("Restart Claude Code session for changes to take effect.")
         sys.exit(0)
 

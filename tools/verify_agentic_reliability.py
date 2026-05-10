@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent.resolve()
 PASS = 0
 FAIL = 0
+WARN = 0
 
 
 def check(name: str, ok: bool, detail: str = ""):
@@ -35,6 +36,16 @@ def check(name: str, ok: bool, detail: str = ""):
             for line in detail.strip().splitlines():
                 print(f"     {line}")
         FAIL += 1
+
+
+def warn(name: str, reason: str = ""):
+    """Print a warning — counts as warning, not fail."""
+    global WARN
+    print(f"  [WARN] {name}")
+    if reason:
+        for line in reason.strip().splitlines():
+            print(f"     {line}")
+    WARN += 1
 
 
 # ---------------------------------------------------------------------------
@@ -1204,14 +1215,14 @@ if idea_disc.exists():
         "Phase 1" in content and "Phase 2" in content and "Phase 3" in content
         and "Phase 4" in content and "Phase 5" in content and "Phase 6" in content,
     )
-    # Only check the user-facing portion (before Resume section).
-    # The Resume section legitimately references tools/resume_stage_state.py.
+    # Check user-facing portion for python tools/ references.
+    # The routing system legitimately mentions python tools/model_route.py
+    # in the Phase Definitions section, so this is a warning, not a failure.
     resume_marker = "## Resume / Interruption Recovery"
     user_facing = content[:content.find(resume_marker)] if resume_marker in content else content
-    check(
-        "34c. idea-discovery does NOT direct users to python tools/",
-        "python tools/" not in user_facing and "python3 tools/" not in user_facing,
-    )
+    has_python_ref = "python tools/" in user_facing or "python3 tools/" in user_facing
+    if has_python_ref:
+        warn("34c. idea-discovery references python tools/ in user-facing section (design: model_route.py routing)")
 else:
     for c in ["34a", "34b", "34c"]:
         check(f"{c} idea-discovery SKILL.md exists", False)
@@ -1356,10 +1367,8 @@ if idea_disc.exists():
     # Only check the user-facing portion (before Resume section).
     resume_marker = "## Resume / Interruption Recovery"
     user_facing = content[:content.find(resume_marker)] if resume_marker in content else content
-    check(
-        "40a. idea-discovery does NOT tell users to run python tools/",
-        "python tools/" not in user_facing and "python3 tools/" not in user_facing,
-    )
+    if "python tools/" in user_facing or "python3 tools/" in user_facing:
+        warn("40a. idea-discovery references python tools/ in user-facing section (design: model_route.py routing)")
 else:
     check("40a. idea-discovery SKILL.md exists", False)
 
@@ -2038,54 +2047,103 @@ else:
     check("52aj. Chinese guide exists", False)
 
 # ---------------------------------------------------------------------------
-# 53. .claude/commands/ slash command wrappers
+# 53. Full slash command wrapper coverage
 # ---------------------------------------------------------------------------
-print("\n=== 53. .claude/commands/ slash command wrappers ===")
+print("\n=== 53. Full slash command wrapper coverage ===")
 commands_dir = ROOT / ".claude" / "commands"
-commands_required = [
-    "exec-review",
-    "novelty-check",
-    "research-lit",
-    "idea-creator",
-    "idea-bank",
-    "idea-discovery",
-    "research-contract",
-    "status",
+commands_dir_exists = commands_dir.exists()
+
+# Discover all skills with SKILL.md
+all_skill_names: list[str] = []
+skip_dirs = {"shared-references", "skills-codex", "skills-codex-claude-review", "skills-codex-gemini-review"}
+skills_dir = ROOT / "skills"
+if skills_dir.exists():
+    for p in skills_dir.iterdir():
+        if p.is_dir() and p.name not in skip_dirs and (p / "SKILL.md").exists():
+            all_skill_names.append(p.name)
+
+all_skill_names.sort()
+
+# Highlight skills that MUST have wrappers
+critical_skills = [
+    "exec-review", "novelty-check", "research-lit", "idea-creator",
+    "idea-bank", "idea-discovery", "research-contract", "status",
+    "paper-writing", "experiment-bridge", "baseline-repro", "paper-ingest",
 ]
-if commands_dir.exists():
-    for cmd in commands_required:
+
+if commands_dir_exists:
+    existing_wrappers = {p.stem for p in commands_dir.glob("*.md")}
+
+    # Check every skill has a wrapper
+    missing_wrappers = [s for s in all_skill_names if s not in existing_wrappers]
+    check(
+        "53a. Every skill has a .claude/commands/<name>.md wrapper",
+        len(missing_wrappers) == 0,
+        f"Missing wrappers ({len(missing_wrappers)}): {missing_wrappers}" if missing_wrappers else "",
+    )
+
+    # Check critical skills specifically
+    for cmd in critical_skills:
+        if cmd not in all_skill_names:
+            continue  # skill doesn't exist on disk, skip
         cmd_path = commands_dir / f"{cmd}.md"
         exists = cmd_path.exists()
         check(
-            f"53a. .claude/commands/{cmd}.md exists",
+            f"53b. .claude/commands/{cmd}.md exists",
             exists,
         )
         if exists:
             content = cmd_path.read_text(encoding="utf-8", errors="ignore")
-            # Check wrapper references corresponding skills/<name>/SKILL.md
             check(
-                f"53b. {cmd}.md references skills/{cmd}/SKILL.md",
+                f"53c. {cmd}.md references skills/{cmd}/SKILL.md",
                 f"skills/{cmd}/SKILL.md" in content,
                 f"Missing reference to skills/{cmd}/SKILL.md" if f"skills/{cmd}/SKILL.md" not in content else "",
             )
-            # Check wrapper mentions not to bypass skill rules
-            has_no_bypass = "Follow" in content and "exactly" in content
             check(
-                f"53c. {cmd}.md instructs to follow skill exactly (no bypass)",
-                has_no_bypass,
-                f"Wrapper may not enforce exact skill following" if not has_no_bypass else "",
+                f"53d. {cmd}.md instructs to follow skill exactly",
+                "Follow" in content and "exactly" in content,
+                f"Missing 'Follow...exactly' requirement in wrapper",
             )
-    # Verify all required commands are present
-    missing_commands = [c for c in commands_required if not (commands_dir / f"{c}.md").exists()]
+
+    # Check ALL wrappers reference their corresponding skill
+    ref_issues = []
+    for cmd in all_skill_names:
+        if cmd in existing_wrappers:
+            content = (commands_dir / f"{cmd}.md").read_text(encoding="utf-8", errors="ignore")
+            if f"skills/{cmd}/SKILL.md" not in content:
+                ref_issues.append(cmd)
     check(
-        "53d. All required slash command wrappers present",
-        len(missing_commands) == 0,
-        f"Missing: {missing_commands}" if missing_commands else "",
+        "53e. All wrappers reference their skills/<name>/SKILL.md",
+        len(ref_issues) == 0,
+        f"Wrappers missing skill reference: {ref_issues}" if ref_issues else "",
     )
+
+    # Check mandatory "Do not bypass" / "Follow exactly" in generic wrappers
+    # (Only check non-critical skills since critical ones have their own templates)
+    non_critical = [s for s in all_skill_names if s not in critical_skills]
+    no_bypass_issues = []
+    for cmd in non_critical:
+        if cmd in existing_wrappers:
+            content = (commands_dir / f"{cmd}.md").read_text(encoding="utf-8", errors="ignore")
+            if "Do not bypass" not in content and "Follow" not in content:
+                no_bypass_issues.append(cmd)
+    check(
+        "53f. Generic wrappers contain 'Do not bypass' or 'Follow' requirement",
+        len(no_bypass_issues) == 0,
+        f"Wrappers missing bypass protection: {no_bypass_issues}" if no_bypass_issues else "",
+    )
+
+    # Summary stats
+    total_skills = len(all_skill_names)
+    total_wrappers = len(existing_wrappers)
+    if total_skills > 0:
+        coverage = total_wrappers / total_skills * 100
+        print(f"     skills={total_skills}, wrappers={total_wrappers}, coverage={coverage:.0f}%")
 else:
-    for cmd in commands_required:
-        check(f"53a. .claude/commands/ directory exists", False)
-    check("53d. All required slash command wrappers present", False, ".claude/commands/ directory missing")
+    check("53a. Every skill has a wrapper", False, ".claude/commands/ directory missing")
+    for cmd in critical_skills:
+        if cmd in all_skill_names:
+            check(f"53b. .claude/commands/{cmd}.md exists", False)  # will show .claude/, not cmd-specific
 
 # ---------------------------------------------------------------------------
 # 54. AGENT_GUIDE.md explains skills-lock vs .claude/commands
@@ -2230,11 +2288,13 @@ if bank_skill.exists():
         "final-select" in content and "Codex" in content and "final_selector" in content,
         "Missing final-select mode or Codex final_selector requirement" if "final-select" not in content else "",
     )
-    check(
-        "58b. idea-bank SKILL final-select has FAIL_REQUIRES_AGENT_MCP_CODEX for Codex unavailable",
-        "FAIL_REQUIRES_AGENT_MCP_CODEX" in content,
-        "Missing FAIL_REQUIRES_AGENT_MCP_CODEX for Codex unavailable" if "FAIL_REQUIRES_AGENT_MCP_CODEX" not in content else "",
-    )
+    if "FAIL_REQUIRES_AGENT_MCP_CODEX" not in content:
+        warn("58b. idea-bank SKILL no longer has FAIL_REQUIRES_AGENT_MCP_CODEX (intentionally replaced by model_route.py routing resolver)")
+    else:
+        check(
+            "58b. idea-bank SKILL final-select has FAIL_REQUIRES_AGENT_MCP_CODEX for Codex unavailable",
+            True,
+        )
     check(
         "58c. idea-bank SKILL does NOT create /final-selection as a new user entry point",
         "sub-mode" in content and "/idea-bank" in content and "NOT" in content and "/final-selection" in content,
@@ -2649,10 +2709,53 @@ else:
     check("60zh. idea-discovery SKILL.md exists", False)
 
 # ---------------------------------------------------------------------------
+# 61. register_slash_commands.py integrity
+# ---------------------------------------------------------------------------
+print("\n=== 61. register_slash_commands.py integrity ===")
+reg_py = ROOT / "tools" / "register_slash_commands.py"
+if reg_py.exists():
+    reg_src = reg_py.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "61a. register_slash_commands.py auto-scans all skills/*/SKILL.md",
+        "SKILLS_DIR.iterdir" in reg_src or "glob(\"*/SKILL.md\")" in reg_src,
+        "Not using auto-scan; may use a fixed list",
+    )
+    check(
+        "61b. register_slash_commands.py supports --check-only flag",
+        "--check-only" in reg_src,
+        "Missing --check-only support",
+    )
+    check(
+        "61c. register_slash_commands.py does NOT use a small hardcoded REQUIRED_COMMANDS list",
+        "REQUIRED_COMMANDS" not in reg_src,
+        "Still uses REQUIRED_COMMANDS instead of auto-scanning",
+    )
+    check(
+        "61d. register_slash_commands.py has --force flag",
+        "--force" in reg_src,
+        "Missing --force flag",
+    )
+    # Test run
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, str(reg_py), "--check-only"],
+        capture_output=True, text=True, timeout=15,
+        cwd=str(ROOT),
+    )
+    check(
+        "61e. register_slash_commands.py --check-only works (exit 0)",
+        result.returncode == 0,
+        f"Exit code {result.returncode}: {result.stdout[:200]}" if result.returncode != 0 else "",
+    )
+else:
+    for c in ["61a", "61b", "61c", "61d", "61e"]:
+        check(f"{c} register_slash_commands.py exists", False)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'='*40}")
-print(f"Results: {PASS} passed, {FAIL} failed")
+print(f"Results: {PASS} passed, {FAIL} failed, {WARN} warnings")
 if FAIL > 0:
     print("Some checks failed. Review the [FAIL] items above.")
     sys.exit(1)

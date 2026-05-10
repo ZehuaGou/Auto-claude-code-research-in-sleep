@@ -167,11 +167,19 @@ Key tools for research workflow:
 - `skills-lock.json` registers local skills so the Skill tool can load them.
 - `.claude/commands/*.md` exposes them as `/skill-name` slash commands.
 - Both are needed: `skills-lock.json` for Skill API, `.claude/commands/` for slash entry.
-- If `/exec-review` has no response:
-  1. Run `python tools/register_local_skills.py`
-  2. Run `python tools/register_slash_commands.py`
-  3. Restart Claude Code session
-  4. Retry `/exec-review CAND_XXX`
+- If a slash command has no response:
+  1. Check whether `skills/<name>/SKILL.md` exists.
+  2. Run `python tools/register_local_skills.py`
+  3. Run `python tools/register_slash_commands.py`
+  4. Restart Claude Code session
+
+## Full Slash Wrapper Coverage
+
+- Every `skills/<name>/SKILL.md` must have `.claude/commands/<name>.md`.
+- The command `python tools/register_slash_commands.py` auto-scans all skills and generates wrappers. It never overwrites existing wrappers unless `--force` is passed.
+- Run `python tools/register_slash_commands.py --check-only` to verify all skills have wrappers.
+- Do not manually maintain a small command allowlist — all skills should be reachable via slash commands.
+- Core pipeline skills (`exec-review`, `novelty-check`, `research-lit`, `idea-creator`, `idea-bank`, `idea-discovery`, `research-contract`, `status`) have specialized templates in `register_slash_commands.py`. All other skills get a generic wrapper.
 
 ## Artifact Contracts
 
