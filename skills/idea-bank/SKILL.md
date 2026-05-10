@@ -9,7 +9,7 @@ description: Inspect, deduplicate, manage canonical idea candidates, and perform
 
 View the global idea bank, trigger re-dedup across runs, inspect a specific candidate's full review trail, or perform final selection.
 
-**Critical gate**: `final-select` requires a Codex reviewer verdict. Manual override is available as `manual-select` but produces `PASS_WITH_WARNINGS` max and is not a valid Codex gate.
+**Critical gate**: `final-select` defaults to Codex. If Codex is unavailable, a marked fallback to DeepSeek V4 Pro is permitted (explicit `llm_fallback_gate` with downgraded confidence). Manual override is available as `manual-select` but produces `PASS_WITH_WARNINGS` max and is not a valid gate.
 
 ## When to Use
 
@@ -43,9 +43,9 @@ View the global idea bank, trigger re-dedup across runs, inspect a specific cand
 5. Show adversarial findings: `ADVERSARIAL/CAND_XXX_adversarial.md`
 6. Show `next_action`: what the user should do next
 
-### final-select <candidate-id> — Codex Gate (REQUIRED for formal selection)
+### final-select <candidate-id> — Codex Gate with Marked DeepSeek Fallback
 
-Perform a Codex-gated final selection. This is the ONLY way to obtain a formal final selection verdict.
+Perform a final selection. Codex is the default and preferred backend. If Codex is unavailable, a marked fallback to DeepSeek V4 Pro is permitted with explicit downgrade flags.
 
 **Prerequisites**: The candidate MUST have completed exec-review AND novelty-check before final-select can run.
 
@@ -61,10 +61,9 @@ Perform a Codex-gated final selection. This is the ONLY way to obtain a formal f
    - If either is incomplete, stop with error: "Pre-requisite review/novelty incomplete. Complete exec-review and novelty-check first."
    - If a provisional selection already exists, warn but continue
 
-2. **Codex Gate (REQUIRED)**:
+2. **Attempt Codex Gate (Default)**:
    - Call Codex via `mcp__codex__codex` with role `final_selector`
    - Config: `{"model_reasoning_effort": "xhigh"}`
-   - **If Codex is unavailable**: stop with `FAIL_REQUIRES_AGENT_MCP_CODEX`. Do NOT fallback. Do NOT update any selection state.
    - Allowed input files:
      - `IDEA_BANK.md`, `IDEA_BANK.json`
      - `CANONICAL_IDEAS/CAND_001.md` (and CAND_002.md for comparison)
@@ -83,7 +82,7 @@ Perform a Codex-gated final selection. This is the ONLY way to obtain a formal f
      - Comparison of complementary vs overlapping aspects
      - Ask: "Which candidate should proceed to experiments? Verdict must be one of: SELECT_CAND_001, SELECT_CAND_002, NO_STRONG_IDEA, NEEDS_REVISION"
 
-3. **Output**:
+3. **If Codex succeeds**:
    - Write `FINAL_SELECTION/IDEA_SELECTION_REPORT.md` with artifact header:
      ```
      mode: final_selection
@@ -103,10 +102,53 @@ Perform a Codex-gated final selection. This is the ONLY way to obtain a formal f
    - On `NO_STRONG_IDEA`: leave status unchanged, report reason
    - On `NEEDS_REVISION`: leave status unchanged, report required changes
 
-4. **Ledger**:
+4. **If Codex is unavailable** (timeout / MCP unavailable / auth error):
+   - **Do NOT stop the pipeline**. Fallback to DeepSeek V4 Pro via `llm-chat` backend.
+   - **Do NOT pretend Codex was used**. Every field must honestly reflect the fallback.
+   - Write `FINAL_SELECTION/IDEA_SELECTION_REPORT.md` with artifact header:
+     ```
+     mode: final_selection
+     selection_mode: llm_fallback_gate
+     isolation_mode: protocol_only
+     codex_thread_id: none
+     primary_backend: codex
+     actual_backend: llm-chat
+     actual_model: deepseek-v4-pro
+     fallback_used: true
+     fallback_reason: Codex unavailable / timeout / MCP unavailable
+     codex_used: false
+     confidence_downgraded: true
+     forbidden_context_checked: true
+     verdict: SELECT_CAND_001_WITH_WARNINGS / SELECT_CAND_002_WITH_WARNINGS / NO_STRONG_IDEA / NEEDS_REVISION
+     ```
+   - Fallback verdicts allowed: `SELECT_CAND_001_WITH_WARNINGS`, `SELECT_CAND_002_WITH_WARNINGS`, `NO_STRONG_IDEA`, `NEEDS_REVISION`
+   - On `SELECT_CAND_001_WITH_WARNINGS` or `SELECT_CAND_002_WITH_WARNINGS`:
+     - Update `IDEA_BANK.md`: mark candidate as `SELECTED_WITH_FALLBACK` (not plain SELECTED)
+     - Update `IDEA_BANK.json`: move candidate to "selected_with_fallback"
+     - Update `CANONICAL_IDEAS/CAND_XXX.md`: status → `SELECTED_EMPIRICAL_WITH_LLM_FALLBACK`
+     - Add prominent note in report: "This final selection did not use Codex. It used DeepSeek V4 Pro fallback."
+   - On `NO_STRONG_IDEA` or `NEEDS_REVISION`: leave status unchanged, report reason
+
+5. **Ledger** (Codex path):
    - Record `role=final_selector`
    - Include `codex_thread_id`
    - Set `output_files=[idea-stage/AGENTIC/FINAL_SELECTION/IDEA_SELECTION_REPORT.md]`
+   - Status: `completed`
+
+6. **Ledger** (Fallback path):
+   - Record `role=final_selector`
+   - Set `primary_backend=codex`, `actual_backend=llm-chat`, `actual_model=deepseek-v4-pro`
+   - Set `fallback_used=true`, `fallback_reason=<reason>`
+   - Set `selection_mode=llm_fallback_gate`, `codex_used=false`, `confidence_downgraded=true`
+   - Set `status=completed_with_warnings`
+   - Set `output_files=[idea-stage/AGENTIC/FINAL_SELECTION/IDEA_SELECTION_REPORT.md]`
+
+7. **Next step after fallback selection**:
+   - Proceed to `/research-contract` is permitted
+   - `/research-contract` must record:
+     - `final_selection_backend: deepseek-v4-pro`
+     - `codex_used: false`
+     - `rerun_codex_final_selector_recommended: true`
 
 ### manual-select <candidate-id> — Manual Override (PROTOCOL_ONLY, max PASS_WITH_WARNINGS)
 
@@ -153,7 +195,7 @@ Perform a Codex-gated final selection. This is the ONLY way to obtain a formal f
 4. Never mix multiple runs into one giant report.
 5. Never pass old scores or praise to a reviewer.
 6. **/idea-bank can read `.meta/`** (provenance metadata). Reviewers, novelty checkers, and adversarial reviewers MUST NOT read `.meta/`.
-7. **final-select MUST use Codex gate**. No fallback. If Codex unavailable → `FAIL_REQUIRES_AGENT_MCP_CODEX`.
+7. **final-select defaults to Codex**. If Codex unavailable, fallback to DeepSeek V4 Pro is permitted with explicit downgrade flags (`codex_used: false`, `confidence_downgraded: true`, `selection_mode: llm_fallback_gate`). Silent fallback is forbidden.
 8. **manual-select** is protocol_only only. Never claim it as a formal Codex gate.
 9. **No new top-level slash command** — final-selection is a sub-mode of `/idea-bank`, NOT `/final-selection`.
 10. `final-select` without a valid Codex verdict must not change `selected` status in IDEA_BANK or CAND files.

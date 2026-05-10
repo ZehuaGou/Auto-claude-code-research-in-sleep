@@ -117,6 +117,9 @@ def cmd_finish(args: List[str]):
       --actual-backend <codex|llm-chat|api>
       --actual-model <model or DEFAULT>
       --output-file <path>  (may repeat)
+      --selection-mode <codex_gate|llm_fallback_gate|manual_override>
+      --codex-used <true|false>
+      --confidence-downgraded <true|false>
     """
     kwargs = _parse_kwargs(args)
     calls_dir = get_calls_dir()
@@ -143,6 +146,9 @@ def cmd_finish(args: List[str]):
     actual_backend = kwargs.get("actual_backend") or entry.get("actual_backend")
     actual_model = kwargs.get("actual_model") or entry.get("actual_model")
     output_files = kwargs.get("output_files") or entry.get("output_files", [])
+    selection_mode = kwargs.get("selection_mode") or entry.get("selection_mode")
+    codex_used = kwargs.get("codex_used") or entry.get("codex_used")
+    confidence_downgraded = kwargs.get("confidence_downgraded") or entry.get("confidence_downgraded")
 
     if codex_thread_id:
         entry["codex_thread_id"] = codex_thread_id
@@ -154,6 +160,12 @@ def cmd_finish(args: List[str]):
         entry["actual_model"] = actual_model
     if output_files:
         entry["output_files"] = output_files
+    if selection_mode:
+        entry["selection_mode"] = selection_mode
+    if codex_used:
+        entry["codex_used"] = codex_used
+    if confidence_downgraded:
+        entry["confidence_downgraded"] = confidence_downgraded
 
     # Enforce: if actual_backend=codex, codex_thread_id must be non-empty
     effective_backend = entry.get("actual_backend", "")
@@ -163,6 +175,12 @@ def cmd_finish(args: List[str]):
             entry["status"] = "completed_with_warnings"
         elif not entry.get("isolation_mode"):
             entry["isolation_mode"] = "codex_thread"
+
+    # Enforce: if codex_used is explicitly false, demote to completed_with_warnings
+    if entry.get("codex_used") is not None:
+        cu = str(entry.get("codex_used")).lower().strip()
+        if cu in ("false", "0", "no"):
+            entry["status"] = "completed_with_warnings"
 
     # Append to JSONL
     jsonl_file = calls_dir / "llm_calls.jsonl"
@@ -208,6 +226,9 @@ def cmd_fail(args: List[str]):
 def cmd_fallback(
     fallback_model: str, reason: str = "codex unavailable", backend: str = "llm-chat",
     codex_thread_id: str = "",
+    selection_mode: str = "",
+    codex_used: str = "",
+    confidence_downgraded: str = "",
 ):
     """Mark current call as fallback."""
     calls_dir = get_calls_dir()
@@ -226,13 +247,27 @@ def cmd_fallback(
     entry["actual_model"] = fallback_model
     entry["fallback_used"] = True
     entry["fallback_reason"] = reason
-    entry["status"] = "completed_with_fallback"
+
+    # Distinguish final_selector fallback from generic fallback
+    role = entry.get("role", "")
+    if role == "final_selector":
+        entry["status"] = "completed_with_warnings"
+    else:
+        entry["status"] = "completed_with_fallback"
 
     # Preserve existing codex_thread_id unless caller provides an override
     if codex_thread_id:
         entry["codex_thread_id"] = codex_thread_id
     # On fallback, isolation is protocol_only
     entry["isolation_mode"] = "protocol_only"
+
+    # Optional final-select-specific fields
+    if selection_mode:
+        entry["selection_mode"] = selection_mode
+    if codex_used:
+        entry["codex_used"] = codex_used
+    if confidence_downgraded:
+        entry["confidence_downgraded"] = confidence_downgraded
 
     now = datetime.now(timezone.utc)
     start = datetime.fromisoformat(entry.get("timestamp", now.isoformat()))
@@ -332,6 +367,9 @@ def cmd_summary(args: List[str]):
             "actual_model": c.get("actual_model", ""),
             "status": c.get("status", ""),
             "fallback_used": c.get("fallback_used", False),
+            "codex_used": c.get("codex_used", None),
+            "confidence_downgraded": c.get("confidence_downgraded", None),
+            "selection_mode": c.get("selection_mode", None),
             "error": c.get("error", None),
         }
         for c in recent[-20:]  # last 20
@@ -361,7 +399,12 @@ def main():
         backend = args[2] if len(args) > 2 and not args[2].startswith("--") else "llm-chat"
         fw_kwargs = _parse_kwargs(args)
         codex_thread_id = fw_kwargs.get("codex_thread_id", "")
-        cmd_fallback(fallback_model, reason, backend, codex_thread_id=codex_thread_id)
+        selection_mode = fw_kwargs.get("selection_mode", "")
+        codex_used = fw_kwargs.get("codex_used", "")
+        confidence_downgraded = fw_kwargs.get("confidence_downgraded", "")
+        cmd_fallback(fallback_model, reason, backend, codex_thread_id=codex_thread_id,
+                     selection_mode=selection_mode, codex_used=codex_used,
+                     confidence_downgraded=confidence_downgraded)
     elif cmd == "status":
         cmd_status()
     elif cmd == "summary":

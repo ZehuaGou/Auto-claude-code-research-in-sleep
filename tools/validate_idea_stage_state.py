@@ -235,45 +235,124 @@ def main():
                         "Ad hoc novelty cannot enter formal final selection."
                     )
 
-    # 9. Check if IDEA_BANK/CAND_XXX says selected but lacks Codex final_selector
+    # 9. Check final selection artifact type and validate accordingly
     final_sel_dir = idea_stage / "FINAL_SELECTION"
     has_codex_final_selection = False
+    has_llm_fallback_selection = False
+    selection_verdict = None
+
     if final_sel_dir.exists():
         report_path = final_sel_dir / "IDEA_SELECTION_REPORT.md"
         if report_path.exists():
             text = report_path.read_text(encoding="utf-8", errors="ignore")
             header_lines = text.splitlines()[:30]
+            selection_mode = ""
+            codex_tid = ""
+            actual_backend = ""
+            fallback_used = ""
+            primary_backend = ""
+            actual_model = ""
+            fallback_reason = ""
+            codex_used = ""
+            confidence_downgraded = ""
             found_mode = False
-            found_sel_mode = False
-            found_codex_tid = False
-            found_codex_backend = False
+
             for line in header_lines:
                 ll = line.strip().lower()
                 if ll.startswith("mode:") and "final_selection" in ll:
                     found_mode = True
-                if ll.startswith("selection_mode:") and "codex_gate" in ll:
-                    found_sel_mode = True
+                if ll.startswith("selection_mode:"):
+                    selection_mode = ll.split(":", 1)[1].strip()
                 if ll.startswith("codex_thread_id:"):
-                    tid = ll.split(":", 1)[1].strip()
-                    if tid and tid not in ("none", ""):
-                        found_codex_tid = True
-                if ll.startswith("actual_backend:") and "codex" in ll:
-                    found_codex_backend = True
-            has_codex_final_selection = all([found_mode, found_sel_mode, found_codex_tid, found_codex_backend])
+                    codex_tid = ll.split(":", 1)[1].strip()
+                if ll.startswith("actual_backend:"):
+                    actual_backend = ll.split(":", 1)[1].strip()
+                if ll.startswith("fallback_used:"):
+                    fallback_used = ll.split(":", 1)[1].strip()
+                if ll.startswith("primary_backend:"):
+                    primary_backend = ll.split(":", 1)[1].strip()
+                if ll.startswith("actual_model:"):
+                    actual_model = ll.split(":", 1)[1].strip()
+                if ll.startswith("fallback_reason:"):
+                    fallback_reason = ll.split(":", 1)[1].strip()
+                if ll.startswith("codex_used:"):
+                    codex_used = ll.split(":", 1)[1].strip()
+                if ll.startswith("confidence_downgraded:"):
+                    confidence_downgraded = ll.split(":", 1)[1].strip()
+
+            # Case A: codex_gate
+            if selection_mode == "codex_gate" and found_mode:
+                has_valid_tid = bool(codex_tid) and codex_tid not in ("none", "")
+                has_codex_backend = actual_backend == "codex"
+                has_no_fallback = fallback_used == "false"
+                has_codex_final_selection = all([has_valid_tid, has_codex_backend, has_no_fallback])
+                if has_codex_final_selection:
+                    for line in text.splitlines():
+                        ll = line.strip().lower()
+                        if ll.startswith("verdict:"):
+                            selection_verdict = ll.split(":", 1)[1].strip()
+                            break
+
+            # Case B: llm_fallback_gate
+            elif selection_mode == "llm_fallback_gate" and found_mode:
+                has_primary_codex = primary_backend == "codex"
+                has_fallback_model = actual_model == "deepseek-v4-pro"
+                has_fallback_used = fallback_used == "true"
+                has_fallback_reason = bool(fallback_reason) and fallback_reason not in ("none", "")
+                has_codex_false = codex_used == "false"
+                has_confidence_downgrade = confidence_downgraded == "true"
+
+                llm_issues = []
+                if not has_primary_codex:
+                    llm_issues.append("primary_backend must be codex for llm_fallback_gate")
+                if not has_fallback_model:
+                    llm_issues.append("actual_model must be deepseek-v4-pro for llm_fallback_gate")
+                if not has_fallback_used:
+                    llm_issues.append("fallback_used must be true for llm_fallback_gate")
+                if not has_fallback_reason:
+                    llm_issues.append("fallback_reason must be non-empty for llm_fallback_gate")
+                if not has_codex_false:
+                    llm_issues.append("codex_used must be false for llm_fallback_gate")
+                if not has_confidence_downgrade:
+                    llm_issues.append("confidence_downgraded must be true for llm_fallback_gate")
+
+                if llm_issues:
+                    header_issues.extend(llm_issues)
+                    has_llm_fallback_selection = False
+                else:
+                    has_llm_fallback_selection = True
+                    for line in text.splitlines():
+                        ll = line.strip().lower()
+                        if ll.startswith("verdict:"):
+                            selection_verdict = ll.split(":", 1)[1].strip()
+                            break
 
     # Check IDEA_BANK for selected candidates
     # Data may be at top level or nested under "summary"
     summary = bank.get("summary", {})
     selected_in_bank = bank.get("selected", summary.get("selected", []))
+    selected_with_fallback_in_bank = bank.get("selected_with_fallback", summary.get("selected_with_fallback", []))
     provisional_in_bank = bank.get("provisional_selected", summary.get("provisional_selected", []))
 
+    # Selected candidates must have codex_gate artifact
     for cand_id in selected_in_bank:
-        # Check if cand file exists
         cand_file = canonical_dir / f"{cand_id}.md"
         if cand_file.exists() and not has_codex_final_selection:
             violations.append(
                 f"{cand_file.name}: marked SELECTED in IDEA_BANK but no Codex final_selector artifact found. "
                 "This should be PROVISIONAL_SELECTED until a Codex gate completes."
+            )
+
+    # Selected-with-fallback candidates must have llm_fallback_gate artifact
+    for cand_id in selected_with_fallback_in_bank:
+        if not has_llm_fallback_selection:
+            violations.append(
+                f"{cand_id}: marked SELECTED_WITH_FALLBACK in IDEA_BANK but no valid llm_fallback_gate artifact found."
+            )
+        if has_llm_fallback_selection:
+            warnings.append(
+                f"{cand_id}: selected via llm_fallback_gate (Codex was not used). "
+                "Confidence is downgraded. Run Codex final-select when available for a formal verdict."
             )
 
     for cand_id in provisional_in_bank:
@@ -284,6 +363,8 @@ def main():
                 violations.append(
                     f"{cand_file.name}: IDEA_BANK says provisional_selected but file says '{cand_status}'. "
                     "PROVISIONAL_SELECTED required for manual/provisional selections."
+                )
+
                 )
 
     # 10. Check codex_thread_id presence for codex artifacts

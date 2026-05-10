@@ -187,6 +187,7 @@ KNOWN_VERDICTS = [
     "go", "revise", "kill",
     "confirmed_novel", "likely_incremental", "already_done", "insufficient_evidence",
     "select_cand_001", "select_cand_002", "no_strong_idea", "needs_revision",
+    "select_cand_001_with_warnings", "select_cand_002_with_warnings",
 ]
 
 
@@ -356,6 +357,7 @@ STATUS_MAP = {
     "needs_gate": "needs_resume",
     "completed": "complete",
     "complete": "complete",
+    "complete_with_warnings": "complete_with_warnings",
     "failed": "failed",
     "blocked": "blocked",
 }
@@ -801,19 +803,45 @@ def check_phase_novelty_check(candidate: Optional[str] = None) -> Dict[str, Any]
 # Phase 5: final-selection
 # ---------------------------------------------------------------------------
 
-def check_phase_final_selection() -> Dict[str, Any]:
-    """Check Phase 5 (final-selection) artifacts with Codex gate validation.
+def _check_ledger_for_final_selection(codex_tid: str) -> bool:
+    """Check ledger contains a final_selector entry with matching codex_thread_id."""
+    ledger_path = ROOT / ".aris" / "calls" / "llm_calls.jsonl"
+    if not ledger_path.exists():
+        return False
+    for line in ledger_path.read_text(encoding="utf-8", errors="ignore").strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+            entry_role = entry.get("role", "")
+            entry_outputs = entry.get("output_files", [])
+            entry_tid = entry.get("codex_thread_id", "")
+            if entry_role == "final_selector" or any("IDEA_SELECTION_REPORT" in str(o) for o in entry_outputs):
+                if entry_tid == codex_tid:
+                    return True
+        except json.JSONDecodeError:
+            pass
+    return False
 
-    Final selection is complete only if:
-    1. FINAL_SELECTION/IDEA_SELECTION_REPORT.md exists
-    2. mode: final_selection
-    3. selection_mode: codex_gate
-    4. isolation_mode: codex_thread
-    5. codex_thread_id is non-empty
-    6. actual_backend: codex
-    7. fallback_used: false
-    8. verdict is one of: select_cand_001, select_cand_002
-    9. ledger contains role=final_selector or output_files=IDEA_SELECTION_REPORT
+def check_phase_final_selection() -> Dict[str, Any]:
+    """Check Phase 5 (final-selection) artifacts with two-tier validation.
+
+    Two completion tiers:
+    A. complete (strong): Codex gate success
+       - selection_mode: codex_gate
+       - actual_backend: codex
+       - fallback_used: false
+       - codex_thread_id non-empty
+       - verdict exists
+
+    B. complete_with_warnings: LLM fallback gate
+       - selection_mode: llm_fallback_gate
+       - actual_model: deepseek-v4-pro
+       - fallback_used: true
+       - codex_used: false
+       - verdict exists
+
+    C. needs_resume: provisional/manual selection or missing artifact
     """
     result: Dict[str, Any] = {
         "stage": "final-selection",
@@ -898,58 +926,75 @@ def check_phase_final_selection() -> Dict[str, Any]:
         result["next_action"] = "Selection report is marked PROVISIONAL. Run /idea-bank 'final-select CAND_XXX' for a formal Codex-gated verdict."
         return _add_normalized(result)
 
-    # Check Codex gate completeness
+    # Determine completion tier
     issues = []
-    if mode != "final_selection":
-        issues.append(f"mode={mode} (expected final_selection)")
-    if selection_mode != "codex_gate":
-        issues.append(f"selection_mode={selection_mode} (expected codex_gate)")
-    if isolation != "codex_thread":
-        issues.append(f"isolation_mode={isolation} (expected codex_thread)")
-    if not codex_tid or codex_tid == "none":
-        issues.append("codex_thread_id missing or empty")
-    if backend != "codex":
-        issues.append(f"actual_backend={backend} (expected codex)")
-    if fallback != "false":
-        issues.append(f"fallback_used={fallback} (expected false)")
-    if verdict not in ("select_cand_001", "select_cand_002"):
-        issues.append(f"verdict={verdict} (expected select_cand_001 or select_cand_002)")
 
-    if issues:
+    # Tier A: Codex gate (strong)
+    if selection_mode == "codex_gate":
+        if mode != "final_selection":
+            issues.append(f"mode={mode} (expected final_selection)")
+        if isolation != "codex_thread":
+            issues.append(f"isolation_mode={isolation} (expected codex_thread)")
+        if not codex_tid or codex_tid == "none":
+            issues.append("codex_thread_id missing or empty")
+        if backend != "codex":
+            issues.append(f"actual_backend={backend} (expected codex)")
+        if fallback != "false":
+            issues.append(f"fallback_used={fallback} (expected false)")
+        if verdict not in ("select_cand_001", "select_cand_002"):
+            issues.append(f"verdict={verdict} (expected select_cand_001 or select_cand_002)")
+
+        if issues:
+            result["status"] = "needs_resume"
+            result["issues"] = issues
+            result["next_action"] = f"Selection report header incomplete: {'; '.join(issues)}"
+            return _add_normalized(result)
+
+        # Check ledger alignment for codex gate
+        ledger_ok = _check_ledger_for_final_selection(codex_tid)
+        if not ledger_ok:
+            result["status"] = "needs_resume"
+            result["issues"] = ["ledger entry missing role=final_selector or output_files=IDEA_SELECTION_REPORT"]
+            result["next_action"] = "Selection report exists but ledger entry missing. Check .aris/calls/llm_calls.jsonl for final_selector entry."
+            return _add_normalized(result)
+
+        result["status"] = "completed"
+        result["verdict"] = verdict
+        result["next_action"] = "Final selection complete. Proceed to research-contract."
+
+    # Tier B: LLM fallback gate (with warnings)
+    elif selection_mode == "llm_fallback_gate":
+        if mode != "final_selection":
+            issues.append(f"mode={mode} (expected final_selection)")
+        if header.get("codex_used", "") != "false":
+            issues.append("codex_used must be false for llm_fallback_gate")
+        if header.get("confidence_downgraded", "") != "true":
+            issues.append("confidence_downgraded must be true for llm_fallback_gate")
+        if header.get("actual_model", "") != "deepseek-v4-pro":
+            issues.append(f"actual_model={header.get('actual_model', '')} (expected deepseek-v4-pro)")
+        if fallback != "true":
+            issues.append(f"fallback_used={fallback} (expected true for llm_fallback_gate)")
+        fb_reason = header.get("fallback_reason", "")
+        if not fb_reason or fb_reason == "none":
+            issues.append("fallback_reason must be non-empty for llm_fallback_gate")
+        if verdict not in ("select_cand_001_with_warnings", "select_cand_002_with_warnings"):
+            issues.append(f"verdict={verdict} (expected select_cand_001_with_warnings or select_cand_002_with_warnings for fallback)")
+
+        if issues:
+            result["status"] = "needs_resume"
+            result["issues"] = issues
+            result["next_action"] = f"Fallback selection report header incomplete: {'; '.join(issues)}"
+            return _add_normalized(result)
+
+        result["status"] = "complete_with_warnings"
+        result["verdict"] = verdict
+        result["next_action"] = "Final selection completed with fallback (Codex was not used). Can proceed to research-contract."
+
+    # Tier C: Unknown selection mode — needs resume
+    else:
         result["status"] = "needs_resume"
-        result["issues"] = issues
-        result["next_action"] = f"Selection report header incomplete: {'; '.join(issues)}"
-        return _add_normalized(result)
-
-    # Check ledger alignment
-    ledger_path = ROOT / ".aris" / "calls" / "llm_calls.jsonl"
-    ledger_ok = False
-    if ledger_path.exists():
-        for line in ledger_path.read_text(encoding="utf-8", errors="ignore").strip().split("\n"):
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(line)
-                entry_role = entry.get("role", "")
-                entry_outputs = entry.get("output_files", [])
-                entry_tid = entry.get("codex_thread_id", "")
-                if entry_role == "final_selector" or any("IDEA_SELECTION_REPORT" in str(o) for o in entry_outputs):
-                    if entry_tid == codex_tid:
-                        ledger_ok = True
-                        break
-            except json.JSONDecodeError:
-                pass
-
-    if not ledger_ok:
-        result["status"] = "needs_resume"
-        result["issues"] = ["ledger entry missing role=final_selector or output_files=IDEA_SELECTION_REPORT"]
-        result["next_action"] = "Selection report exists but ledger entry missing. Check .aris/calls/llm_calls.jsonl for final_selector entry."
-        return _add_normalized(result)
-
-    result["status"] = "completed"
-    result["verdict"] = verdict
-    result["next_action"] = "Final selection complete. Proceed to research-contract."
-    return _add_normalized(result)
+        result["issues"] = [f"Unknown selection_mode={selection_mode}"]
+        result["next_action"] = "Selection report has unknown gate type. Run /idea-bank 'final-select CAND_XXX'."
 
 
 # ---------------------------------------------------------------------------

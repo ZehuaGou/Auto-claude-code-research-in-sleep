@@ -2289,6 +2289,122 @@ if status_skill.exists():
 else:
     check("58h. status SKILL.md exists", False)
 
+
+# ---------------------------------------------------------------------------
+# 59. final-selection fallback to DeepSeek V4 Pro
+# ---------------------------------------------------------------------------
+print("\n=== 59. final-selection fallback to DeepSeek V4 Pro ===")
+
+# 59a. idea-bank SKILL says Codex is default/priority
+bank_skill = ROOT / "skills" / "idea-bank" / "SKILL.md"
+if bank_skill.exists():
+    content_bank = bank_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "59a. idea-bank SKILL says Codex is default priority",
+        "Codex" in content_bank and "default" in content_bank.lower(),
+        "Missing Codex default priority statement" if "Codex" not in content_bank else "",
+    )
+    check(
+        "59b. idea-bank SKILL allows fallback to DeepSeek V4 Pro when Codex unavailable",
+        "DeepSeek V4 Pro" in content_bank and "fallback" in content_bank.lower(),
+        "Missing DeepSeek V4 Pro fallback mention",
+    )
+    check(
+        "59c. idea-bank SKILL contains selection_mode: llm_fallback_gate",
+        "llm_fallback_gate" in content_bank,
+        "Missing llm_fallback_gate mode",
+    )
+    check(
+        "59d. idea-bank SKILL contains codex_used: false",
+        "codex_used: false" in content_bank or 'codex_used: false' in content_bank,
+        "Missing codex_used: false flag",
+    )
+    check(
+        "59e. idea-bank SKILL contains confidence_downgraded: true",
+        "confidence_downgraded: true" in content_bank or 'confidence_downgraded: true' in content_bank,
+        "Missing confidence_downgraded: true flag",
+    )
+else:
+    for c in ["59a", "59b", "59c", "59d", "59e"]:
+        check(f"{c} idea-bank SKILL.md exists", False)
+
+# 59f. resume_stage_state.py supports complete_with_warnings
+resume_tool = ROOT / "tools" / "resume_stage_state.py"
+if resume_tool.exists():
+    content_resume = resume_tool.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "59f. resume_stage_state.py supports complete_with_warnings for llm_fallback_gate",
+        "complete_with_warnings" in content_resume and "llm_fallback_gate" in content_resume,
+        "Missing complete_with_warnings or llm_fallback_gate in resume_stage_state.py",
+    )
+else:
+    check("59f. resume_stage_state.py exists", False)
+
+# 59g. validate_idea_stage_state.py returns PASS_WITH_WARNINGS for llm_fallback_gate
+validator = ROOT / "tools" / "validate_idea_stage_state.py"
+if validator.exists():
+    content_val = validator.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "59g. validate_idea_stage_state.py validates llm_fallback_gate",
+        "llm_fallback_gate" in content_val and "deepseek-v4-pro" in content_val,
+        "Missing llm_fallback_gate validation in validator",
+    )
+else:
+    check("59g. validate_idea_stage_state.py exists", False)
+
+# 59h. status SKILL does not show fallback selection as plain complete
+status_skill = ROOT / "skills" / "status" / "SKILL.md"
+if status_skill.exists():
+    content_status = status_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "59h. status SKILL distinguishes complete_with_warnings from complete",
+        "complete_with_warnings" in content_status and "Codex was not used" in content_status,
+        "Missing complete_with_warnings distinction in status SKILL",
+    )
+else:
+    check("59h. status SKILL.md exists", False)
+
+# 59i. llm_call_ledger.py supports selection_mode, codex_used, confidence_downgraded
+ledger_py = ROOT / "tools" / "llm_call_ledger.py"
+if ledger_py.exists():
+    content_ledger = ledger_py.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "59i. llm_call_ledger cmd_finish supports selection_mode",
+        "selection_mode" in content_ledger and "cmd_finish" not in content_ledger.split("def cmd_fallback")[0] or "selection_mode" in content_ledger,
+        "Missing selection_mode support in ledger",
+    )
+    check(
+        "59j. llm_call_ledger cmd_finish supports codex_used",
+        "codex_used" in content_ledger,
+        "Missing codex_used support in ledger",
+    )
+    check(
+        "59k. llm_call_ledger cmd_finish supports confidence_downgraded",
+        "confidence_downgraded" in content_ledger,
+        "Missing confidence_downgraded support in ledger",
+    )
+    # Check cmd_fallback has the new params
+    fallback_signature_has_fields = "selection_mode" in content_ledger and "codex_used" in content_ledger and "confidence_downgraded" in content_ledger
+    check(
+        "59l. llm_call_ledger cmd_fallback supports new fields",
+        fallback_signature_has_fields,
+        "Missing one or more fields in cmd_fallback signature",
+    )
+else:
+    for c in ["59i", "59j", "59k", "59l"]:
+        check(f"{c} llm_call_ledger.py exists", False)
+
+# 59m. Silent fallback is forbidden — SKILL must say so
+if bank_skill.exists():
+    content_bank = bank_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "59m. idea-bank SKILL forbids silent fallback",
+        "silent fallback" in content_bank.lower() or "Do NOT pretend" in content_bank,
+        "Missing silent fallback prohibition",
+    )
+else:
+    check("59m. idea-bank SKILL.md exists", False)
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
