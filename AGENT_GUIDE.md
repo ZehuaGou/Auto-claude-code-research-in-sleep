@@ -155,6 +155,9 @@ Key tools for research workflow:
 - `tools/llm_call_ledger.py` — Model call tracking (start/finish/fail/fallback).
 - `tools/exec_review.py` — Review session initialization and completion tracking.
 - `tools/session_registry.py` — Session management and handoff.
+- `tools/register_local_skills.py` — Register local ARIS slash skills into
+  `skills-lock.json` so `/skill-name` commands are recognized by Claude Code.
+  Run after cloning or adding new skills: `python tools/register_local_skills.py`.
 
 ## Artifact Contracts
 
