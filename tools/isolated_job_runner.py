@@ -140,6 +140,20 @@ def _extract_candidate_id(path: str) -> str:
     return m.group(1) if m else ""
 
 
+# Roles that require Codex MCP for judgment gates.
+# Runner cannot execute these — outer Agent must call mcp__codex__codex.
+CODEX_REQUIRED_ROLES = [
+    "evidence_integrity_auditor",
+    "idea_shortlist_auditor",
+    "idea_reviewer",
+    "novelty_checker",
+    "adversarial_reviewer",
+    "final_selector",
+    "experiment_auditor",
+    "result_judge",
+    "final_paper_auditor",
+]
+
 # Isolation restricts contamination sources, not evidence sources.
 ALLOWED_EVIDENCE_PATTERNS = [
     "CANONICAL_IDEAS/CAND_", "LITERATURE_INDEX.md", "GAP_MAP.md",
@@ -715,41 +729,75 @@ def _backend_api(
 # ---------------------------------------------------------------------------
 
 def _backend_codex_optional(job: Dict[str, Any], env_vars: Dict[str, str]) -> Dict[str, Any]:
-    """Execute job with Codex as primary, falling back to API.
+    """Execute job with Codex as primary, falling back to API only if allowed.
 
-    If the model_env resolves to "codex", Codex is preferred but unavailable
-    in V1 — fallback to API with REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK.
-    If model_env resolves to a real model, call API directly (no fallback flag).
+    - If role is codex_required and job.allow_fallback is NOT true:
+      Returns FAIL_REQUIRES_AGENT_MCP_CODEX — outer Agent must call mcp__codex__codex.
+    - If role is codex_required and job.allow_fallback=true:
+      Falls back to API with REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK.
+      Verdict max is PASS_WITH_WARNINGS.
+    - If role is NOT codex_required and primary=codex:
+      Falls back to API (standard codex_optional behavior).
+    - If primary is not codex: calls API directly.
 
-    Non-silent: always emits a clear fallback notification to stderr.
+    Runner NEVER calls Codex MCP itself — only outer Agent can do that.
     """
     model_env_key = job.get("model_env", "")
     model = _get_model_from_env(model_env_key, env_vars)
 
     if model != "codex":
-        # Not configured for Codex — call API directly
         result = _backend_api(job, env_vars)
         result["fallback_used"] = False
         return result
 
-    # Derive role-specific fallback env key, e.g.:
-    #   LLM_IDEA_REVIEWER_PRIMARY -> LLM_IDEA_REVIEWER_FALLBACK_MODEL
-    #   LLM_NOVELTY_CHECKER_PRIMARY -> LLM_NOVELTY_CHECKER_FALLBACK_MODEL
+    role_name = job.get("role", "unknown")
+    allow_fallback = job.get("allow_fallback", False)
+
+    # codex_required roles: runner cannot execute, outer Agent must call mcp__codex__codex
+    if role_name in CODEX_REQUIRED_ROLES and not allow_fallback:
+        print(
+            f"[codex_required] {role_name}: FAIL_REQUIRES_AGENT_MCP_CODEX — "
+            f"runner cannot call Codex MCP. Outer Agent must invoke mcp__codex__codex, "
+            f"write artifact header, and log to ledger.",
+            file=sys.stderr,
+        )
+        return {
+            "status": "failed",
+            "error": "FAIL_REQUIRES_AGENT_MCP_CODEX",
+            "error_detail": (
+                f"Role '{role_name}' requires Codex MCP for judgment. "
+                f"isolated_job_runner cannot call mcp__codex__codex. "
+                f"Outer Agent (Claude Code) must invoke mcp__codex__codex directly, "
+                f"write the output artifact with proper header (isolation_mode, "
+                f"codex_thread_id, actual_backend, actual_model, fallback_used), "
+                f"and append to .aris/calls/llm_calls.jsonl."
+            ),
+            "fallback_used": False,
+            "REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK": False,
+            "isolation_mode": "codex_thread",
+        }
+
+    # Fallback path: only when role is NOT codex_required OR allow_fallback=true
     role_fallback_key = model_env_key.replace("_PRIMARY", "_FALLBACK_MODEL")
     fallback_model = env_vars.get(
         role_fallback_key,
         env_vars.get("LLM_FALLBACK_MODEL", env_vars.get("LLM_MODEL", "deepseek-v4-pro")),
     )
 
-    # Non-silent fallback notification
-    role_name = job.get("role", "unknown")
-    print(
-        f"[codex_optional] {role_name}: Codex unavailable (model_env={model_env_key}), "
-        f"falling back to model={fallback_model}",
-        file=sys.stderr,
-    )
+    if role_name in CODEX_REQUIRED_ROLES:
+        print(
+            f"[codex_required] {role_name}: allow_fallback=true — "
+            f"falling back to API model={fallback_model}. "
+            f"Max verdict: PASS_WITH_WARNINGS.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"[codex_optional] {role_name}: Codex unavailable, "
+            f"falling back to model={fallback_model}",
+            file=sys.stderr,
+        )
 
-    # Override env so _backend_api resolves the fallback model instead of "codex"
     modified_env = dict(env_vars)
     modified_env[model_env_key] = fallback_model
 
@@ -760,6 +808,7 @@ def _backend_codex_optional(job: Dict[str, Any], env_vars: Dict[str, str]) -> Di
         "actual_model": fallback_model,
         "fallback_used": True,
         "fallback_reason": "Codex unavailable; fell back to role-specific LLM model",
+        "isolation_mode": "protocol_only",
         "status": "started",
     }
     result = _backend_api(job, modified_env, ledger_overrides=ledger_overrides)

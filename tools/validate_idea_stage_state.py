@@ -201,7 +201,97 @@ def main():
                 if not present:
                     header_issues.append(f"NOVELTY/{nov_file.name}: missing '{field}' in header")
 
-    # 7. Determine verdict
+    # 7. Check novelty for ad_hoc mode
+    ad_hoc_novelty = []
+    if novelty_dir.exists():
+        for nov_file in sorted(novelty_dir.glob("CAND_*_novelty*.md")):
+            text = nov_file.read_text(encoding="utf-8", errors="ignore")
+            if "mode: ad_hoc" in text or "mode: ad_hoc" in text:
+                ad_hoc_novelty.append(str(nov_file.relative_to(idea_stage)))
+
+    # Also check NOVELTY_ADHOC/
+    adhoc_dir = idea_stage / "NOVELTY_ADHOC"
+    if adhoc_dir.exists():
+        for f in adhoc_dir.glob("*.md"):
+            ad_hoc_novelty.append(str(f.relative_to(idea_stage)))
+
+    # 8. Check ad_hoc novelty not referenced by final selection
+    final_sel_dir = idea_stage / "FINAL_SELECTION"
+    if final_sel_dir.exists() and ad_hoc_novelty:
+        for fs_file in sorted(final_sel_dir.glob("*.md")):
+            fs_text = fs_file.read_text(encoding="utf-8", errors="ignore")
+            for adh in ad_hoc_novelty:
+                if adh in fs_text:
+                    violations.append(
+                        f"FINAL_SELECTION/{fs_file.name} references ad_hoc novelty {adh}. "
+                        "Ad hoc novelty cannot enter formal final selection."
+                    )
+
+    # 9. Check codex_thread_id presence for codex artifacts
+    all_artifacts = []
+    if reviews_dir.exists():
+        all_artifacts.extend(reviews_dir.glob("CAND_*_review*.md"))
+    if novelty_dir.exists():
+        all_artifacts.extend(novelty_dir.glob("CAND_*_novelty*.md"))
+
+    for art in all_artifacts:
+        text = art.read_text(encoding="utf-8", errors="ignore")
+        has_codex_backend = "actual_backend: codex" in text or "actual_backend: codex" in text.lower()
+        has_thread_id = False
+        has_isolation = False
+        for line in text.splitlines()[:25]:
+            ll = line.strip()
+            if ll.startswith("codex_thread_id:") and ll.split(":", 1)[1].strip() not in ("none", "", "TODO:"):
+                has_thread_id = True
+            if ll.startswith("isolation_mode:"):
+                has_isolation = True
+                mode_val = ll.split(":", 1)[1].strip()
+                if mode_val == "protocol_only":
+                    for search_line in text.splitlines()[:25]:
+                        sl = search_line.strip().lower()
+                        if sl.startswith("verdict:") or "verdict" in sl:
+                            if "pass" in sl and "warnings" not in sl and "pass_with_warnings" not in sl:
+                                header_issues.append(
+                                    f"{art.relative_to(idea_stage)}: protocol_only with verdict 'PASS' — "
+                                    "protocol_only max is PASS_WITH_WARNINGS for critical gates"
+                                )
+
+        if has_codex_backend and not has_thread_id:
+            header_issues.append(
+                f"{art.relative_to(idea_stage)}: actual_backend=codex but missing/lacks codex_thread_id"
+            )
+
+    # 10. Ledger alignment check
+    ledger_path = ROOT / ".aris" / "calls" / "llm_calls.jsonl"
+    ledger_thread_ids = set()
+    if ledger_path.exists():
+        for line in ledger_path.read_text(encoding="utf-8", errors="ignore").strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+                tid = entry.get("codex_thread_id", "")
+                if tid:
+                    ledger_thread_ids.add(tid)
+            except json.JSONDecodeError:
+                pass
+
+        for art in all_artifacts:
+            text = art.read_text(encoding="utf-8", errors="ignore")
+            for line in text.splitlines()[:25]:
+                ll = line.strip()
+                if ll.startswith("codex_thread_id:"):
+                    tid = ll.split(":", 1)[1].strip()
+                    if tid and tid not in ("none", "", "TODO:") and tid not in ledger_thread_ids:
+                        header_issues.append(
+                            f"{art.relative_to(idea_stage)}: codex_thread_id={tid} "
+                            "not found in ledger (.aris/calls/llm_calls.jsonl)"
+                        )
+                    break
+    else:
+        warnings.append(".aris/calls/llm_calls.jsonl not found — cannot verify ledger alignment")
+
+    # 11. Determine verdict
     has_violations = len(violations) > 0
     has_warnings = len(warnings) > 0 or len(header_issues) > 0
 
@@ -221,6 +311,8 @@ def main():
         "violations": violations,
         "warnings": warnings,
         "header_issues": header_issues,
+        "ad_hoc_novelty_files": ad_hoc_novelty,
+        "ledger_thread_ids_count": len(ledger_thread_ids),
         "legacy_archive_present": archive_dir.exists() if archive_dir else False,
     }
 

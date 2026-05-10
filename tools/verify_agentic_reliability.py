@@ -315,6 +315,7 @@ try:
         "max_tokens": 256,
         "timeout_sec": 30,
         "status": "pending",
+        "allow_fallback": True,
     }
     test_env = {
         "LLM_IDEA_REVIEWER_PRIMARY": "codex",
@@ -527,6 +528,7 @@ try:
 
     test_job_reviewer = {
         "job_id": "test_role_fallback",
+        "allow_fallback": True,
         "run_id": "test_fallback",
         "role": "idea_reviewer",
         "backend": "codex_optional",
@@ -560,6 +562,7 @@ try:
     # Novelty checker role-specific fallback
     test_job_novelty = {
         "job_id": "test_novelty_fallback",
+        "allow_fallback": True,
         "run_id": "test_fallback",
         "role": "novelty_checker",
         "backend": "codex_optional",
@@ -1485,6 +1488,119 @@ if runner.exists():
 else:
     for c in ["46a", "46b", "46c", "46d"]:
         check(f"{c} isolated_job_runner.py exists", False)
+
+# ---------------------------------------------------------------------------
+# 47. isolated_job_runner codex_required roles
+# ---------------------------------------------------------------------------
+print("\n=== 47. isolated_job_runner codex_required ===")
+runner = ROOT / "tools" / "isolated_job_runner.py"
+if runner.exists():
+    content = runner.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "47a. isolated_job_runner has CODEX_REQUIRED_ROLES list",
+        "CODEX_REQUIRED_ROLES" in content,
+    )
+    check(
+        "47b. isolated_job_runner requires allow_fallback=true for codex_optional fallback",
+        "allow_fallback" in content,
+    )
+    check(
+        "47c. essential roles are codex_required (idea_reviewer, novelty_checker, final_selector)",
+        all(
+            role in content
+            for role in ["idea_reviewer", "novelty_checker", "final_selector"]
+        ),
+    )
+    check(
+        "47d. codex_optional only uses fallback when allow_fallback is true",
+        "allow_fallback" in content and "CODEX_REQUIRED_ROLES" in content,
+    )
+else:
+    for c in ["47a", "47b", "47c", "47d"]:
+        check(f"{c} isolated_job_runner.py exists", False)
+
+# ---------------------------------------------------------------------------
+# 48. idea-creator no old Codex/landscape survey residues
+# ---------------------------------------------------------------------------
+print("\n=== 48. idea-creator no old residues ===")
+ic = ROOT / "skills" / "idea-creator" / "SKILL.md"
+if ic.exists():
+    content = ic.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "48a. idea-creator no longer has REVIEWER_MODEL = `gpt-5.4`",
+        "REVIEWER_MODEL = `gpt-5.4`" not in content,
+        "Still has gpt-5.4 reference" if "gpt-5.4" in content else "",
+    )
+    check(
+        "48b. idea-creator no longer says Use Codex MCP for divergent thinking",
+        "Use Codex MCP for divergent thinking" not in content,
+    )
+    check(
+        "48c. idea-creator no longer has Phase 1: Landscape Survey",
+        "Phase 1: Landscape Survey" not in content and "Scan local paper library" not in content,
+        "Still has old Landscape Survey" if "Landscape Survey" in content else "",
+    )
+    check(
+        "48d. idea-creator has Prerequisites or Phase 1: Load Verified Inputs",
+        "Prerequisites" in content or "Load Verified Inputs" in content,
+    )
+    check(
+        "48e. idea-creator references LITERATURE_INDEX.md and PHASE1_EVIDENCE_AUDIT",
+        "LITERATURE_INDEX.md" in content and "PHASE1_EVIDENCE_AUDIT" in content,
+    )
+else:
+    for c in ["48a", "48b", "48c", "48d", "48e"]:
+        check(f"{c} idea-creator SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 49. novelty-check mode enforcement
+# ---------------------------------------------------------------------------
+print("\n=== 49. novelty-check mode enforcement ===")
+nov = ROOT / "skills" / "novelty-check" / "SKILL.md"
+if nov.exists():
+    content = nov.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "49a. novelty-check canonical mode outputs to NOVELTY/CAND_*_novelty.md",
+        "NOVELTY/CAND_" in content,
+    )
+    check(
+        "49b. novelty-check ad_hoc outputs to NOVELTY_ADHOC/ not NOVELTY/CAND_*",
+        "NOVELTY_ADHOC" in content,
+    )
+    check(
+        "49c. novelty-check ad_hoc cannot enter IDEA_BANK / final selection",
+        "ad_hoc" in content and "IDEA_BANK" in content,
+    )
+    check(
+        "49d. novelty-check distinguishes canonical_pipeline vs ad_hoc mode",
+        "canonical_pipeline" in content and "ad_hoc" in content,
+    )
+else:
+    for c in ["49a", "49b", "49c", "49d"]:
+        check(f"{c} novelty-check SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 50. validate_idea_stage_state checks ad_hoc/codex/ledger
+# ---------------------------------------------------------------------------
+print("\n=== 50. validate_idea_stage_state advanced checks ===")
+validator = ROOT / "tools" / "validate_idea_stage_state.py"
+if validator.exists():
+    content = validator.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "50a. validator checks ad_hoc novelty not in final selection",
+        "ad_hoc" in content and "final selection" in content.lower(),
+    )
+    check(
+        "50b. validator checks codex_thread_id presence for codex artifacts",
+        "codex_thread_id" in content and "actual_backend" in content,
+    )
+    check(
+        "50c. validator checks ledger alignment",
+        "llm_calls.jsonl" in content or "ledger" in content.lower(),
+    )
+else:
+    for c in ["50a", "50b", "50c"]:
+        check(f"{c} validator exists", False)
 
 # ---------------------------------------------------------------------------
 # Summary

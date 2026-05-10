@@ -17,15 +17,34 @@ Check whether a proposed method/idea has already been done in the literature: **
 ```
 System auto-parses CAND_001 to `idea-stage/AGENTIC/CANONICAL_IDEAS/CAND_001.md`.
 One CAND at a time. Uses codex_thread. Auto artifact header + ledger.
+Output: `idea-stage/AGENTIC/NOVELTY/CAND_001_novelty.md`
 Results feed into IDEA_BANK and final selection.
+
+Artifact header must include:
+```
+mode: canonical_pipeline
+isolation_mode: codex_thread|manual_subsession|protocol_only
+codex_thread_id: <id>
+```
 
 ### Ad Hoc Mode (free-text idea description)
 ```
 /novelty-check "a method that uses hidden state transition residuals to detect hallucinations"
 ```
 Allowed for informal exploration. Output must include `mode: ad_hoc` marker.
-Results are **NOT** allowed to enter IDEA_BANK / final selection / top_idea_found.
+Output path: `idea-stage/AGENTIC/NOVELTY_ADHOC/<slug>.md` (NOT `NOVELTY/CAND_*.md`)
+Results are **NOT** allowed to:
+- Enter IDEA_BANK / IDEA_BANK.json
+- Be referenced by FINAL_SELECTION
+- Produce top_idea_found verdict
+- Update canonical CAND status
 Formal pipeline decisions must use canonical CAND_XXX mode.
+
+Artifact header must include:
+```
+mode: ad_hoc
+isolation_mode: codex_thread|manual_subsession|protocol_only
+```
 
 ## Constants
 

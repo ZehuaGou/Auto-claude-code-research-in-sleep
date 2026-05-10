@@ -47,9 +47,10 @@ idea bank, and produce canonical candidates.
 
 ## Constants
 
-- **REVIEWER_MODEL = `gpt-5.4`** — Model used via Codex MCP for brainstorming. Must be an OpenAI model (e.g., `gpt-5.4`, `o3`, `gpt-4o`).
-- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP (xhigh). Override with `— reviewer: oracle-pro` for GPT-5.4 Pro via Oracle MCP. See `shared-references/reviewer-routing.md`.
-- **OUTPUT_DIR = `idea-stage/`** — All idea-stage outputs go here. Create the directory if it doesn't exist.
+- **IDEA_GENERATOR_MODEL** — Set by `LLM_IDEA_GENERATOR_MODEL` env var (default: DeepSeek V4 Pro). Used for divergent idea generation.
+- **IDEA_DEDUPLICATOR_MODEL** — Set by `LLM_IDEA_DEDUPLICATOR_MODEL` env var (default: DeepSeek V4 Pro). Used for mechanistic dedup.
+- **SHORTLIST_AUDITOR_BACKEND = `codex`** — Codex MCP for the idea_shortlist_auditor gate. This is the ONLY Codex gate in idea-creator. Codex is NOT used for divergent generation.
+- **OUTPUT_DIR = `idea-stage/`** — All idea-stage outputs. Create if absent.
 
 ## Workflow
 
@@ -83,56 +84,34 @@ else if research-wiki/ exists but query_pack.md is stale or missing:
     Then read query_pack.md as above
 ```
 
-### Phase 1: Landscape Survey
+### Phase 1: Load Verified Inputs
 
-Map the research area to understand what exists and where the gaps are.
+**Do NOT run a new landscape survey.** Read from existing Phase 1 outputs:
 
-1. **Scan local paper library**: Check `papers/` and `literature/` for relevant PDFs. Read first 3 pages.
+1. Read `LITERATURE_INDEX.md` — verified paper index from `/research-lit`
+2. Read `GAP_MAP.md` — verified research gap map from `/research-lit`
+3. Read `PHASE1_EVIDENCE_AUDIT.md` — Codex evidence integrity gate output
 
-2. **Search recent literature** using WebSearch:
-   - Top venues in the last 2 years
-   - Recent arXiv preprints (last 6 months)
-   - Read abstracts and introductions of the top 10-15 papers
-
-3. **Build a landscape map**:
-   - Group papers by sub-direction / approach
-   - Identify structural gaps and recurring limitations
-   - If a GAP_MAP.md exists in `idea-stage/AGENTIC/RUNS/<run_id>/`, use it as primary input
+If these files do not exist, stop and tell the user to run `/research-lit "direction"` first.
 
 ### Phase 2: Idea Generation
 
-Use Codex MCP for divergent thinking:
+Use DeepSeek V4 Pro (env: `LLM_IDEA_GENERATOR_MODEL`) for divergent brainstorming. Do NOT use Codex for generation.
 
 ```
-mcp__codex__codex:
-  model: REVIEWER_MODEL
-  config: {"model_reasoning_effort": "xhigh"}
-  prompt: |
-    You are a senior ML researcher brainstorming research ideas.
-
-    Research direction: [user's direction]
-
-    Here is the current landscape:
-    [paste landscape map from Phase 1]
-
-    Key gaps identified:
-    [paste gaps from Phase 1 or GAP_MAP.md]
-
-    Generate 8-12 concrete research ideas. For each idea:
-    1. One-sentence summary
-    2. Core hypothesis (what you expect to find and why)
-    3. Minimum viable experiment (what's the cheapest way to test this?)
-    4. Expected contribution type: empirical finding / new method / theory / diagnostic
-    5. Risk level: LOW / MEDIUM / HIGH
-    6. Estimated effort: days / weeks / months
-
-    Prioritize ideas that are:
-    - Testable with moderate compute
-    - Likely to produce a clear positive OR negative result
-    - Differentiated from the papers above
+Prompt structure:
+  You are a senior ML researcher. Using the following verified inputs:
+  - LITERATURE_INDEX.md: [content]
+  - GAP_MAP.md: [content]
+  Generate 8-12 concrete research ideas. For each idea:
+  1. One-sentence summary
+  2. Core hypothesis
+  3. Minimum viable experiment
+  4. Novelty risk (which gap does it address?)
+  5. Implementation risk: LOW / MEDIUM / HIGH
 ```
 
-Do not reuse the brainstorming thread for independent review or novelty check. Review and novelty verification must be separate downstream skills.
+Do not reuse the generation thread for review or novelty check.
 
 ### Phase 3: Idea Card Output
 
