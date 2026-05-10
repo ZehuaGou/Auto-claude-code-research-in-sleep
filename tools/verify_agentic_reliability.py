@@ -2049,6 +2049,7 @@ commands_required = [
     "idea-creator",
     "idea-bank",
     "idea-discovery",
+    "research-contract",
     "status",
 ]
 if commands_dir.exists():
