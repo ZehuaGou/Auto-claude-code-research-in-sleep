@@ -15,14 +15,14 @@ This skill bridges Workflow 1 (idea discovery + method refinement) and Workflow 
 
 ```
 Workflow 1 output:                    This skill:                                    Workflow 2 input:
-refine-logs/EXPERIMENT_PLAN.md   →   implement → GPT-5.4 review → deploy → collect → initial results ready
-refine-logs/EXPERIMENT_TRACKER.md     code        (cross-model)    /run-experiment     for /auto-review-loop
+refine-logs/EXPERIMENT_PLAN.md   →   implement → code review → deploy → collect → initial results ready
+refine-logs/EXPERIMENT_TRACKER.md     (model_route.py)   /run-experiment     for /auto-review-loop
 refine-logs/FINAL_PROPOSAL.md
 ```
 
 ## Constants
 
-- **CODE_REVIEW = true** — GPT-5.4 xhigh reviews experiment code before deployment. Catches logic bugs before wasting GPU hours. Set `false` to skip.
+- **CODE_REVIEW = true** — Cross-model code review before deployment (routed via `model_route.py experiment_code_reviewer`). Set `false` to skip (NOT recommended — if you skip, a WARNING will be issued).
 - **AUTO_DEPLOY = true** — Automatically deploy experiments after implementation + review. Set `false` to manually inspect code before deploying.
 - **SANITY_FIRST = true** — Run the sanity-stage experiment first (smallest, fastest) before launching the rest. Catches setup bugs early.
 - **MAX_PARALLEL_RUNS = 4** — Maximum number of experiments to deploy in parallel (limited by available GPUs).
@@ -74,6 +74,12 @@ Proceeding to implementation.
 
 ### Phase 2: Implement Experiment Code
 
+**Routing**: Before starting implementation, resolve the experiment_implementer model:
+```bash
+python tools/model_route.py experiment_implementer
+```
+This outputs the model to use (default: `deepseek-v4-pro`). The implementer is a generation role — always LLM, never Codex. The resolved model is used throughout Phase 2.
+
 **If `BASE_REPO` is set** — clone the repo first:
 ```bash
 git clone <BASE_REPO> base_repo/
@@ -104,40 +110,47 @@ For each milestone (in order), write the experiment scripts:
 
 ### Phase 2.5: Cross-Model Code Review (when CODE_REVIEW = true)
 
-**Skip this step if `CODE_REVIEW` is `false`.**
+**Routing**: Before reviewing, resolve the experiment_code_reviewer model:
+```bash
+python tools/model_route.py experiment_code_reviewer
+```
 
-Before deploying, send the experiment code to GPT-5.4 xhigh for review:
+This role is a critical gate:
+- `codex_required` → Codex only; fail if unavailable (do NOT skip silently)
+- `codex_preferred` → try Codex first; fallback to LLM with WARNING logged
+- `deepseek_only` → skip Codex explicitly; use fallback model directly
+
+**Skip this step if `CODE_REVIEW` is `false`.** If skipping, print a WARNING: "Code review is DISABLED (CODE_REVIEW=false). Experiment code deployed WITHOUT cross-model review. This is NOT recommended."
+
+Send the experiment code for review following the route resolved above:
 
 ```
+# Example: Codex route
+python tools/llm_call_ledger.py start experiment-bridge experiment_code_reviewer codex
 mcp__codex__codex:
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
     Review the following experiment implementation for correctness.
-
-    ## Experiment Plan:
-    [paste key sections from EXPERIMENT_PLAN.md]
-
-    ## Method Description:
-    [paste from FINAL_PROPOSAL.md]
-
-    ## Implementation:
-    [paste the experiment scripts]
-
-    Check for:
-    1. Does the code correctly implement the method described in the proposal?
-    2. Are all hyperparameters from the plan reflected in the code?
-    3. Are there any logic bugs (wrong loss function, incorrect data split, missing eval)?
-    4. Is the evaluation metric computed correctly?
-    5. **CRITICAL: Does evaluation use the dataset's actual ground truth labels — NOT another model's output as ground truth?** This is a common and severe bug.
-    6. Any potential issues (OOM risk, numerical instability, missing seeds)?
-
+    ...
     For each issue found, specify: CRITICAL / MAJOR / MINOR and the exact fix.
+python tools/llm_call_ledger.py finish \
+  --actual-backend codex --codex-thread-id <id> \
+  --isolation-mode codex_thread
+
+# Example: LLM fallback route
+python tools/llm_call_ledger.py start experiment-bridge experiment_code_reviewer llm-chat <model>
+mcp__llm-chat__chat:
+  model: <model>
+  ...
+python tools/llm_call_ledger.py finish \
+  --actual-backend llm-chat --actual-model <model>
 ```
 
 **On review results:**
 - **No CRITICAL issues** → proceed to Phase 3
 - **CRITICAL issues found** → fix them, then re-submit for review (max 2 rounds)
-- **Codex MCP unavailable** → skip silently, proceed to Phase 3 (graceful degradation)
+- **Codex unavailable AND codex_required** → FAIL: do NOT proceed. Report: "Codex review required by ARIS_CODEX_GATE_MODE but Codex is unavailable."
+- **Codex unavailable AND codex_preferred** → fallback to LLM with WARNING logged via `llm_call_ledger.py fallback`. Proceed only after fallback review passes.
 
 ### Phase 3: Sanity Check (if SANITY_FIRST = true)
 
@@ -332,10 +345,12 @@ Ready for Workflow 2:
 - soft gate：允许跳过但记录 warning。
 
 ### Experiment Code Review
-在 Phase 3（实现代码）后，使用 `LLM_EXPERIMENT_CODE_REVIEWER_MODEL` 审查：
-- 检查代码是否符合 research contract。
-- 检查有没有偷偷改 data split / metric / baseline / 评估函数。
-- 检查是否从零重写了不该重写的框架。
+在 Phase 2.5（cross-model code review）执行后，检查 review verdict：
+- 如果 review 返回 CRITICAL 问题：必须修复后重新提交 review，最多 2 轮。
+- 如果 Codex review 不可用且配置为 codex_required：停止，不可跳过。
+- 如果 Codex review 不可用且配置为 codex_preferred：fallback 到 LLM，记录 WARNING。
+- 如果 CODE_REVIEW=false：打印 WARNING 后继续。
+- review 结果写入 artifact header（routing_source, global_codex_gate_mode, actual_backend, actual_model, fallback_used, codex_used）。
 
 ### Pre-Implementation Code Scan
 实现代码前，优先扫描现有代码和 base repo（如果 `BASE_REPO` 设置了），标识可复用的部分。

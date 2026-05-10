@@ -44,6 +44,9 @@ GENERATION_ROLES = frozenset({
     "idea_generator",
     "gap_extractor",
     "idea_deduplicator",
+    "experiment_implementer",
+    "paper_writer",
+    "claims_drafter",
     "log_summarizer",
 })
 
@@ -66,6 +69,9 @@ ROLE_TO_ENV_PREFIX = {
     "idea_generator": "LLM_IDEA_GENERATOR",
     "gap_extractor": "LLM_GAP_EXTRACTOR",
     "idea_deduplicator": "LLM_IDEA_DEDUPLICATOR",
+    "experiment_implementer": "LLM_EXPERIMENT_IMPLEMENTER",
+    "paper_writer": "LLM_PAPER_WRITER",
+    "claims_drafter": "LLM_CLAIMS_DRAFTER",
     "log_summarizer": "LLM_LOG_SUMMARIZER",
 }
 

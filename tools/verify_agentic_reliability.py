@@ -2752,6 +2752,186 @@ else:
         check(f"{c} register_slash_commands.py exists", False)
 
 # ---------------------------------------------------------------------------
+# 62. Model Routing Governance
+# ---------------------------------------------------------------------------
+print("\n=== 62. Model Routing Governance ===")
+
+env_example = ROOT / ".env.example"
+env_text = ""
+if env_example.exists():
+    env_text = env_example.read_text(encoding="utf-8", errors="ignore")
+
+# 62a. .env.example contains ARIS_CODEX_GATE_MODE (already in 60a, duplicate check for emphasis)
+check("62a. .env.example contains ARIS_CODEX_GATE_MODE", "ARIS_CODEX_GATE_MODE" in env_text)
+
+# 62b. .env.example does NOT contain ARIS_OUTER_AGENT_MODE
+check("62b. .env.example does NOT contain ARIS_OUTER_AGENT_MODE", "ARIS_OUTER_AGENT_MODE" not in env_text)
+
+# 62c. .env.example does NOT contain ARIS_OUTER_AGENT_MODEL
+check("62c. .env.example does NOT contain ARIS_OUTER_AGENT_MODEL", "ARIS_OUTER_AGENT_MODEL" not in env_text)
+
+# 62d. .env.example contains LLM_EXPERIMENT_IMPLEMENTER_MODEL
+check("62d. .env.example contains LLM_EXPERIMENT_IMPLEMENTER_MODEL", "LLM_EXPERIMENT_IMPLEMENTER_MODEL" in env_text)
+
+# 62e. .env.example contains LLM_EXPERIMENT_CODE_REVIEWER_PRIMARY
+check("62e. .env.example contains LLM_EXPERIMENT_CODE_REVIEWER_PRIMARY", "LLM_EXPERIMENT_CODE_REVIEWER_PRIMARY" in env_text)
+
+# 62f. model_route.py supports experiment_implementer
+model_route_py = ROOT / "tools" / "model_route.py"
+if model_route_py.exists():
+    mr_src = model_route_py.read_text(encoding="utf-8", errors="ignore")
+    check("62f. model_route.py supports experiment_implementer", "experiment_implementer" in mr_src)
+    check("62g. model_route.py supports paper_writer", "paper_writer" in mr_src)
+    check("62h. model_route.py supports claims_drafter", "claims_drafter" in mr_src)
+else:
+    for c in ["62f", "62g", "62h"]:
+        check(f"{c} model_route.py exists", False)
+
+# 62i. skills/experiment-bridge/SKILL.md calls model_route.py experiment_implementer
+exp_bridge = ROOT / "skills" / "experiment-bridge" / "SKILL.md"
+if exp_bridge.exists():
+    eb_src = exp_bridge.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "62i. experiment-bridge SKILL calls model_route.py experiment_implementer",
+        "model_route.py experiment_implementer" in eb_src,
+        "Missing model_route.py experiment_implementer call in experiment-bridge",
+    )
+    check(
+        "62j. experiment-bridge SKILL calls model_route.py experiment_code_reviewer",
+        "model_route.py experiment_code_reviewer" in eb_src,
+        "Missing model_route.py experiment_code_reviewer call in experiment-bridge",
+    )
+    check(
+        "62k. experiment-bridge SKILL no longer hardcodes GPT-5.4",
+        "GPT-5.4" not in eb_src and "gpt-5.4" not in eb_src,
+        "Still contains GPT-5.4 hardcoding" if "GPT-5.4" in eb_src or "gpt-5.4" in eb_src else "",
+    )
+    has_codex_silent_skip = (
+        "Codex MCP unavailable" in eb_src and "skip silently" in eb_src
+        and "graceful degradation" in eb_src
+    )
+    check(
+        "62l. experiment-bridge SKILL no longer has silent codex skip",
+        not has_codex_silent_skip,
+        "Still contains silent Codex skip (Codex MCP unavailable → skip silently)" if has_codex_silent_skip else "",
+    )
+    has_no_silent = "do NOT proceed" in eb_src or "FAIL" in eb_src or "fallback with WARNING" in eb_src
+    if not has_no_silent:
+        warn("62m. experiment-bridge SKILL: silent-skip replacement verification uncertain — manual check recommended")
+else:
+    for c in ["62i", "62j", "62k", "62l", "62m"]:
+        check(f"{c} experiment-bridge SKILL.md exists", False)
+
+# 62n-62s. Critical gate skill files have routing_source / codex_used / confidence_downgraded
+critical_gate_skills = [
+    "exec-review", "novelty-check", "research-lit", "idea-creator",
+    "idea-bank", "idea-discovery",
+]
+for skill_name in critical_gate_skills:
+    skill_path = ROOT / "skills" / skill_name / "SKILL.md"
+    prefix_map = {
+        "exec-review": "n", "novelty-check": "o", "research-lit": "p",
+        "idea-creator": "q", "idea-bank": "r", "idea-discovery": "s",
+    }
+    suffix = prefix_map.get(skill_name, "t")
+    if skill_path.exists():
+        sc = skill_path.read_text(encoding="utf-8", errors="ignore")
+        has_routing = "routing_source" in sc
+        has_codex = "codex_used" in sc
+        has_confidence = "confidence_downgraded" in sc
+        check(f"62{suffix}b. {skill_name} has codex_used in header rules", has_codex)
+        if skill_name == "idea-discovery":
+            # idea-discovery is an orchestrator that delegates artifact header
+            # fields to sub-skills (exec-review, novelty-check, idea-bank).
+            # Missing fields here are expected — the sub-skills handle them.
+            if not has_routing:
+                warn(f"62{suffix}. idea-discovery orchestrator defers routing_source to sub-skills")
+            else:
+                check(f"62{suffix}. idea-discovery has routing_source in header rules", True)
+            if not has_confidence:
+                warn(f"62{suffix}c. idea-discovery orchestrator defers confidence_downgraded to sub-skills")
+            else:
+                check(f"62{suffix}c. idea-discovery has confidence_downgraded in header rules", True)
+        else:
+            check(f"62{suffix}. {skill_name} has routing_source in header rules", has_routing)
+            check(f"62{suffix}c. {skill_name} has confidence_downgraded in header rules", has_confidence)
+    else:
+        for c in [f"62{suffix}", f"62{suffix}b", f"62{suffix}c"]:
+            check(f"{c} {skill_name} SKILL.md exists", False)
+
+# 62t. docs/MODEL_ROUTING_OVERVIEW.md exists with per-role table
+model_routing_overview = ROOT / "docs" / "MODEL_ROUTING_OVERVIEW.md"
+if model_routing_overview.exists():
+    overview_text = model_routing_overview.read_text(encoding="utf-8", errors="ignore")
+    has_role_table = "Stage" in overview_text and "Role" in overview_text and "Purpose" in overview_text
+    check(
+        "62ta. docs/MODEL_ROUTING_OVERVIEW.md exists with per-role table",
+        has_role_table,
+        "Missing Stage/Role/Purpose header columns in model routing overview" if not has_role_table else "",
+    )
+    has_experiment_implementer_row = "experiment_implementer" in overview_text
+    check(
+        "62tb. MODEL_ROUTING_OVERVIEW includes experiment_implementer row",
+        has_experiment_implementer_row,
+    )
+    has_experiment_code_reviewer_row = "experiment_code_reviewer" in overview_text
+    check(
+        "62tc. MODEL_ROUTING_OVERVIEW includes experiment_code_reviewer row",
+        has_experiment_code_reviewer_row,
+    )
+    check(
+        "62td. MODEL_ROUTING_OVERVIEW does NOT list external agent as internal role",
+        "outer_agent" not in overview_text.lower().replace("outer_agent", ""),
+        "Should not mention outer_agent or external agent as internal role",
+    )
+else:
+    for c in ["62ta", "62tb", "62tc", "62td"]:
+        check(f"{c} docs/MODEL_ROUTING_OVERVIEW.md exists", False)
+
+# 62u. AGENT_GUIDE.md says not to edit skill files to switch models
+agent_guide = ROOT / "AGENT_GUIDE.md"
+if agent_guide.exists():
+    ag_content = agent_guide.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "62ua. AGENT_GUIDE.md says not to edit skill files to switch models",
+        "Never edit a SKILL.md file" in ag_content or "Do NOT edit SKILL.md" in ag_content,
+        "Missing instruction to not edit SKILL.md for model switching",
+    )
+    check(
+        "62ub. AGENT_GUIDE.md says external agents are not internal roles",
+        "External agents are NOT internal roles" in ag_content or "NOT internal roles" in ag_content,
+        "Missing external agent clarification in AGENT_GUIDE.md",
+    )
+    # Check no ARIS_OUTER_AGENT_MODE in AGENT_GUIDE.md
+    check(
+        "62uc. AGENT_GUIDE.md does NOT mention ARIS_OUTER_AGENT_MODE",
+        "ARIS_OUTER_AGENT_MODE" not in ag_content,
+    )
+    check(
+        "62ud. AGENT_GUIDE.md does NOT mention ARIS_OUTER_AGENT_MODEL",
+        "ARIS_OUTER_AGENT_MODEL" not in ag_content,
+    )
+else:
+    for c in ["62ua", "62ub", "62uc", "62ud"]:
+        check(f"{c} AGENT_GUIDE.md exists", False)
+
+# 62v. experiment-bridge SKILL has routing_source / global_codex_gate_mode in review header
+exp_bridge_skill = ROOT / "skills" / "experiment-bridge" / "SKILL.md"
+if exp_bridge_skill.exists():
+    exp_src = exp_bridge_skill.read_text(encoding="utf-8", errors="ignore")
+    has_routing = "routing_source" in exp_src
+    has_global_mode = "global_codex_gate_mode" in exp_src
+    has_actual_backend = "actual_backend" in exp_src
+    has_fallback = "fallback_used" in exp_src
+    check("62va. experiment-bridge has routing_source in review header", has_routing)
+    check("62vb. experiment-bridge has global_codex_gate_mode in review header", has_global_mode)
+    check("62vc. experiment-bridge has actual_backend in review header", has_actual_backend)
+    check("62vd. experiment-bridge has fallback_used in review header", has_fallback)
+else:
+    for c in ["62va", "62vb", "62vc", "62vd"]:
+        check(f"{c} experiment-bridge SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'='*40}")

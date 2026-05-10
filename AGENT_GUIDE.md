@@ -235,11 +235,47 @@ Read these before invoking review-related skills:
 - `skills/shared-references/writing-principles.md` — writing standards
 - `skills/shared-references/venue-checklists.md` — venue formatting
 - `skills/shared-references/env-config-policy.md` — .env reading rules, variable conventions
-- `skills/shared-references/model-routing.md` — role-based model routing definitions
+- `docs/MODEL_ROUTING_OVERVIEW.md` — centralized model routing overview table
+- `skills/shared-references/model-routing.md` — role-based model routing definitions (legacy)
 - `skills/shared-references/transport-routing.md` — MCP/exec-review/panel-review suitability
 - `skills/shared-references/research-contract.md` — contract protocol for skills
 - `skills/shared-references/paper-ingest-protocol.md` — paper ingestion protocol and staged reading
 - `skills/shared-references/session-protocol.md` — session management protocol
+
+## Model Routing Control
+
+All ARIS internal model routing is controlled through `.env` and resolved via `tools/model_route.py`. **Never edit a SKILL.md file to switch models.**
+
+### Key Principles
+
+1. **External agents are NOT internal roles.** Claude Code, Cursor, Trae, Codex CLI are users/operators — they issue slash commands and view output. ARIS does not configure which model an external agent uses. No env var for outer agent model/mode configuration should exist.
+
+2. **ARIS internal roles** (literature_scout, idea_generator, idea_reviewer, final_selector, experiment_implementer, experiment_code_reviewer, result_judge, paper_writer, etc.) are all configured through `.env` variables and resolved by `tools/model_route.py`.
+
+3. **Critical gates** (review, novelty-check, final selection, experiment audit, result judgment, code review, paper audit) default to Codex preferred. Set `ARIS_CODEX_GATE_MODE=deepseek_only` if no OpenAI API key is available.
+
+### Key Configuration
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `ARIS_CODEX_GATE_MODE` | Global gate routing: codex_required / codex_preferred / deepseek_only | codex_preferred |
+| `LLM_EXPERIMENT_IMPLEMENTER_MODEL` | Model for experiment code implementation | deepseek-v4-pro |
+| `LLM_EXPERIMENT_CODE_REVIEWER_PRIMARY` | Primary backend for experiment code review | codex |
+
+### Quick Reference
+
+- **To switch ALL critical gates to DeepSeek**: set `ARIS_CODEX_GATE_MODE=deepseek_only`
+- **To switch a single gate**: set `LLM_<ROLE>_PRIMARY=deepseek`
+- **To check current routing**: `python tools/model_route.py <role>`
+- **Full documentation**: `docs/MODEL_ROUTING_OVERVIEW.md`
+- **Per-role table**: `skills/shared-references/model-routing.md`
+
+### Fallback Rules
+
+- Codex unavailable + `codex_required` → FAIL (do NOT proceed)
+- Codex unavailable + `codex_preferred` → fallback to LLM with WARNING recorded
+- Codex unavailable + `deepseek_only` → use LLM directly (expected, no warning)
+- Silent fallback (skip without recording) is **never** acceptable
 
 ## Research Wiki (Optional)
 
