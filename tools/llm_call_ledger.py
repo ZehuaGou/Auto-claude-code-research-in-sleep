@@ -86,8 +86,39 @@ def cmd_start(args: List[str]):
     return call_id
 
 
+def _parse_kwargs(args: List[str]) -> dict:
+    """Extract --key value pairs from args list. Returns dict of parsed kwargs."""
+    kwargs = {}
+    i = 0
+    while i < len(args):
+        if args[i].startswith("--"):
+            key = args[i][2:].replace("-", "_")
+            if i + 1 < len(args) and not args[i + 1].startswith("--"):
+                val = args[i + 1]
+                if key == "output_file":
+                    kwargs.setdefault("output_files", []).append(val)
+                else:
+                    kwargs[key] = val
+                i += 2
+            else:
+                kwargs[key] = True
+                i += 1
+        else:
+            i += 1
+    return kwargs
+
+
 def cmd_finish(args: List[str]):
-    """Mark current call as completed."""
+    """Mark current call as completed.
+
+    Optional named params (parsed from args):
+      --codex-thread-id <id>
+      --isolation-mode <codex_thread|manual_subsession|protocol_only>
+      --actual-backend <codex|llm-chat|api>
+      --actual-model <model or DEFAULT>
+      --output-file <path>  (may repeat)
+    """
+    kwargs = _parse_kwargs(args)
     calls_dir = get_calls_dir()
     current_file = calls_dir / "current_call.json"
     if not current_file.exists():
@@ -105,6 +136,33 @@ def cmd_finish(args: List[str]):
     entry["completed_at"] = now.isoformat()
     entry["duration_sec"] = int((now - start).total_seconds())
     entry["status"] = "completed"
+
+    # Apply optional overrides — these may come from CLI or be preserved from current_call.json
+    codex_thread_id = kwargs.get("codex_thread_id") or entry.get("codex_thread_id")
+    isolation_mode = kwargs.get("isolation_mode") or entry.get("isolation_mode")
+    actual_backend = kwargs.get("actual_backend") or entry.get("actual_backend")
+    actual_model = kwargs.get("actual_model") or entry.get("actual_model")
+    output_files = kwargs.get("output_files") or entry.get("output_files", [])
+
+    if codex_thread_id:
+        entry["codex_thread_id"] = codex_thread_id
+    if isolation_mode:
+        entry["isolation_mode"] = isolation_mode
+    if actual_backend:
+        entry["actual_backend"] = actual_backend
+    if actual_model:
+        entry["actual_model"] = actual_model
+    if output_files:
+        entry["output_files"] = output_files
+
+    # Enforce: if actual_backend=codex, codex_thread_id must be non-empty
+    effective_backend = entry.get("actual_backend", "")
+    if effective_backend == "codex":
+        tid = entry.get("codex_thread_id", "").strip()
+        if not tid or tid in ("none", ""):
+            entry["status"] = "completed_with_warnings"
+        elif not entry.get("isolation_mode"):
+            entry["isolation_mode"] = "codex_thread"
 
     # Append to JSONL
     jsonl_file = calls_dir / "llm_calls.jsonl"
@@ -148,7 +206,8 @@ def cmd_fail(args: List[str]):
 
 
 def cmd_fallback(
-    fallback_model: str, reason: str = "codex unavailable", backend: str = "llm-chat"
+    fallback_model: str, reason: str = "codex unavailable", backend: str = "llm-chat",
+    codex_thread_id: str = "",
 ):
     """Mark current call as fallback."""
     calls_dir = get_calls_dir()
@@ -168,6 +227,12 @@ def cmd_fallback(
     entry["fallback_used"] = True
     entry["fallback_reason"] = reason
     entry["status"] = "completed_with_fallback"
+
+    # Preserve existing codex_thread_id unless caller provides an override
+    if codex_thread_id:
+        entry["codex_thread_id"] = codex_thread_id
+    # On fallback, isolation is protocol_only
+    entry["isolation_mode"] = "protocol_only"
 
     now = datetime.now(timezone.utc)
     start = datetime.fromisoformat(entry.get("timestamp", now.isoformat()))
@@ -290,10 +355,13 @@ def main():
     elif cmd == "fail":
         cmd_fail(args)
     elif cmd == "fallback":
-        fallback_model = args[0] if args else "deepseek-v4-flash"
-        reason = args[1] if len(args) > 1 else "codex unavailable"
-        backend = args[2] if len(args) > 2 else "llm-chat"
-        cmd_fallback(fallback_model, reason, backend)
+        # Extract --named params from positional args
+        fallback_model = args[0] if args and not args[0].startswith("--") else "deepseek-v4-flash"
+        reason = args[1] if len(args) > 1 and not args[1].startswith("--") else "codex unavailable"
+        backend = args[2] if len(args) > 2 and not args[2].startswith("--") else "llm-chat"
+        fw_kwargs = _parse_kwargs(args)
+        codex_thread_id = fw_kwargs.get("codex_thread_id", "")
+        cmd_fallback(fallback_model, reason, backend, codex_thread_id=codex_thread_id)
     elif cmd == "status":
         cmd_status()
     elif cmd == "summary":

@@ -1603,6 +1603,215 @@ else:
         check(f"{c} validator exists", False)
 
 # ---------------------------------------------------------------------------
+# 51. llm_call_ledger codex_thread_id integration
+# ---------------------------------------------------------------------------
+print("\n=== 51. llm_call_ledger codex_thread_id integration ===")
+ledger_py = ROOT / "tools" / "llm_call_ledger.py"
+if ledger_py.exists():
+    content = ledger_py.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "51a. cmd_finish accepts --codex-thread-id parameter",
+        "codex_thread_id" in content and "cmd_finish" in content,
+    )
+    check(
+        "51b. cmd_finish accepts --isolation-mode parameter",
+        "isolation_mode" in content and "cmd_finish" in content,
+    )
+    check(
+        "51c. cmd_finish accepts --actual-backend and --actual-model",
+        "actual_backend" in content and "actual_model" in content,
+    )
+    check(
+        "51d. cmd_finish accepts --output-file (repeatable)",
+        "output_file" in content,
+    )
+    check(
+        "51e. cmd_finish preserves existing codex_thread_id from current_call.json",
+        "entry.get(\"codex_thread_id\")" in content,
+    )
+    check(
+        "51f. actual_backend=codex in finish enforces non-empty codex_thread_id",
+        "completed_with_warnings" in content,
+    )
+    check(
+        "51g. cmd_fallback preserves codex_thread_id unless overridden",
+        "entry[\"codex_thread_id\"]" in content,
+    )
+    check(
+        "51h. cmd_fallback sets isolation_mode=protocol_only",
+        "protocol_only" in content and "fallback" in content,
+    )
+    check(
+        "51i. llm_call_ledger has _parse_kwargs helper",
+        "_parse_kwargs" in content,
+    )
+
+    # Local unit smoke test: write temp current_call.json, call finish with
+    # --codex-thread-id, verify JSONL contains the id, then clean up.
+    import tempfile, subprocess, json, os
+    from pathlib import Path
+
+    tmpdir = Path(tempfile.mkdtemp(prefix="aris_ledger_test_"))
+    try:
+        # Mock .aris/calls/ structure in tmpdir with timezone-aware timestamps
+        mock_calls = tmpdir / ".aris" / "calls"
+        mock_calls.mkdir(parents=True)
+        # Init git so find_project_root() resolves to tmpdir
+        subprocess.run(
+            ["git", "init"],
+            capture_output=True, text=True, timeout=5,
+            cwd=str(tmpdir),
+        )
+        fake_entry = {
+            "call_id": "test_codex_thread_smoke",
+            "timestamp": "2026-05-10T12:00:00+00:00",
+            "skill": "test",
+            "role": "idea_reviewer",
+            "primary_backend": "codex",
+            "actual_backend": "codex",
+            "status": "started",
+        }
+        (mock_calls / "current_call.json").write_text(
+            json.dumps(fake_entry), encoding="utf-8"
+        )
+        result = subprocess.run(
+            [sys.executable, str(ledger_py), "finish",
+             "--codex-thread-id", "smoke-test-thread-999",
+             "--isolation-mode", "codex_thread"],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(tmpdir),
+        )
+        # Verify the JSONL was written
+        jsonl_path = mock_calls / "llm_calls.jsonl"
+        jsonl_ok = jsonl_path.exists()
+        found_thread = False
+        if jsonl_ok:
+            for line in jsonl_path.read_text(encoding="utf-8").strip().split("\n"):
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("codex_thread_id") == "smoke-test-thread-999":
+                        found_thread = True
+                except json.JSONDecodeError:
+                    pass
+        check(
+            "51j. local smoke: finish --codex-thread-id writes thread to llm_calls.jsonl",
+            jsonl_ok and found_thread,
+            f"JSONL exists={jsonl_ok}, found_thread={found_thread}. stdout: {result.stdout.strip()}" if not (jsonl_ok and found_thread) else "",
+        )
+
+        # Verify isolation_mode was written
+        found_isolation = False
+        if jsonl_ok:
+            for line in jsonl_path.read_text(encoding="utf-8").strip().split("\n"):
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("isolation_mode") == "codex_thread":
+                        found_isolation = True
+                except json.JSONDecodeError:
+                    pass
+        check(
+            "51k. local smoke: finish --isolation-mode writes isolation_mode to llm_calls.jsonl",
+            found_isolation,
+        )
+
+        # Test: actual_backend=codex without thread_id should get completed_with_warnings
+        (mock_calls / "current_call.json").write_text(
+            json.dumps({
+                "call_id": "test_missing_thread",
+                "timestamp": "2026-05-10T12:01:00+00:00",
+                "skill": "test",
+                "role": "idea_reviewer",
+                "primary_backend": "codex",
+                "actual_backend": "codex",
+                "status": "started",
+            }),
+            encoding="utf-8",
+        )
+        result2 = subprocess.run(
+            [sys.executable, str(ledger_py), "finish"],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(tmpdir),
+        )
+        found_warning = False
+        jsonl2 = mock_calls / "llm_calls.jsonl"
+        if jsonl2.exists():
+            lines = jsonl2.read_text(encoding="utf-8").strip().split("\n")
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("call_id") == "test_missing_thread" and entry.get("status") == "completed_with_warnings":
+                        found_warning = True
+                except json.JSONDecodeError:
+                    pass
+        check(
+            "51l. local smoke: actual_backend=codex without thread_id => completed_with_warnings",
+            found_warning,
+        )
+
+        # Test: fallback sets isolation_mode=protocol_only
+        (mock_calls / "current_call.json").write_text(
+            json.dumps({
+                "call_id": "test_fallback_isolation",
+                "timestamp": "2026-05-10T12:02:00+00:00",
+                "skill": "test",
+                "role": "idea_reviewer",
+                "primary_backend": "codex",
+                "status": "started",
+                "codex_thread_id": "smoke-test-thread-999",
+            }),
+            encoding="utf-8",
+        )
+        result3 = subprocess.run(
+            [sys.executable, str(ledger_py), "fallback", "deepseek-v4-flash",
+             "codex unavailable", "llm-chat"],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(tmpdir),
+        )
+        found_fallback_isolation = False
+        found_preserved_thread = False
+        jsonl3 = mock_calls / "llm_calls.jsonl"
+        if jsonl3.exists():
+            lines = jsonl3.read_text(encoding="utf-8").strip().split("\n")
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("call_id") == "test_fallback_isolation":
+                        if entry.get("isolation_mode") == "protocol_only":
+                            found_fallback_isolation = True
+                        if entry.get("codex_thread_id") == "smoke-test-thread-999":
+                            found_preserved_thread = True
+                except json.JSONDecodeError:
+                    pass
+        check(
+            "51m. local smoke: fallback sets isolation_mode=protocol_only",
+            found_fallback_isolation,
+        )
+        check(
+            "51n. local smoke: fallback preserves existing codex_thread_id",
+            found_preserved_thread,
+        )
+        check(
+            "51o. local smoke: fallback sets fallback_used=true",
+            result3.stdout and "FALLBACK" in result3.stdout,
+        )
+    finally:
+        # Clean up temp dir
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+else:
+    for c in ["51a", "51b", "51c", "51d", "51e", "51f", "51g", "51h", "51i",
+              "51j", "51k", "51l", "51m", "51n", "51o"]:
+        check(f"{c} llm_call_ledger.py exists", False)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'='*40}")

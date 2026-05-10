@@ -284,8 +284,8 @@ def main():
                     tid = ll.split(":", 1)[1].strip()
                     if tid and tid not in ("none", "", "TODO:") and tid not in ledger_thread_ids:
                         header_issues.append(
-                            f"{art.relative_to(idea_stage)}: codex_thread_id={tid} "
-                            "not found in ledger (.aris/calls/llm_calls.jsonl)"
+                            f"{art.relative_to(idea_stage)}: ledger entry missing codex_thread_id={tid} "
+                            "(artifact header has it, but .aris/calls/llm_calls.jsonl entry lacks the field)"
                         )
                     break
     else:
