@@ -233,3 +233,30 @@ REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK: true
 ## Review Tracing
 
 After each `mcp__codex__codex` or `mcp__codex__codex-reply` reviewer call, save the trace following `shared-references/review-tracing.md`. Use `tools/save_trace.sh` or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+
+## Resume / Interruption Recovery
+
+This skill supports resumption from artifact file state after session interruption.
+
+### Detection
+
+Use `tools/resume_stage_state.py` to detect where Phase 4 left off:
+
+```bash
+python3 tools/resume_stage_state.py novelty-check [CAND_XXX]
+```
+
+If no candidate is specified, checks all candidates that have completed Phase 3 reviews.
+
+### Required Artifacts
+
+- `NOVELTY/CAND_XXX_novelty.md` — one per candidate with verdict
+
+### Recovery Rules
+
+- **No NOVELTY/ directory or no novelty files found**: Phase 4 not started. Verify Phase 3 reviews exist first (at least one reviewed candidate), then run `/novelty-check CAND_XXX` for each reviewed candidate.
+- **Some candidates checked, some missing**: Partial Phase 4. Do NOT re-run novelty-check on completed candidates. Use `tools/resume_stage_state.py novelty-check` to identify which are missing.
+- **All candidates with reviews have novelty reports**: Phase 4 is complete. Resume user intent continues to Phase 5 (adversarial review) or Phase 6 (final selection). Do NOT re-run novelty checks.
+- **Candidates with `already_done` verdict**: Excluded from further phases. Do NOT include them in adversarial review or final selection.
+- **Candidates with `insufficient_evidence`**: Cannot enter `top_idea_found` path. If the user wants to proceed, more literature search is needed first.
+- **Canonical vs ad_hoc distinction**: Only `mode: canonical_pipeline` novelty reports (in `NOVELTY/` directory) count toward pipeline progress. Ad hoc reports (in `NOVELTY_ADHOC/`) are informational and do NOT advance the pipeline state.

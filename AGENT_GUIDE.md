@@ -36,6 +36,36 @@ Workflow-specific:
 
 Parameters pass through workflow chains automatically.
 
+## Resume / Checkpoint System
+
+ARIS supports resumption of interrupted staged research workflows from artifact file state, not chat context. This is critical for long-running research pipelines that may be interrupted mid-session.
+
+### Intent Detection
+
+When a user returns after interruption and says things like "继续", "接着做", "下一步", "continue", "resume", "next step", "where did I leave off", the system MUST:
+
+1. First call `tools/resume_stage_state.py detect-intent "<message>"` to confirm resume intent
+2. If resume intent confirmed, call `tools/resume_stage_state.py <stage>` to check which phase has completed artifacts
+3. Resume from the first incomplete phase — do NOT restart completed phases
+4. Do NOT rely on chat history for phase state — artifact files on disk are the source of truth
+
+### Stage Recovery Summary
+
+| Stage | Check Command | Complete When | Resume Action |
+|-------|---------------|---------------|---------------|
+| Phase 1 (research-lit) | `python3 tools/resume_stage_state.py research-lit` | LITERATURE_INDEX.md + GAP_MAP.md + PHASE1_EVIDENCE_AUDIT.md | Proceed to idea-creator |
+| Phase 2 (idea-creator) | `python3 tools/resume_stage_state.py idea-creator` | IDEA_BANK.md + CAND_*.md + PHASE2_SHORTLIST_AUDIT.md | Proceed to exec-review |
+| Phase 3 (exec-review) | `python3 tools/resume_stage_state.py exec-review [CAND]` | REVIEWS/CAND_*_review.md for all active candidates | Proceed to novelty-check |
+| Phase 4 (novelty-check) | `python3 tools/resume_stage_state.py novelty-check [CAND]` | NOVELTY/CAND_*_novelty.md for all reviewed candidates | Ready for final selection |
+
+### Detailed per-skill recovery rules
+
+See the `## Resume / Interruption Recovery` section in each SKILL.md:
+- `skills/research-lit/SKILL.md`
+- `skills/idea-creator/SKILL.md`
+- `skills/exec-review/SKILL.md`
+- `skills/novelty-check/SKILL.md`
+
 ## Usage Modes
 
 ARIS supports two usage modes for research idea discovery:
@@ -114,9 +144,17 @@ Both modes share the same reliability gates. Mode B is for debugging, incrementa
 ## Internal Tools
 
 Some helper tools exist under `tools/` for scaffolding, ledger, status,
-output validation, and contributor testing. Normal users should invoke
-slash skills, not Python scripts. Only contributors/debuggers should
-call these tools directly.
+output validation, stage state checking, and contributor testing. Normal
+users should invoke slash skills, not Python scripts. Only
+contributors/debuggers should call these tools directly.
+
+Key tools for research workflow:
+- `tools/resume_stage_state.py` — Stage state checker for interrupted workflow
+  recovery. Checks artifact files on disk to determine what phase is complete.
+  Modes: detect-intent, research-lit, idea-creator, exec-review, novelty-check.
+- `tools/llm_call_ledger.py` — Model call tracking (start/finish/fail/fallback).
+- `tools/exec_review.py` — Review session initialization and completion tracking.
+- `tools/session_registry.py` — Session management and handoff.
 
 ## Artifact Contracts
 

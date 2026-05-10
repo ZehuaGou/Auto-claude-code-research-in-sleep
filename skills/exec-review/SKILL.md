@@ -202,3 +202,29 @@ When the input is a CAND_*.md file:
 必须写入：
 - `.aris/calls/current_call.json`
 - `.aris/calls/llm_calls.jsonl`
+
+## Resume / Interruption Recovery
+
+This skill supports resumption from artifact file state after session interruption.
+
+### Detection
+
+Use `tools/resume_stage_state.py` to detect where Phase 3 left off:
+
+```bash
+python3 tools/resume_stage_state.py exec-review [CAND_XXX]
+```
+
+If no candidate is specified, checks all active candidates.
+
+### Required Artifacts
+
+- `REVIEWS/CAND_XXX_review.md` — one per candidate, with verdict: go | revise | kill
+
+### Recovery Rules
+
+- **No REVIEWS/ directory or no review files found**: Phase 3 not started. Verify Phase 2 artifacts exist (IDEA_BANK + CANONICAL_IDEAS), then run `/exec-review CAND_XXX` for each candidate.
+- **Some candidates reviewed, some missing**: Partial Phase 3. Check each candidate individually. Do NOT re-review completed candidates — skip directly to unfinished ones. Use `tools/resume_stage_state.py exec-review` to see which are missing.
+- **All active candidates have reviews**: Phase 3 is complete. Resume user intent continues to Phase 4 (novelty-check). Skip directly to `/novelty-check CAND_XXX` for candidates with verdict `go` or `revise`.
+- **Killed candidates**: Candidates with review verdict `kill` are excluded from further phases. Do NOT run novelty-check on killed candidates.
+- **Per-candidate isolation**: Each review is independent. A new review session reads only the target CAND file + allowed evidence. Do NOT batch reviews.

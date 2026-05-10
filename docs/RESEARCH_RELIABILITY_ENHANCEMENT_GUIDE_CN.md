@@ -767,7 +767,57 @@ python tools/session_registry.py handoff <task_id> done               # 标记�
 
 ---
 
-### 8.7 所有 Tools 的安全规则
+### 8.7 tools/resume_stage_state.py
+
+**作用：** 中断恢复检测工具。检查 artifact 文件状态，判断 staged research workflow 进行到哪个阶段。支持 5 种模式：detect-intent、research-lit、idea-creator、exec-review、novelty-check。
+
+**是否修改 .env：** ❌ 不涉及
+
+**是否调用 LLM：** ❌ 不调用 — 只检查文件系统
+
+**常用命令：**
+```bash
+# 检测用户是否表达"继续/恢复"意图
+python tools/resume_stage_state.py detect-intent "继续做之前的调研"
+
+# 检查 Phase 1（research-lit）完成状态
+python tools/resume_stage_state.py research-lit
+
+# 检查 Phase 2（idea-creator）完成状态
+python tools/resume_stage_state.py idea-creator
+
+# 检查 Phase 3（exec-review）完成状态（可指定候选）
+python tools/resume_stage_state.py exec-review CAND_001
+
+# 检查 Phase 4（novelty-check）完成状态（可指定候选）
+python tools/resume_stage_state.py novelty-check CAND_001
+```
+
+**输出：** JSON，包含 stage、status、missing_artifacts、next_action
+
+**Status 含义：**
+
+| 状态 | 含义 | 建议操作 |
+|------|------|----------|
+| `not_started` | 该阶段未开始或 artifact 缺失 | 运行对应 skill |
+| `partial` | 部分完成 | 继续未完成部分 |
+| `needs_gate` | 内容已生成但 Codex gate 未完成 | 运行 gate 或 re-run |
+| `completed` | 所有 artifact 存在 | 进入下一阶段 |
+| `blocked` | 前置阶段未完成 | 先完成前置阶段 |
+
+**使用场景：**
+- 用户中断后回复"继续/接着做/resume"，先 detect-intent 确认意图
+- 然后按 research-lit → idea-creator → exec-review → novelty-check 顺序检查各阶段
+- 从第一个未完成阶段继续，不要重复已完成阶段
+
+**集成：**
+- 4 个 SKILL.md 文件已包含 Resume / Interruption Recovery 章节
+- idea-discovery/SKILL.md 包含完整的恢复逻辑
+- AGENT_GUIDE.md 包含 resume 意图处理总览
+
+---
+
+### 8.8 所有 Tools 的安全规则
 
 ```
 1. 不允许输出完整 API Key — 必须 mask（sk-****）

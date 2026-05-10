@@ -1812,6 +1812,110 @@ else:
         check(f"{c} llm_call_ledger.py exists", False)
 
 # ---------------------------------------------------------------------------
+# 52. Resume / Checkpoint System
+# ---------------------------------------------------------------------------
+print("\n=== 52. Resume / Checkpoint System ===")
+
+# 52a. resume_stage_state.py exists
+resume_tool = ROOT / "tools" / "resume_stage_state.py"
+check(
+    "52a. tools/resume_stage_state.py exists",
+    resume_tool.exists(),
+)
+if resume_tool.exists():
+    src = resume_tool.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "52b. resume_stage_state.py has detect-intent command",
+        "detect-intent" in src or "detect_intent" in src,
+    )
+    check(
+        "52c. resume_stage_state.py has research-lit command",
+        "research-lit" in src and "check_phase_research_lit" in src,
+    )
+    check(
+        "52d. resume_stage_state.py has idea-creator command",
+        "idea-creator" in src and "check_phase_idea_creator" in src,
+    )
+    check(
+        "52e. resume_stage_state.py has exec-review command",
+        "exec-review" in src and "check_phase_exec_review" in src,
+    )
+    check(
+        "52f. resume_stage_state.py has novelty-check command",
+        "novelty-check" in src and "check_phase_novelty_check" in src,
+    )
+    # Check Chinese resume patterns
+    has_cn_patterns = False
+    for cp in ["继续", "接着做", "下一步", "恢复"]:
+        if cp in src:
+            has_cn_patterns = True
+            break
+    check(
+        "52g. resume_stage_state.py has Chinese resume keywords",
+        has_cn_patterns,
+        "Missing Chinese resume patterns in detect_resume_intent",
+    )
+    # Check English resume patterns
+    has_en_patterns = "continue" in src and "resume" in src
+    check(
+        "52h. resume_stage_state.py has English resume keywords",
+        has_en_patterns,
+        "Missing English resume patterns in detect_resume_intent",
+    )
+else:
+    for c in ["52b", "52c", "52d", "52e", "52f", "52g", "52h"]:
+        check(f"{c} resume_stage_state.py exists", False)
+
+# 52i-52l: SKILL.md files have Resume sections
+for skill_path, label in [
+    (ROOT / "skills" / "research-lit" / "SKILL.md", "research-lit"),
+    (ROOT / "skills" / "idea-creator" / "SKILL.md", "idea-creator"),
+    (ROOT / "skills" / "exec-review" / "SKILL.md", "exec-review"),
+    (ROOT / "skills" / "novelty-check" / "SKILL.md", "novelty-check"),
+]:
+    skill_key = chr(ord("i") + ["research-lit", "idea-creator", "exec-review", "novelty-check"].index(label))
+    if skill_path.exists():
+        content = skill_path.read_text(encoding="utf-8", errors="ignore")
+        check(
+            f"52{skill_key}. {label} SKILL.md has Resume / Interruption Recovery section",
+            "Resume / Interruption Recovery" in content,
+        )
+    else:
+        check(f"52{skill_key}. {label} SKILL.md exists", False)
+
+# 52m. AGENT_GUIDE.md has Resume / Checkpoint System
+agent_guide = ROOT / "AGENT_GUIDE.md"
+if agent_guide.exists():
+    content = agent_guide.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "52m. AGENT_GUIDE.md has Resume / Checkpoint System section",
+        "Resume / Checkpoint System" in content,
+    )
+    check(
+        "52n. AGENT_GUIDE.md mentions tools/resume_stage_state.py",
+        "resume_stage_state.py" in content,
+    )
+else:
+    check("52m. AGENT_GUIDE.md exists", False)
+    check("52n. AGENT_GUIDE.md exists", False)
+
+# 52o. idea-discovery SKILL.md has Resume / Interruption Recovery
+idea_disc = ROOT / "skills" / "idea-discovery" / "SKILL.md"
+if idea_disc.exists():
+    content = idea_disc.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "52o. idea-discovery SKILL.md has Resume / Interruption Recovery section",
+        "Resume / Interruption Recovery" in content,
+    )
+    check(
+        "52p. idea-discovery SKILL.md mentions resume_stage_state.py",
+        "resume_stage_state.py" in content,
+    )
+else:
+    check("52o. idea-discovery SKILL.md exists", False)
+    check("52p. idea-discovery SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'='*40}")

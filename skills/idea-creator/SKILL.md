@@ -273,3 +273,28 @@ may be called internally for job execution. Users should not call these directly
 
 After each `mcp__codex__codex` or `mcp__codex__codex-reply` reviewer call,
 save the trace following `shared-references/review-tracing.md`.
+
+## Resume / Interruption Recovery
+
+This skill supports resumption from artifact file state after session interruption.
+
+### Detection
+
+Use `tools/resume_stage_state.py` to detect where Phase 2 left off:
+
+```bash
+python3 tools/resume_stage_state.py idea-creator
+```
+
+### Required Artifacts
+
+- `IDEA_BANK.md` — deduplicated idea index (or `IDEA_BANK.json`)
+- `CANONICAL_IDEAS/CAND_*.md` — canonical candidates (at least one active)
+- `SHORTLIST_AUDIT/PHASE2_SHORTLIST_AUDIT.md` — Codex shortlist gate output
+
+### Recovery Rules
+
+- **No IDEA_BANK.md or no CANONICAL_IDEAS/**: Phase 2 not started. Verify Phase 1 artifacts exist first, then re-run `/idea-creator "direction"`.
+- **IDEA_BANK.md + CAND_*.md exist, no PHASE2_SHORTLIST_AUDIT.md**: Idea generation and dedup done but Codex shortlist audit not completed. Run the shortlist audit gate: invoke `mcp__codex__codex` with the shortlist audit prompt (see Phase 2 Codex Gate above), or re-run `/idea-creator "direction" --run-gate`.
+- **All 3 artifacts present**: Phase 2 is complete. Resume user intent continues to Phase 3 (exec-review). Do NOT regenerate ideas — proceed directly to `/exec-review CAND_XXX`.
+- **Killed candidates exist**: Already excluded from pipeline; do NOT re-review them. Check `CANONICAL_IDEAS/` for file-level `**Status**: killed` markers, or read the shortlist audit kill list.

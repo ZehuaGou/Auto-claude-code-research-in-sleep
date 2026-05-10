@@ -553,3 +553,28 @@ mcp__codex__codex:
    ```
 
 6. **Fallback**: If Codex is unavailable, fallback to `LLM_EVIDENCE_AUDITOR_FALLBACK_MODEL`. Mark output with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`. Isolation mode becomes `protocol_only` — verdict max is PASS_WITH_WARNINGS.
+
+## Resume / Interruption Recovery
+
+This skill supports resumption from artifact file state after session interruption.
+
+### Detection
+
+Use `tools/resume_stage_state.py` to detect where Phase 1 left off:
+
+```bash
+python3 tools/resume_stage_state.py research-lit
+```
+
+### Required Artifacts
+
+- `LITERATURE_INDEX.md` — structured paper index (or `RUNS/<run_id>/LITERATURE_INDEX.md`)
+- `GAP_MAP.md` — research gap map (or `RUNS/<run_id>/GAP_MAP.md`)
+- `EVIDENCE_AUDIT/PHASE1_EVIDENCE_AUDIT.md` — Codex evidence integrity gate output
+
+### Recovery Rules
+
+- **No LITERATURE_INDEX.md or GAP_MAP.md**: Resume from scratch — re-run `/research-lit "direction"`.
+- **LITERATURE_INDEX.md + GAP_MAP.md exist, no PHASE1_EVIDENCE_AUDIT.md**: Literature survey done but Codex evidence gate not completed. Run the evidence integrity audit gate manually, or re-run `/research-lit "direction" --run-gate`.
+- **All 3 artifacts present**: Phase 1 is complete. Resume user intent continues to Phase 2 (idea-creator). Do NOT re-run literature search — proceed directly to `/idea-creator "direction"`.
+- **Multiple RUNS/ directories present**: Use the latest run (last modified). Check its artifact completeness independently.

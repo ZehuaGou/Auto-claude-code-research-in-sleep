@@ -263,6 +263,46 @@ The pipeline does NOT default to any of these. If the user wants to proceed, the
 - **AUTO_PROCEED cannot cross the experiment boundary.** Even with AUTO_PROCEED=true, the pipeline never automatically invokes /research-contract, /baseline-repro, or /experiment-bridge. Those require explicit user command.
 - **Feishu notifications are optional.** If `~/.claude/feishu.json` exists, send `checkpoint` at each phase transition and `pipeline_done` at final report. If absent/off, skip silently.
 
+## Resume / Interruption Recovery
+
+When `/idea-discovery` is interrupted mid-pipeline and the user returns (e.g., "继续", "resume", "next step"), the system MUST recover from artifact file state, not chat context.
+
+### Detection
+
+Use the resume intent detector (`resume-stage-state detect-intent`) to
+confirm resume intent, then check each phase's artifact state:
+
+```
+resume-stage-state detect-intent "<user message>"   # detect resume intent
+resume-stage-state research-lit                      # check Phase 1
+resume-stage-state idea-creator                      # check Phase 2
+resume-stage-state exec-review [CAND]                # check Phase 3
+resume-stage-state novelty-check [CAND]              # check Phase 4
+```
+
+(Implementation: `tools/resume_stage_state.py`)
+
+### Recovery Logic
+
+| Situation | Detect by | Resume at |
+|-----------|-----------|-----------|
+| Phase 1 not done | `resume_stage_state.py research-lit` shows status != completed | Start Phase 1 (research-lit) |
+| Phase 1 done, Phase 2 not | Phase 1 artifacts exist, IDEA_BANK.md missing | Start Phase 2 (idea-creator) |
+| Phase 2 partial (no gate) | IDEA_BANK + CAND_*.md exist, no SHORTLIST_AUDIT | Run shortlist audit gate only |
+| Phase 2 done, Phase 3 not | All Phase 2 artifacts exist, REVIEWS/ empty | Start Phase 3 (exec-review per CAND) |
+| Phase 3 partial | Some reviews exist, some missing | Continue with missing candidates only |
+| Phase 3 done, Phase 4 not | All reviews exist, NOVELTY/ empty | Start Phase 4 (novelty-check per CAND) |
+| Phase 4 partial | Some novelty reports exist, some missing | Continue with missing candidates only |
+| All phases complete | All 4 stages report "completed" | Proceed to final selection or inform user "pipeline complete, choose next action" |
+
+### Hard Rules
+
+- **Do NOT repeat completed phases.** If Phase 1 artifacts exist (LITERATURE_INDEX.md + GAP_MAP.md + PHASE1_EVIDENCE_AUDIT.md), do NOT re-run `/research-lit`.
+- **Do NOT re-generate completed reviews.** If a candidate has a review file, do NOT re-review it unless the user explicitly asks for a new review.
+- **Do NOT re-check novelty for completed candidates.** If a candidate has a novelty report, the result stands.
+- **Gate re-run is optional.** If IDEA_BANK exists but the shortlist audit was not completed, you may either run just the gate or re-run the full Phase 2. Prefer running just the gate to save time.
+- **Source of truth is disk, not chat memory.** Always verify by checking artifact files with `resume_stage_state.py`. Never assume phase state from conversation context.
+
 ## Composing with Workflow 2
 
 After this pipeline produces a validated top idea AND the user explicitly requests to proceed:
