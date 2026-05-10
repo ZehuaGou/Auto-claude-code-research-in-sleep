@@ -2038,6 +2038,91 @@ else:
     check("52aj. Chinese guide exists", False)
 
 # ---------------------------------------------------------------------------
+# 53. .claude/commands/ slash command wrappers
+# ---------------------------------------------------------------------------
+print("\n=== 53. .claude/commands/ slash command wrappers ===")
+commands_dir = ROOT / ".claude" / "commands"
+commands_required = [
+    "exec-review",
+    "novelty-check",
+    "research-lit",
+    "idea-creator",
+    "idea-bank",
+    "idea-discovery",
+    "status",
+]
+if commands_dir.exists():
+    for cmd in commands_required:
+        cmd_path = commands_dir / f"{cmd}.md"
+        exists = cmd_path.exists()
+        check(
+            f"53a. .claude/commands/{cmd}.md exists",
+            exists,
+        )
+        if exists:
+            content = cmd_path.read_text(encoding="utf-8", errors="ignore")
+            # Check wrapper references corresponding skills/<name>/SKILL.md
+            check(
+                f"53b. {cmd}.md references skills/{cmd}/SKILL.md",
+                f"skills/{cmd}/SKILL.md" in content,
+                f"Missing reference to skills/{cmd}/SKILL.md" if f"skills/{cmd}/SKILL.md" not in content else "",
+            )
+            # Check wrapper mentions not to bypass skill rules
+            has_no_bypass = "Follow" in content and "exactly" in content
+            check(
+                f"53c. {cmd}.md instructs to follow skill exactly (no bypass)",
+                has_no_bypass,
+                f"Wrapper may not enforce exact skill following" if not has_no_bypass else "",
+            )
+    # Verify all required commands are present
+    missing_commands = [c for c in commands_required if not (commands_dir / f"{c}.md").exists()]
+    check(
+        "53d. All required slash command wrappers present",
+        len(missing_commands) == 0,
+        f"Missing: {missing_commands}" if missing_commands else "",
+    )
+else:
+    for cmd in commands_required:
+        check(f"53a. .claude/commands/ directory exists", False)
+    check("53d. All required slash command wrappers present", False, ".claude/commands/ directory missing")
+
+# ---------------------------------------------------------------------------
+# 54. AGENT_GUIDE.md explains skills-lock vs .claude/commands
+# ---------------------------------------------------------------------------
+print("\n=== 54. AGENT_GUIDE.md slash command docs ===")
+agent_guide = ROOT / "AGENT_GUIDE.md"
+if agent_guide.exists():
+    content = agent_guide.read_text(encoding="utf-8", errors="ignore")
+    has_skills_lock_ref = "skills-lock.json" in content
+    has_commands_ref = ".claude/commands" in content or ".claude/commands/" in content
+    check(
+        "54a. AGENT_GUIDE.md mentions skills-lock.json",
+        has_skills_lock_ref,
+    )
+    check(
+        "54b. AGENT_GUIDE.md mentions .claude/commands/",
+        has_commands_ref,
+    )
+    check(
+        "54c. AGENT_GUIDE.md explains both need to exist",
+        has_skills_lock_ref and has_commands_ref,
+    )
+    check(
+        "54d. AGENT_GUIDE.md has Slash Command Registration section",
+        "Slash Command Registration" in content,
+    )
+    # Check the troubleshooting instructions
+    has_restart_instruction = "/exec-review" in content and "restart" in content.lower()
+    check(
+        "54e. AGENT_GUIDE.md has restart instruction for slash commands",
+        has_restart_instruction,
+        "Missing /exec-review restart instruction" if not has_restart_instruction else "",
+    )
+else:
+    for c in ["54a", "54b", "54c", "54d", "54e"]:
+        check(f"{c} AGENT_GUIDE.md exists", False)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'='*40}")

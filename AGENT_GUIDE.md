@@ -158,6 +158,20 @@ Key tools for research workflow:
 - `tools/register_local_skills.py` — Register local ARIS slash skills into
   `skills-lock.json` so `/skill-name` commands are recognized by Claude Code.
   Run after cloning or adding new skills: `python tools/register_local_skills.py`.
+- `tools/register_slash_commands.py` — Register `.claude/commands/*.md` wrappers
+  so sub-skills (`/research-lit`, `/exec-review`, etc.) work as slash commands.
+  Run after `register_local_skills.py` if slash commands have no response.
+
+## Slash Command Registration
+
+- `skills-lock.json` registers local skills so the Skill tool can load them.
+- `.claude/commands/*.md` exposes them as `/skill-name` slash commands.
+- Both are needed: `skills-lock.json` for Skill API, `.claude/commands/` for slash entry.
+- If `/exec-review` has no response:
+  1. Run `python tools/register_local_skills.py`
+  2. Run `python tools/register_slash_commands.py`
+  3. Restart Claude Code session
+  4. Retry `/exec-review CAND_XXX`
 
 ## Artifact Contracts
 
