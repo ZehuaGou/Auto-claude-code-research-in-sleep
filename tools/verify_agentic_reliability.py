@@ -1204,9 +1204,13 @@ if idea_disc.exists():
         "Phase 1" in content and "Phase 2" in content and "Phase 3" in content
         and "Phase 4" in content and "Phase 5" in content and "Phase 6" in content,
     )
+    # Only check the user-facing portion (before Resume section).
+    # The Resume section legitimately references tools/resume_stage_state.py.
+    resume_marker = "## Resume / Interruption Recovery"
+    user_facing = content[:content.find(resume_marker)] if resume_marker in content else content
     check(
         "34c. idea-discovery does NOT direct users to python tools/",
-        "python tools/" not in content and "python3 tools/" not in content,
+        "python tools/" not in user_facing and "python3 tools/" not in user_facing,
     )
 else:
     for c in ["34a", "34b", "34c"]:
@@ -1349,9 +1353,12 @@ print("\n=== 40. No user direction to python tools ===")
 idea_disc = ROOT / "skills" / "idea-discovery" / "SKILL.md"
 if idea_disc.exists():
     content = idea_disc.read_text(encoding="utf-8", errors="ignore")
+    # Only check the user-facing portion (before Resume section).
+    resume_marker = "## Resume / Interruption Recovery"
+    user_facing = content[:content.find(resume_marker)] if resume_marker in content else content
     check(
         "40a. idea-discovery does NOT tell users to run python tools/",
-        "python tools/" not in content and "python3 tools/" not in content,
+        "python tools/" not in user_facing and "python3 tools/" not in user_facing,
     )
 else:
     check("40a. idea-discovery SKILL.md exists", False)
@@ -1816,7 +1823,6 @@ else:
 # ---------------------------------------------------------------------------
 print("\n=== 52. Resume / Checkpoint System ===")
 
-# 52a. resume_stage_state.py exists
 resume_tool = ROOT / "tools" / "resume_stage_state.py"
 check(
     "52a. tools/resume_stage_state.py exists",
@@ -1826,7 +1832,7 @@ if resume_tool.exists():
     src = resume_tool.read_text(encoding="utf-8", errors="ignore")
     check(
         "52b. resume_stage_state.py has detect-intent command",
-        "detect-intent" in src or "detect_intent" in src,
+        "detect-intent" in src and "detect_resume_intent" in src,
     )
     check(
         "52c. resume_stage_state.py has research-lit command",
@@ -1844,76 +1850,192 @@ if resume_tool.exists():
         "52f. resume_stage_state.py has novelty-check command",
         "novelty-check" in src and "check_phase_novelty_check" in src,
     )
-    # Check Chinese resume patterns
-    has_cn_patterns = False
-    for cp in ["继续", "接着做", "下一步", "恢复"]:
-        if cp in src:
-            has_cn_patterns = True
+
+    # detect-intent field checks
+    check(
+        "52g. resume_stage_state.py outputs resume_intent",
+        '"resume_intent"' in src,
+    )
+    check(
+        "52h. resume_stage_state.py outputs rerun_intent",
+        '"rerun_intent"' in src,
+    )
+    check(
+        "52i. resume_stage_state.py outputs suggested_action",
+        '"suggested_action"' in src,
+    )
+    check(
+        "52j. resume_stage_state.py includes normalized_status",
+        '"normalized_status"' in src,
+    )
+
+    # Chinese resume keywords (expanded coverage)
+    cn_keywords = ["继续", "接着来", "接着做", "往下走", "下一步", "后面怎么做", "刚才中断了", "接上", "恢复"]
+    for kw in cn_keywords:
+        if kw in src:
+            check("52k. CN keyword '%s' in resume" % kw, True)
             break
+    else:
+        check("52k. Chinese resume keywords found", False, "None of the expanded CN keywords found")
+
+    # Chinese rerun keywords
+    cn_rerun = ["重新跑", "重新执行", "从头开始", "全部重来", "重新开始"]
+    for kw in cn_rerun:
+        if kw in src:
+            check("52l. CN rerun keyword '%s' in resume" % kw, True)
+            break
+    else:
+        check("52l. Chinese rerun keywords found", False, "None of the CN rerun keywords found")
+
+    # English rerun keywords
+    en_rerun = ["rerun", "restart", "start over", "from scratch"]
+    for kw in en_rerun:
+        if kw in src:
+            check("52m. EN rerun keyword in resume", True)
+            break
+    else:
+        check("52m. English rerun keywords found", False, "None of the EN rerun keywords found")
+
+    # Header validation functions
     check(
-        "52g. resume_stage_state.py has Chinese resume keywords",
-        has_cn_patterns,
-        "Missing Chinese resume patterns in detect_resume_intent",
+        "52n. resume_stage_state.py has parse_artifact_header",
+        "parse_artifact_header" in src,
     )
-    # Check English resume patterns
-    has_en_patterns = "continue" in src and "resume" in src
     check(
-        "52h. resume_stage_state.py has English resume keywords",
-        has_en_patterns,
-        "Missing English resume patterns in detect_resume_intent",
+        "52o. resume_stage_state.py has check_required_header",
+        "check_required_header" in src,
     )
+    check(
+        "52p. resume_stage_state.py has extract_verdict",
+        "extract_verdict" in src,
+    )
+    check(
+        "52q. resume_stage_state.py has is_valid_codex_artifact",
+        "is_valid_codex_artifact" in src,
+    )
+
+    # Checks for header fields in validation
+    check(
+        "52r. resume_stage_state.py checks codex_thread_id",
+        "codex_thread_id" in src,
+    )
+    check(
+        "52s. resume_stage_state.py checks actual_backend",
+        "actual_backend" in src,
+    )
+    check(
+        "52t. resume_stage_state.py checks fallback_used",
+        "fallback_used" in src,
+    )
+    check(
+        "52u. resume_stage_state.py checks verdict",
+        "extract_verdict" in src and "verdict" in src,
+    )
+
+    # Phase 1 audit path compatibility
+    check(
+        "52v. resume_stage_state.py compatible with PHASE1_EVIDENCE_AUDIT_CODEX",
+        "PHASE1_EVIDENCE_AUDIT_CODEX" in src,
+    )
+    # Phase 2 audit path compatibility
+    check(
+        "52w. resume_stage_state.py compatible with PHASE2_IDEA_SHORTLIST_AUDIT_CODEX",
+        "PHASE2_IDEA_SHORTLIST_AUDIT_CODEX" in src,
+    )
+
+    # novelty-check mode check
+    check(
+        "52x. resume_stage_state.py checks novelty mode==canonical_pipeline",
+        "canonical_pipeline" in src,
+    )
+
+    # verify no resume-stage-state alias in source
+    check(
+        "52y. resume_stage_state.py does NOT use resume-stage alias",
+        "resume-stage" not in src,
+        "Source contains resume-stage (should be resume_stage_state)" if "resume-stage" in src else "",
+    )
+
 else:
-    for c in ["52b", "52c", "52d", "52e", "52f", "52g", "52h"]:
+    for c in ["52b", "52c", "52d", "52e", "52f", "52g", "52h", "52i", "52j",
+              "52k", "52l", "52m", "52n", "52o", "52p", "52q", "52r", "52s",
+              "52t", "52u", "52v", "52w", "52x", "52y"]:
         check(f"{c} resume_stage_state.py exists", False)
 
-# 52i-52l: SKILL.md files have Resume sections
+# 52z-52ac: SKILL.md files have Resume sections
 for skill_path, label in [
     (ROOT / "skills" / "research-lit" / "SKILL.md", "research-lit"),
     (ROOT / "skills" / "idea-creator" / "SKILL.md", "idea-creator"),
     (ROOT / "skills" / "exec-review" / "SKILL.md", "exec-review"),
     (ROOT / "skills" / "novelty-check" / "SKILL.md", "novelty-check"),
 ]:
-    skill_key = chr(ord("i") + ["research-lit", "idea-creator", "exec-review", "novelty-check"].index(label))
+    suffix = chr(ord("z") + ["research-lit", "idea-creator", "exec-review", "novelty-check"].index(label))
     if skill_path.exists():
         content = skill_path.read_text(encoding="utf-8", errors="ignore")
         check(
-            f"52{skill_key}. {label} SKILL.md has Resume / Interruption Recovery section",
+            f"52{suffix}. {label} SKILL.md has Resume / Interruption Recovery section",
             "Resume / Interruption Recovery" in content,
         )
+        check(
+            f"52{suffix}b. {label} SKILL.md references tools/resume_stage_state.py",
+            "tools/resume_stage_state.py" in content,
+        )
     else:
-        check(f"52{skill_key}. {label} SKILL.md exists", False)
+        check(f"52{suffix}. {label} SKILL.md exists", False)
 
-# 52m. AGENT_GUIDE.md has Resume / Checkpoint System
+# 52ad-52ae. AGENT_GUIDE.md
 agent_guide = ROOT / "AGENT_GUIDE.md"
 if agent_guide.exists():
     content = agent_guide.read_text(encoding="utf-8", errors="ignore")
     check(
-        "52m. AGENT_GUIDE.md has Resume / Checkpoint System section",
+        "52ad. AGENT_GUIDE.md has Resume / Checkpoint System section",
         "Resume / Checkpoint System" in content,
     )
     check(
-        "52n. AGENT_GUIDE.md mentions tools/resume_stage_state.py",
+        "52ae. AGENT_GUIDE.md mentions tools/resume_stage_state.py",
         "resume_stage_state.py" in content,
     )
+    check(
+        "52af. AGENT_GUIDE.md has no resume-stage alias",
+        "resume-stage" not in content,
+        "Found resume-stage alias" if "resume-stage" in content else "",
+    )
 else:
-    check("52m. AGENT_GUIDE.md exists", False)
-    check("52n. AGENT_GUIDE.md exists", False)
+    for c in ["52ad", "52ae", "52af"]:
+        check(f"{c} AGENT_GUIDE.md exists", False)
 
-# 52o. idea-discovery SKILL.md has Resume / Interruption Recovery
+# 52ag-52ah. idea-discovery SKILL.md
 idea_disc = ROOT / "skills" / "idea-discovery" / "SKILL.md"
 if idea_disc.exists():
     content = idea_disc.read_text(encoding="utf-8", errors="ignore")
     check(
-        "52o. idea-discovery SKILL.md has Resume / Interruption Recovery section",
+        "52ag. idea-discovery SKILL.md has Resume / Interruption Recovery section",
         "Resume / Interruption Recovery" in content,
     )
     check(
-        "52p. idea-discovery SKILL.md mentions resume_stage_state.py",
-        "resume_stage_state.py" in content,
+        "52ah. idea-discovery SKILL.md references tools/resume_stage_state.py",
+        "tools/resume_stage_state.py" in content,
+    )
+    check(
+        "52ai. idea-discovery SKILL.md has no resume-stage alias",
+        "resume-stage" not in content,
+        "Found resume-stage alias" if "resume-stage" in content else "",
     )
 else:
-    check("52o. idea-discovery SKILL.md exists", False)
-    check("52p. idea-discovery SKILL.md exists", False)
+    for c in ["52ag", "52ah", "52ai"]:
+        check(f"{c} idea-discovery SKILL.md exists", False)
+
+# 52aj. Chinese guide has no resume-stage alias
+cn_guide = ROOT / "docs" / "RESEARCH_RELIABILITY_ENHANCEMENT_GUIDE_CN.md"
+if cn_guide.exists():
+    content = cn_guide.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "52aj. Chinese guide has no resume-stage alias",
+        "resume-stage" not in content,
+        "Found resume-stage alias" if "resume-stage" in content else "",
+    )
+else:
+    check("52aj. Chinese guide exists", False)
 
 # ---------------------------------------------------------------------------
 # Summary
