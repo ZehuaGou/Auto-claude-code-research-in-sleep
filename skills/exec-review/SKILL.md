@@ -32,9 +32,11 @@ allowed-tools: Bash(*), Read, Write, Grep, Glob, mcp__codex__codex, mcp__llm-cha
 
 ## Artifact Header
 
-Every output markdown file MUST begin with a model tracking header including isolation evidence:
+Every output markdown file MUST begin with a model tracking header including isolation evidence and routing info:
 
 ```
+routing_source: env
+global_codex_gate_mode: <value from ARIS_CODEX_GATE_MODE>
 isolation_mode: manual_subsession|codex_thread|protocol_only
 codex_thread_id: <id>|none
 task_id: <session task id>|none
@@ -46,6 +48,8 @@ actual_backend: codex|llm-chat
 actual_model: <model name or "DEFAULT">
 fallback_used: True|False
 fallback_reason: None|<reason>
+codex_used: true|false
+confidence_downgraded: true|false
 ```
 
 **Isolation rules:**
@@ -96,11 +100,18 @@ One CAND at a time. Codex thread. Auto artifact header + ledger.
    - contract_reviewer
    - result_judge
    - paper_relevance_reviewer
-3. 根据 model-routing（`skills/shared-references/model-routing.md`）决定 primary：
-   - codex 或 llm-chat
-4. **Agent 调用前**写 `current_call.json`（通过 llm_call_ledger start）。
-5. **Agent 执行** Codex 或 LLM Chat 调用。
-6. 如果 Codex 失败，Agent fallback 到对应 LLM fallback。
+3. 根据 model-routing（`skills/shared-references/model-routing.md`）决定 primary。
+4. **Resolve routing for the reviewer role**:
+   ```
+   python tools/model_route.py idea_reviewer
+   ```
+   Parse the output JSON. Follow the resolved route:
+   - `codex_required`: Codex only; fail if unavailable
+   - `codex_preferred`: Codex first; fallback to DeepSeek V4 Pro with warning
+   - `deepseek_only`: DeepSeek V4 Pro directly; mark codex_used=false
+5. **Agent 调用前**写 `current_call.json`（通过 llm_call_ledger start）。
+6. **Agent 执行** 根据 route 决定 Codex 或 LLM Chat 调用。
+7. 如果 Codex 失败且 route 允许 fallback，Agent 切换到对应 LLM fallback。
 7. **Agent 调用后**写 `llm_calls.jsonl`（通过 llm_call_ledger finish / fallback）。
 8. 输出 markdown 和 json。
 9. markdown 必须保留 reviewer raw response。

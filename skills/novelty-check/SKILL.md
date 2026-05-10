@@ -95,7 +95,16 @@ For EACH core claim, search using ALL available sources:
 3. **Read abstracts**: For each potentially overlapping paper, WebFetch its abstract and related work section
 
 ### Phase C: Cross-Model Verification
-Call Codex MCP (`mcp__codex__codex`) for the novelty judgment (uses `LLM_NOVELTY_CHECKER_PRIMARY` from model-routing.md):
+Before calling the reviewer, resolve routing via:
+```
+python tools/model_route.py novelty_checker
+```
+Parse the output JSON. Follow the resolved route:
+- `codex_required`: Use Codex MCP only; fail if unavailable
+- `codex_preferred`: Try Codex first; fallback to DeepSeek V4 Pro with warning
+- `deepseek_only`: Use DeepSeek V4 Pro directly; mark codex_used=false
+
+Then invoke the reviewer (Codex MCP or LLM chat per route):
 ```
 config: {"model_reasoning_effort": "xhigh"}
 ```
@@ -173,9 +182,12 @@ The output verdict MUST be one of:
 
 ## Reliability Additions
 
-### Codex-First Review
-novelty 生死判断使用 Codex 优先。
-如果 Codex 不可用，fallback 到 `LLM_NOVELTY_CHECKER_FALLBACK_MODEL`。
+### Model Routing
+novelty 生死判断通过 `tools/model_route.py novelty_checker` 解析路由。
+在每次 gate 调用前运行 `python tools/model_route.py novelty_checker`，按照 resolved route 执行：
+- `codex_required`: Codex only; fail if unavailable
+- `codex_preferred`: Codex first; fallback to DeepSeek V4 Pro with warning
+- `deepseek_only`: DeepSeek V4 Pro directly; mark codex_used=false
 fallback 输出必须标记 `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`。
 
 ### Paper Ingest Sections
@@ -206,6 +218,8 @@ fallback 输出必须标记 `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`。
 每个 novelty report 输出文件开头必须包含模型追踪 header + 隔离证据：
 
 ```
+routing_source: env
+global_codex_gate_mode: <value from ARIS_CODEX_GATE_MODE>
 isolation_mode: manual_subsession|codex_thread|protocol_only
 codex_thread_id: <id>|none
 task_id: <session task id>|none
@@ -217,6 +231,8 @@ actual_backend: codex|llm-chat
 actual_model: <model name or "DEFAULT">
 fallback_used: True|False
 fallback_reason: None|<reason>
+codex_used: true|false
+confidence_downgraded: true|false
 ```
 
 **隔离要求：**

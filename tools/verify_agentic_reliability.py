@@ -2407,6 +2407,248 @@ else:
     check("59m. idea-bank SKILL.md exists", False)
 
 # ---------------------------------------------------------------------------
+# 60. Global env-controlled Codex routing (ARIS_CODEX_GATE_MODE)
+# ---------------------------------------------------------------------------
+print("\n=== 60. Global Codex routing system ===")
+
+# 60a. .env.example contains ARIS_CODEX_GATE_MODE
+env_example = ROOT / ".env.example"
+if env_example.exists():
+    env_text = env_example.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "60a. .env.example contains ARIS_CODEX_GATE_MODE",
+        "ARIS_CODEX_GATE_MODE" in env_text,
+        "Missing ARIS_CODEX_GATE_MODE in .env.example",
+    )
+    check(
+        "60b. .env.example documents codex_required / codex_preferred / deepseek_only",
+        all(mode in env_text for mode in ["codex_required", "codex_preferred", "deepseek_only"]),
+        "Missing one or more mode descriptions in .env.example",
+    )
+    check(
+        "60c. .env.example has ARIS_CODEX_FALLBACK_MODEL=deepseek-v4-pro",
+        "ARIS_CODEX_FALLBACK_MODEL=deepseek-v4-pro" in env_text,
+        "Missing ARIS_CODEX_FALLBACK_MODEL in .env.example",
+    )
+    check(
+        "60d. .env.example has per-role override examples for final_selector",
+        "LLM_FINAL_SELECTOR_PRIMARY" in env_text,
+        "Missing LLM_FINAL_SELECTOR_PRIMARY per-role override example",
+    )
+else:
+    for c in ["60a", "60b", "60c", "60d"]:
+        check(f"{c} .env.example exists", False)
+
+# 60e. tools/model_route.py exists
+model_route = ROOT / "tools" / "model_route.py"
+if model_route.exists():
+    check("60e. tools/model_route.py exists", True)
+    mr_src = model_route.read_text(encoding="utf-8", errors="ignore")
+
+    # 60f. supports critical gate roles
+    has_final_selector = "final_selector" in mr_src
+    has_novelty_checker = "novelty_checker" in mr_src
+    has_idea_reviewer = "idea_reviewer" in mr_src
+    check(
+        "60f. model_route.py supports final_selector role",
+        has_final_selector,
+        "Missing final_selector role in model_route.py",
+    )
+    check(
+        "60g. model_route.py supports novelty_checker role",
+        has_novelty_checker,
+        "Missing novelty_checker role in model_route.py",
+    )
+    check(
+        "60h. model_route.py supports idea_reviewer role",
+        has_idea_reviewer,
+        "Missing idea_reviewer role in model_route.py",
+    )
+    # 60i. output JSON fields
+    check(
+        "60i. model_route.py returns global_mode in output",
+        '"global_mode"' in mr_src,
+        "Missing global_mode in model_route.py output",
+    )
+    check(
+        "60j. model_route.py returns primary_backend in output",
+        '"primary_backend"' in mr_src,
+        "Missing primary_backend in model_route.py output",
+    )
+    check(
+        "60k. model_route.py returns fallback_allowed in output",
+        '"fallback_allowed"' in mr_src,
+        "Missing fallback_allowed in model_route.py output",
+    )
+    check(
+        "60l. model_route.py has CRITICAL_ROLES set",
+        "CRITICAL_ROLES" in mr_src,
+        "Missing CRITICAL_ROLES definition",
+    )
+    check(
+        "60m. model_route.py handles codex_required / codex_preferred / deepseek_only",
+        all(mode in mr_src for mode in ["codex_required", "codex_preferred", "deepseek_only"]),
+        "Missing one or more mode handlers in model_route.py",
+    )
+else:
+    for c in ["60e", "60f", "60g", "60h", "60i", "60j", "60k", "60l", "60m"]:
+        check(f"{c} model_route.py exists", False)
+
+# 60n-60q. Skill files reference model_route.py
+for skill_path, label, role in [
+    (ROOT / "skills" / "idea-bank" / "SKILL.md", "idea-bank", "final_selector"),
+    (ROOT / "skills" / "exec-review" / "SKILL.md", "exec-review", "idea_reviewer"),
+    (ROOT / "skills" / "novelty-check" / "SKILL.md", "novelty-check", "novelty_checker"),
+    (ROOT / "skills" / "idea-creator" / "SKILL.md", "idea-creator", "idea_shortlist_auditor"),
+    (ROOT / "skills" / "research-lit" / "SKILL.md", "research-lit", "evidence_integrity_auditor"),
+]:
+    suffix = chr(ord("n") + ["idea-bank", "exec-review", "novelty-check", "idea-creator", "research-lit"].index(label))
+    if skill_path.exists():
+        content = skill_path.read_text(encoding="utf-8", errors="ignore")
+        has_route_ref = "model_route.py" in content or "tools/model_route.py" in content
+        check(
+            f"60{suffix}. {label} references model_route.py",
+            has_route_ref,
+            f"Missing model_route.py reference in {label} SKILL.md",
+        )
+        if has_route_ref and role == "final_selector":
+            check(
+                f"60{suffix}b. {label} references model_route.py for {role}",
+                f"model_route.py {role}" in content or f"model_route.py {role.split('_')[0]}" in content or role in content,
+            )
+    else:
+        check(f"60{suffix}. {label} SKILL.md exists", False)
+
+# 60v-60y. Artifact headers in skill files contain routing fields
+for skill_path, label in [
+    (ROOT / "skills" / "idea-bank" / "SKILL.md", "idea-bank"),
+    (ROOT / "skills" / "exec-review" / "SKILL.md", "exec-review"),
+    (ROOT / "skills" / "novelty-check" / "SKILL.md", "novelty-check"),
+    (ROOT / "skills" / "idea-creator" / "SKILL.md", "idea-creator"),
+    (ROOT / "skills" / "research-lit" / "SKILL.md", "research-lit"),
+]:
+    suffix = chr(ord("v") + ["idea-bank", "exec-review", "novelty-check", "idea-creator", "research-lit"].index(label))
+    if skill_path.exists():
+        content = skill_path.read_text(encoding="utf-8", errors="ignore")
+        has_routing_source = "routing_source" in content
+        has_codex_used = "codex_used" in content
+        has_confidence_downgraded = "confidence_downgraded" in content
+        has_global_mode = "global_codex_gate_mode" in content
+        check(
+            f"60{suffix}. {label} artifact header has routing_source",
+            has_routing_source,
+            f"Missing routing_source in {label} artifact header",
+        )
+        check(
+            f"60{suffix}b. {label} artifact header has codex_used",
+            has_codex_used,
+            f"Missing codex_used in {label} artifact header",
+        )
+        check(
+            f"60{suffix}c. {label} artifact header has confidence_downgraded",
+            has_confidence_downgraded,
+            f"Missing confidence_downgraded in {label} artifact header",
+        )
+        check(
+            f"60{suffix}d. {label} artifact header has global_codex_gate_mode",
+            has_global_mode,
+            f"Missing global_codex_gate_mode in {label} artifact header",
+        )
+    else:
+        for c in [f"60{suffix}", f"60{suffix}b", f"60{suffix}c", f"60{suffix}d"]:
+            check(f"{c} {label} SKILL.md exists", False)
+
+# 60z-60za. model-routing.md mentions global routing
+model_routing = ROOT / "skills" / "shared-references" / "model-routing.md"
+if model_routing.exists():
+    mr_content = model_routing.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "60z. model-routing.md mentions ARIS_CODEX_GATE_MODE",
+        "ARIS_CODEX_GATE_MODE" in mr_content,
+        "Missing ARIS_CODEX_GATE_MODE in model-routing.md",
+    )
+    check(
+        "60za. model-routing.md documents codex_required / codex_preferred / deepseek_only",
+        all(mode in mr_content for mode in ["codex_required", "codex_preferred", "deepseek_only"]),
+        "Missing one or more mode descriptions in model-routing.md",
+    )
+else:
+    check("60z. model-routing.md exists", False)
+
+# 60zb. status SKILL displays Codex gate mode
+status_skill = ROOT / "skills" / "status" / "SKILL.md"
+if status_skill.exists():
+    status_content = status_skill.read_text(encoding="utf-8", errors="ignore")
+    gate_mode_ref = "ARIS_CODEX_GATE_MODE" in status_content or "Codex gate mode" in status_content
+    check(
+        "60zb. status SKILL displays Codex gate mode",
+        gate_mode_ref,
+        "Missing Codex gate mode display in status SKILL",
+    )
+    check(
+        "60zc. status SKILL mentions deepseek_only mode warning",
+        "deepseek_only" in status_content and "Codex disabled" in status_content,
+        "Missing deepseek_only warning in status SKILL",
+    )
+else:
+    for c in ["60zb", "60zc"]:
+        check(f"{c} status SKILL.md exists", False)
+
+# 60zd. llm_call_ledger.py has routing_source support
+ledger_py = ROOT / "tools" / "llm_call_ledger.py"
+if ledger_py.exists():
+    ledger_content = ledger_py.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "60zd. llm_call_ledger has routing_source field",
+        "routing_source" in ledger_content,
+        "Missing routing_source field in llm_call_ledger.py",
+    )
+    check(
+        "60ze. llm_call_ledger has global_codex_gate_mode field",
+        "global_codex_gate_mode" in ledger_content,
+        "Missing global_codex_gate_mode field in llm_call_ledger.py",
+    )
+else:
+    for c in ["60zd", "60ze"]:
+        check(f"{c} llm_call_ledger.py exists", False)
+
+# 60zf. resume_stage_state.py handles deepseek_only mode
+resume_tool = ROOT / "tools" / "resume_stage_state.py"
+if resume_tool.exists():
+    resume_content = resume_tool.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "60zf. resume_stage_state.py handles deepseek_only in final-selection",
+        "deepseek_only" in resume_content and "global_codex_gate_mode" in resume_content,
+        "Missing deepseek_only handling in resume_stage_state.py",
+    )
+else:
+    check("60zf. resume_stage_state.py exists", False)
+
+# 60zg. validate_idea_stage_state.py handles deepseek_only mode
+validator = ROOT / "tools" / "validate_idea_stage_state.py"
+if validator.exists():
+    val_content = validator.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "60zg. validate_idea_stage_state.py has deepseek_only validation",
+        "deepseek_only" in val_content and "global_codex_gate_mode" in val_content,
+        "Missing deepseek_only validation in validate_idea_stage_state.py",
+    )
+else:
+    check("60zg. validate_idea_stage_state.py exists", False)
+
+# 60zh. idea-discovery SKILL mentions ARIS_CODEX_GATE_MODE
+idea_disc = ROOT / "skills" / "idea-discovery" / "SKILL.md"
+if idea_disc.exists():
+    disc_content = idea_disc.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "60zh. idea-discovery SKILL mentions Codex routing / ARIS_CODEX_GATE_MODE",
+        "ARIS_CODEX_GATE_MODE" in disc_content or "Codex routing" in disc_content,
+        "Missing Codex routing mention in idea-discovery SKILL",
+    )
+else:
+    check("60zh. idea-discovery SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'='*40}")

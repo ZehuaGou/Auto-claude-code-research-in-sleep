@@ -255,6 +255,8 @@ def main():
             fallback_reason = ""
             codex_used = ""
             confidence_downgraded = ""
+            routing_source = ""
+            global_codex_gate_mode = ""
             found_mode = False
 
             for line in header_lines:
@@ -279,6 +281,10 @@ def main():
                     codex_used = ll.split(":", 1)[1].strip()
                 if ll.startswith("confidence_downgraded:"):
                     confidence_downgraded = ll.split(":", 1)[1].strip()
+                if ll.startswith("routing_source:"):
+                    routing_source = ll.split(":", 1)[1].strip()
+                if ll.startswith("global_codex_gate_mode:"):
+                    global_codex_gate_mode = ll.split(":", 1)[1].strip()
 
             # Case A: codex_gate
             if selection_mode == "codex_gate" and found_mode:
@@ -293,28 +299,44 @@ def main():
                             selection_verdict = ll.split(":", 1)[1].strip()
                             break
 
-            # Case B: llm_fallback_gate
+            # Case B: llm_fallback_gate (or deepseek_only)
             elif selection_mode == "llm_fallback_gate" and found_mode:
-                has_primary_codex = primary_backend == "codex"
-                has_fallback_model = actual_model == "deepseek-v4-pro"
-                has_fallback_used = fallback_used == "true"
-                has_fallback_reason = bool(fallback_reason) and fallback_reason not in ("none", "")
-                has_codex_false = codex_used == "false"
-                has_confidence_downgrade = confidence_downgraded == "true"
+                is_deepseek_only = global_codex_gate_mode == "deepseek_only"
 
                 llm_issues = []
-                if not has_primary_codex:
-                    llm_issues.append("primary_backend must be codex for llm_fallback_gate")
-                if not has_fallback_model:
-                    llm_issues.append("actual_model must be deepseek-v4-pro for llm_fallback_gate")
-                if not has_fallback_used:
-                    llm_issues.append("fallback_used must be true for llm_fallback_gate")
-                if not has_fallback_reason:
-                    llm_issues.append("fallback_reason must be non-empty for llm_fallback_gate")
-                if not has_codex_false:
-                    llm_issues.append("codex_used must be false for llm_fallback_gate")
-                if not has_confidence_downgrade:
-                    llm_issues.append("confidence_downgraded must be true for llm_fallback_gate")
+
+                if is_deepseek_only:
+                    # deepseek_only: Codex bypassed directly via env config, not a fallback
+                    ds_fb_reason = bool(fallback_reason) and fallback_reason not in ("none", "")
+                    if not ds_fb_reason:
+                        llm_issues.append("fallback_reason must be non-empty (e.g. 'Codex disabled by ARIS_CODEX_GATE_MODE=deepseek_only')")
+                    if actual_model != "deepseek-v4-pro":
+                        llm_issues.append("actual_model must be deepseek-v4-pro for deepseek_only mode")
+                    if codex_used != "false":
+                        llm_issues.append("codex_used must be false for deepseek_only mode")
+                    if confidence_downgraded != "true":
+                        llm_issues.append("confidence_downgraded must be true for deepseek_only mode")
+                else:
+                    # Normal llm_fallback_gate: Codex was tried but unavailable
+                    has_primary_codex = primary_backend == "codex"
+                    has_fallback_model = actual_model == "deepseek-v4-pro"
+                    has_fallback_used = fallback_used == "true"
+                    has_fallback_reason = bool(fallback_reason) and fallback_reason not in ("none", "")
+                    has_codex_false = codex_used == "false"
+                    has_confidence_downgrade = confidence_downgraded == "true"
+
+                    if not has_primary_codex:
+                        llm_issues.append("primary_backend must be codex for llm_fallback_gate")
+                    if not has_fallback_model:
+                        llm_issues.append("actual_model must be deepseek-v4-pro for llm_fallback_gate")
+                    if not has_fallback_used:
+                        llm_issues.append("fallback_used must be true for llm_fallback_gate")
+                    if not has_fallback_reason:
+                        llm_issues.append("fallback_reason must be non-empty for llm_fallback_gate")
+                    if not has_codex_false:
+                        llm_issues.append("codex_used must be false for llm_fallback_gate")
+                    if not has_confidence_downgrade:
+                        llm_issues.append("confidence_downgraded must be true for llm_fallback_gate")
 
                 if llm_issues:
                     header_issues.extend(llm_issues)
@@ -365,7 +387,6 @@ def main():
                     "PROVISIONAL_SELECTED required for manual/provisional selections."
                 )
 
-                )
 
     # 10. Check codex_thread_id presence for codex artifacts
     all_artifacts = []

@@ -901,6 +901,8 @@ def check_phase_final_selection() -> Dict[str, Any]:
     fallback = header.get("fallback_used", "")
     verdict = extract_verdict(report_path)
 
+    routing_source = header.get("routing_source", "")
+    global_gate_mode = header.get("global_codex_gate_mode", "")
     result["header_fields"] = {
         "mode": mode,
         "selection_mode": selection_mode,
@@ -909,6 +911,8 @@ def check_phase_final_selection() -> Dict[str, Any]:
         "actual_backend": backend,
         "fallback_used": fallback,
         "verdict": verdict,
+        "routing_source": routing_source,
+        "global_codex_gate_mode": global_gate_mode,
     }
 
     # Detect provisional selection (manual_override or missing Codex fields)
@@ -962,7 +966,7 @@ def check_phase_final_selection() -> Dict[str, Any]:
         result["verdict"] = verdict
         result["next_action"] = "Final selection complete. Proceed to research-contract."
 
-    # Tier B: LLM fallback gate (with warnings)
+    # Tier B: LLM fallback gate or deepseek_only (with warnings)
     elif selection_mode == "llm_fallback_gate":
         if mode != "final_selection":
             issues.append(f"mode={mode} (expected final_selection)")
@@ -970,25 +974,39 @@ def check_phase_final_selection() -> Dict[str, Any]:
             issues.append("codex_used must be false for llm_fallback_gate")
         if header.get("confidence_downgraded", "") != "true":
             issues.append("confidence_downgraded must be true for llm_fallback_gate")
-        if header.get("actual_model", "") != "deepseek-v4-pro":
-            issues.append(f"actual_model={header.get('actual_model', '')} (expected deepseek-v4-pro)")
-        if fallback != "true":
-            issues.append(f"fallback_used={fallback} (expected true for llm_fallback_gate)")
-        fb_reason = header.get("fallback_reason", "")
-        if not fb_reason or fb_reason == "none":
-            issues.append("fallback_reason must be non-empty for llm_fallback_gate")
+        actual_model = header.get("actual_model", "")
+        if actual_model != "deepseek-v4-pro":
+            issues.append(f"actual_model={actual_model} (expected deepseek-v4-pro)")
+        # deepseek_only mode has fallback_used=false; codex_preferred fallback has fallback_used=true
+        global_mode = header.get("global_codex_gate_mode", "")
+        if global_mode == "deepseek_only":
+            if fallback == "true":
+                issues.append("fallback_used=true conflicts with global_codex_gate_mode=deepseek_only (expected false)")
+            fb_reason = header.get("fallback_reason", "")
+            if not fb_reason or fb_reason == "none":
+                issues.append("fallback_reason must be non-empty (e.g. 'Codex disabled by ARIS_CODEX_GATE_MODE=deepseek_only')")
+        else:
+            # codex_preferred fallback or legacy fallback
+            if fallback != "true":
+                issues.append(f"fallback_used={fallback} (expected true for llm_fallback_gate)")
+            fb_reason = header.get("fallback_reason", "")
+            if not fb_reason or fb_reason == "none":
+                issues.append("fallback_reason must be non-empty for llm_fallback_gate")
         if verdict not in ("select_cand_001_with_warnings", "select_cand_002_with_warnings"):
             issues.append(f"verdict={verdict} (expected select_cand_001_with_warnings or select_cand_002_with_warnings for fallback)")
 
         if issues:
             result["status"] = "needs_resume"
             result["issues"] = issues
-            result["next_action"] = f"Fallback selection report header incomplete: {'; '.join(issues)}"
+            result["next_action"] = f"Selection report header incomplete: {'; '.join(issues)}"
             return _add_normalized(result)
 
         result["status"] = "complete_with_warnings"
         result["verdict"] = verdict
-        result["next_action"] = "Final selection completed with fallback (Codex was not used). Can proceed to research-contract."
+        if global_mode == "deepseek_only":
+            result["next_action"] = "Final selection via deepseek_only mode (Codex was not used). Can proceed to research-contract."
+        else:
+            result["next_action"] = "Final selection completed with fallback (Codex was not used). Can proceed to research-contract."
 
     # Tier C: Unknown selection mode — needs resume
     else:

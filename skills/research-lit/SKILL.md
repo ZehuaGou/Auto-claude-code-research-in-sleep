@@ -503,10 +503,15 @@ PASS_WITH_WARNINGS.
 - `GAP_MAP.md`
 - `PHASE1_EVIDENCE_AUDIT.md`
 
-After literature survey and gap extraction, run an evidence integrity audit via Codex before results are considered complete:
+After literature survey and gap extraction, run an evidence integrity audit before results are considered complete:
 
 1. **Trigger**: After LITERATURE_INDEX.md and GAP_MAP.md are produced.
-2. **Gate invocation**: Use Codex MCP for the audit — this is a judgment gate, not a generation task.
+2. **Resolve routing**:
+   ```
+   python tools/model_route.py evidence_integrity_auditor
+   ```
+   Parse the output JSON. Follow the resolved route to determine backend.
+3. **Gate invocation**: Use the resolved backend for the audit — this is a judgment gate, not a generation task.
 
 ```
 mcp__codex__codex:
@@ -534,25 +539,29 @@ mcp__codex__codex:
     Only audit evidence integrity.
 ```
 
-3. **Output**: `idea-stage/AGENTIC/EVIDENCE_AUDIT/PHASE1_EVIDENCE_AUDIT.md`
+4. **Output**: `idea-stage/AGENTIC/EVIDENCE_AUDIT/PHASE1_EVIDENCE_AUDIT.md`
 
-4. **Gate decision**:
+5. **Gate decision**:
    - **PASS** → proceed to idea generation
    - **PASS_WITH_WARNINGS** → proceed but note caveats for Phase 2
    - **FAIL** → stop pipeline, suggest broader literature search
 
-5. **Artifact header**: The output MUST begin with:
+6. **Artifact header**: The output MUST begin with routing and isolation fields:
    ```
+   routing_source: env
+   global_codex_gate_mode: <value from ARIS_CODEX_GATE_MODE>
    isolation_mode: codex_thread|manual_subsession
    codex_thread_id: <id>|none
-   primary_backend: codex
+   primary_backend: codex|llm-chat
    actual_backend: codex|llm-chat
    actual_model: DEFAULT|<model>
    fallback_used: True|False
    fallback_reason: None|<reason>
+   codex_used: true|false
+   confidence_downgraded: true|false
    ```
 
-6. **Fallback**: If Codex is unavailable, fallback to `LLM_EVIDENCE_AUDITOR_FALLBACK_MODEL`. Mark output with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`. Isolation mode becomes `protocol_only` — verdict max is PASS_WITH_WARNINGS.
+7. **Fallback**: If Codex is unavailable and route is `codex_preferred`, fallback to `LLM_EVIDENCE_AUDITOR_FALLBACK_MODEL`. Mark output with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`. Isolation mode becomes `protocol_only` — verdict max is PASS_WITH_WARNINGS. If route is `codex_required` and Codex unavailable, fail. If route is `deepseek_only`, skip Codex and use fallback model directly.
 
 ## Resume / Interruption Recovery
 

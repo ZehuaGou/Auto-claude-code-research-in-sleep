@@ -61,6 +61,8 @@ def create_call_entry(
         "input_files": input_files or [],
         "output_files": output_files or [],
         "env_source": ".env",
+        "routing_source": "env",
+        "global_codex_gate_mode": None,
         "thinking": None,
         "reasoning_effort": None,
         "cache_hit_tokens": None,
@@ -120,6 +122,8 @@ def cmd_finish(args: List[str]):
       --selection-mode <codex_gate|llm_fallback_gate|manual_override>
       --codex-used <true|false>
       --confidence-downgraded <true|false>
+      --routing-source <env|manual>
+      --global-codex-gate-mode <codex_required|codex_preferred|deepseek_only>
     """
     kwargs = _parse_kwargs(args)
     calls_dir = get_calls_dir()
@@ -149,6 +153,8 @@ def cmd_finish(args: List[str]):
     selection_mode = kwargs.get("selection_mode") or entry.get("selection_mode")
     codex_used = kwargs.get("codex_used") or entry.get("codex_used")
     confidence_downgraded = kwargs.get("confidence_downgraded") or entry.get("confidence_downgraded")
+    routing_source = kwargs.get("routing_source") or entry.get("routing_source", "env")
+    global_codex_gate_mode = kwargs.get("global_codex_gate_mode") or entry.get("global_codex_gate_mode")
 
     if codex_thread_id:
         entry["codex_thread_id"] = codex_thread_id
@@ -166,6 +172,10 @@ def cmd_finish(args: List[str]):
         entry["codex_used"] = codex_used
     if confidence_downgraded:
         entry["confidence_downgraded"] = confidence_downgraded
+    if routing_source:
+        entry["routing_source"] = routing_source
+    if global_codex_gate_mode:
+        entry["global_codex_gate_mode"] = global_codex_gate_mode
 
     # Enforce: if actual_backend=codex, codex_thread_id must be non-empty
     effective_backend = entry.get("actual_backend", "")
@@ -229,6 +239,8 @@ def cmd_fallback(
     selection_mode: str = "",
     codex_used: str = "",
     confidence_downgraded: str = "",
+    routing_source: str = "",
+    global_codex_gate_mode: str = "",
 ):
     """Mark current call as fallback."""
     calls_dir = get_calls_dir()
@@ -268,6 +280,10 @@ def cmd_fallback(
         entry["codex_used"] = codex_used
     if confidence_downgraded:
         entry["confidence_downgraded"] = confidence_downgraded
+    if routing_source:
+        entry["routing_source"] = routing_source
+    if global_codex_gate_mode:
+        entry["global_codex_gate_mode"] = global_codex_gate_mode
 
     now = datetime.now(timezone.utc)
     start = datetime.fromisoformat(entry.get("timestamp", now.isoformat()))
@@ -402,9 +418,13 @@ def main():
         selection_mode = fw_kwargs.get("selection_mode", "")
         codex_used = fw_kwargs.get("codex_used", "")
         confidence_downgraded = fw_kwargs.get("confidence_downgraded", "")
+        routing_source = fw_kwargs.get("routing_source", "")
+        global_codex_gate_mode = fw_kwargs.get("global_codex_gate_mode", "")
         cmd_fallback(fallback_model, reason, backend, codex_thread_id=codex_thread_id,
                      selection_mode=selection_mode, codex_used=codex_used,
-                     confidence_downgraded=confidence_downgraded)
+                     confidence_downgraded=confidence_downgraded,
+                     routing_source=routing_source,
+                     global_codex_gate_mode=global_codex_gate_mode)
     elif cmd == "status":
         cmd_status()
     elif cmd == "summary":

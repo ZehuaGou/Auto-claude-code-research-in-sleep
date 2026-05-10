@@ -69,7 +69,13 @@ current_scope = idea-stage/AGENTIC
 4. **Read current call**: `current_call.json` — show any active model call.
 5. **Filter llm_calls.jsonl**: Show only calls whose `output_files` reference `idea-stage/AGENTIC/` (or the last 3 completed calls).
 6. **Read active sessions**: `SESSION_REGISTRY.json` and `ACTIVE_TASKS.json` — filter out TEST ONLY sessions by default.
-7. **Infer current pipeline phase** from resume_stage_state.py results:
+7. **Show current Codex routing config**: Read `ARIS_CODEX_GATE_MODE` from `.env` (default: codex_preferred). Display:
+   ```
+   Codex gate mode: <mode>
+   ```
+   If `deepseek_only`: add warning "Codex disabled by .env; critical gates use DeepSeek V4 Pro with downgraded confidence."
+   If `codex_preferred` and any fallback occurred: add warning "Codex unavailable; fallback used."
+8. **Infer current pipeline phase** from resume_stage_state.py results:
    - no_stage / not_started → idea discovery not begun
    - research-lit incomplete → literature survey
    - idea-creator incomplete → idea generation

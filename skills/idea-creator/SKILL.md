@@ -28,7 +28,7 @@ idea bank, and produce canonical candidates.
 **Model routing for idea-creator:**
 - **idea_generator (divergent generation):** Uses DeepSeek V4 Pro (or configured `LLM_IDEA_GENERATOR_MODEL`). Does NOT use Codex for generation.
 - **idea_deduplicator (mechanistic dedup):** Uses DeepSeek V4 Pro (or configured `LLM_IDEA_DEDUPLICATOR_MODEL`). Does NOT use Codex for dedup.
-- **idea_shortlist_auditor (weak idea killer):** Uses Codex MCP (codex_thread). This is the ONLY Codex gate in idea-creator.
+- **idea_shortlist_auditor (weak idea killer):** Routing controlled by `tools/model_route.py idea_shortlist_auditor`. Resolved at invocation time.
 
 **What this skill does NOT do:**
 - `/idea-creator` does NOT perform novelty checks. Use `/novelty-check` for that.
@@ -174,9 +174,14 @@ The auditor must NOT read:
 
 Default input: IDEA_BANK.md + CANONICAL_IDEAS/* + verified GAP_MAP only.
 
-After dedup and canonicalization, run a shortlist audit via Codex to kill weak ideas before they proceed to Phase 3:
+After dedup and canonicalization, run a shortlist audit to kill weak ideas before they proceed to Phase 3:
 
-1. **Gate invocation**: Use Codex MCP for the audit — this is a judgment gate.
+1. **Resolve routing**:
+   ```
+   python tools/model_route.py idea_shortlist_auditor
+   ```
+   Parse the output JSON. Follow the resolved route to determine backend.
+2. **Gate invocation**: Use the resolved backend for the audit — this is a judgment gate.
 
 ```
 mcp__codex__codex:
@@ -201,22 +206,26 @@ mcp__codex__codex:
     If kill, provide the single strongest reason.
 ```
 
-2. **Output**: `idea-stage/AGENTIC/SHORTLIST_AUDIT/PHASE2_SHORTLIST_AUDIT.md`
+3. **Output**: `idea-stage/AGENTIC/SHORTLIST_AUDIT/PHASE2_SHORTLIST_AUDIT.md`
 
-3. **Gate decision**: Killed candidates are excluded from Phase 3 onward.
+4. **Gate decision**: Killed candidates are excluded from Phase 3 onward.
 
-4. **Artifact header**: The output MUST begin with:
+5. **Artifact header**: The output MUST begin with routing and isolation fields:
    ```
+   routing_source: env
+   global_codex_gate_mode: <value from ARIS_CODEX_GATE_MODE>
    isolation_mode: codex_thread|manual_subsession
    codex_thread_id: <id>|none
-   primary_backend: codex
+   primary_backend: codex|llm-chat
    actual_backend: codex|llm-chat
    actual_model: DEFAULT|<model>
    fallback_used: True|False
    fallback_reason: None|<reason>
+   codex_used: true|false
+   confidence_downgraded: true|false
    ```
 
-5. **Fallback**: If Codex unavailable, fallback to `LLM_IDEA_SHORTLIST_AUDITOR_FALLBACK_MODEL`. Mark with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`. Isolation mode becomes `protocol_only` — verdict max is PASS_WITH_WARNINGS.
+6. **Fallback**: If Codex unavailable and route is `codex_preferred`, fallback to `LLM_IDEA_SHORTLIST_AUDITOR_FALLBACK_MODEL`. Mark with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`. Isolation mode becomes `protocol_only` — verdict max is PASS_WITH_WARNINGS. If route is `codex_required` and Codex unavailable, fail. If route is `deepseek_only`, skip Codex and use fallback model directly.
 
 ### Phase 5: Write Ideas to Research Wiki (if active)
 

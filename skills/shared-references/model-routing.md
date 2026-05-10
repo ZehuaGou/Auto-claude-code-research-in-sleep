@@ -4,6 +4,37 @@
 
 定义 ARIS 内部角色该干什么、默认读什么、输出什么、优先调用谁、fallback 到谁。命名按角色，不用 cheap/normal/strong/critical。
 
+## Global Codex Gate Routing
+
+All critical judgment gates resolve routing via `tools/model_route.py` instead of hardcoding Codex requirements:
+
+```
+python tools/model_route.py <role>
+```
+
+**Three modes** (set via `ARIS_CODEX_GATE_MODE` in `.env`):
+
+| Mode | Behavior | codex_used | confidence_downgraded |
+|------|----------|------------|----------------------|
+| `codex_required` | Require Codex; fail if unavailable | true | false |
+| `codex_preferred` | Try Codex first; fallback to DeepSeek V4 Pro with warning | depends | true on fallback |
+| `deepseek_only` | Skip Codex; use DeepSeek V4 Pro directly | false | true |
+
+**Per-role override**: Set `LLM_<ROLE>_PRIMARY=codex` or `LLM_<ROLE>_PRIMARY=deepseek` in `.env` to override the global mode for a specific role.
+
+**All gate artifacts must record**:
+```
+routing_source: env
+global_codex_gate_mode: <value>
+primary_backend: <codex|llm-chat|api>
+actual_backend: <codex|llm-chat|api>
+actual_model: <model>
+fallback_used: true/false
+fallback_reason: <reason or none>
+codex_used: true/false
+confidence_downgraded: true/false
+```
+
 ## 1. literature_scout
 
 **职责**：搜索和整理文献元数据。主要处理标题、摘要、作者、年份、venue、arXiv ID、DOI、代码链接。不负责最终判断 idea 是否 novel，不负责写论文 claim，不负责实验结果解释。

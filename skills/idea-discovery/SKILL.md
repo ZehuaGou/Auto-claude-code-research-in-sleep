@@ -27,14 +27,21 @@ Orchestrate a complete idea discovery workflow for: **$ARGUMENTS**
 | Phase 5 | Adversarial Review | Weakness-only critique per surviving CAND | Yes (adversarial_reviewer uses codex_thread) |
 | Phase 6 | Final Selection | Read all evidence → recommendation | Yes (final_selector uses codex_thread) |
 
-**Gate rules**: FAIL stops the pipeline. PASS_WITH_WARNINGS continues but writes warnings into the next phase's input constraints. Codex gates default to `codex_thread` isolation — no manual subsession required.
+**Gate rules**: FAIL stops the pipeline. PASS_WITH_WARNINGS continues but writes warnings into the next phase's input constraints.
+
+**Codex routing**: All judgment gates resolve routing via `python tools/model_route.py <role>` at invocation time. Three modes (set via `ARIS_CODEX_GATE_MODE` in `.env`):
+- `codex_required`: Codex only; fail if unavailable
+- `codex_preferred`: Codex first; fallback to DeepSeek V4 Pro with warning
+- `deepseek_only`: DeepSeek V4 Pro directly; mark codex_used=false
+
+See `shared-references/model-routing.md` for details.
 
 This pipeline does NOT default to pilot experiments, experiment plans, or paper writing. Those are optional user-driven next steps: `/experiment-bridge`, `/research-contract`, `/baseline-repro`, or `/research-pipeline`.
 
 ## Constants
 
 - **AUTO_PROCEED = true** — Auto-proceed at checkpoints if user doesn't respond.
-- **REVIEWER_BACKEND = `codex`** — Default for all judgment gates. See `shared-references/model-routing.md`.
+- **REVIEWER_BACKEND = `codex`** — Default for all judgment gates. Routing controlled by `tools/model_route.py`. See `shared-references/model-routing.md`.
 - **OUTPUT_DIR = `idea-stage/`** — All idea-stage outputs. Create if absent.
 - **COMPACT = false** — When true, generate compact summary files.
 
