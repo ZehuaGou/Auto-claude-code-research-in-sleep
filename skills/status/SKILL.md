@@ -125,7 +125,8 @@ python3 tools/resume_stage_state.py novelty-check CAND_002
 合理 next step 例子：
 - 如果 CAND_002 exec-review needs_resume → 运行 `/exec-review CAND_002`
 - 如果 CAND_002 novelty-check needs_resume → 运行 `/novelty-check CAND_002`
-- **不得建议 paper writing / experiments**，除非 final selection 已完成且用户显式进入实验/写作阶段。
+- 如果 review/novelty 完成但 final-selection 是 not_started 或 needs_resume → 运行 `/idea-bank "final-select CAND_001"`
+- **不得建议 paper writing / experiments / research-contract**，除非 final selection 已完成（通过正式 Codex gate）且用户显式进入实验/写作阶段。
 
 ## Failure Handling
 

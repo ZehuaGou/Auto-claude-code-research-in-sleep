@@ -11,6 +11,7 @@ Commands:
   idea-creator                — check Phase 2 idea generation artifacts
   exec-review "CAND_XXX"      — check Phase 3 review artifacts for a candidate
   novelty-check "CAND_XXX"    — check Phase 4 novelty check artifacts for a candidate
+  final-selection             — check Phase 5 final selection artifacts
 
 Exit code: 0 if actionable state found, 1 if no state / unrecoverable.
 """
@@ -185,6 +186,7 @@ KNOWN_VERDICTS = [
     "pass", "pass_with_warnings", "fail",
     "go", "revise", "kill",
     "confirmed_novel", "likely_incremental", "already_done", "insufficient_evidence",
+    "select_cand_001", "select_cand_002", "no_strong_idea", "needs_revision",
 ]
 
 
@@ -796,6 +798,161 @@ def check_phase_novelty_check(candidate: Optional[str] = None) -> Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# Phase 5: final-selection
+# ---------------------------------------------------------------------------
+
+def check_phase_final_selection() -> Dict[str, Any]:
+    """Check Phase 5 (final-selection) artifacts with Codex gate validation.
+
+    Final selection is complete only if:
+    1. FINAL_SELECTION/IDEA_SELECTION_REPORT.md exists
+    2. mode: final_selection
+    3. selection_mode: codex_gate
+    4. isolation_mode: codex_thread
+    5. codex_thread_id is non-empty
+    6. actual_backend: codex
+    7. fallback_used: false
+    8. verdict is one of: select_cand_001, select_cand_002
+    9. ledger contains role=final_selector or output_files=IDEA_SELECTION_REPORT
+    """
+    result: Dict[str, Any] = {
+        "stage": "final-selection",
+        "status": "not_started",
+        "selection_report": None,
+        "provisional_selection_detected": False,
+        "prereqs_complete": False,
+        "next_action": "run /idea-bank 'final-select CAND_001'",
+    }
+
+    # Check prerequisites: exec-review and novelty-check must be complete
+    cand_dir = IDEA_STAGE / "CANONICAL_IDEAS"
+    reviews_dir = IDEA_STAGE / "REVIEWS"
+    novelty_dir = IDEA_STAGE / "NOVELTY"
+
+    prereq_issues = []
+    if cand_dir.exists():
+        for cand_path in sorted(cand_dir.glob("CAND_*.md")):
+            cand_stem = cand_path.stem
+            cand_status = _parse_cand_status(cand_path)
+            if cand_status in ("killed", "backup_baseline", "exploratory_hold"):
+                continue
+
+            review_path = reviews_dir / f"{cand_stem}_review.md"
+            novelty_path = novelty_dir / f"{cand_stem}_novelty.md"
+
+            if not review_path.exists():
+                prereq_issues.append(f"{cand_stem}: review not found")
+            if not novelty_path.exists():
+                prereq_issues.append(f"{cand_stem}: novelty-check not found")
+
+    if not prereq_issues:
+        result["prereqs_complete"] = True
+
+    # Check final selection report
+    selection_dir = IDEA_STAGE / "FINAL_SELECTION"
+    report_path = selection_dir / "IDEA_SELECTION_REPORT.md"
+
+    if not report_path.exists():
+        if not result["prereqs_complete"]:
+            result["status"] = "blocked"
+            result["next_action"] = f"Review/novelty incomplete: {'; '.join(prereq_issues)}"
+        else:
+            result["status"] = "not_started"
+            result["next_action"] = "Prerequisites complete. Run /idea-bank 'final-select CAND_001'"
+        return _add_normalized(result)
+
+    # Report exists — validate header
+    header = parse_artifact_header(report_path)
+    result["selection_report"] = str(report_path.relative_to(ROOT))
+
+    mode = header.get("mode", "")
+    selection_mode = header.get("selection_mode", "")
+    isolation = header.get("isolation_mode", "")
+    codex_tid = header.get("codex_thread_id", "")
+    backend = header.get("actual_backend", "")
+    fallback = header.get("fallback_used", "")
+    verdict = extract_verdict(report_path)
+
+    result["header_fields"] = {
+        "mode": mode,
+        "selection_mode": selection_mode,
+        "isolation_mode": isolation,
+        "codex_thread_id": codex_tid if codex_tid and codex_tid != "none" else None,
+        "actual_backend": backend,
+        "fallback_used": fallback,
+        "verdict": verdict,
+    }
+
+    # Detect provisional selection (manual_override or missing Codex fields)
+    if selection_mode == "manual_override" or isolation == "protocol_only":
+        result["provisional_selection_detected"] = True
+        result["status"] = "needs_resume"
+        result["next_action"] = "Provisional selection detected. Run /idea-bank 'final-select CAND_XXX' for a formal Codex-gated verdict before proceeding."
+        return _add_normalized(result)
+
+    # Check if report itself is marked provisional (e.g., status line in content)
+    report_text = report_path.read_text(encoding="utf-8", errors="ignore")
+    if "PROVISIONAL" in report_text.upper():
+        result["provisional_selection_detected"] = True
+        result["status"] = "needs_resume"
+        result["next_action"] = "Selection report is marked PROVISIONAL. Run /idea-bank 'final-select CAND_XXX' for a formal Codex-gated verdict."
+        return _add_normalized(result)
+
+    # Check Codex gate completeness
+    issues = []
+    if mode != "final_selection":
+        issues.append(f"mode={mode} (expected final_selection)")
+    if selection_mode != "codex_gate":
+        issues.append(f"selection_mode={selection_mode} (expected codex_gate)")
+    if isolation != "codex_thread":
+        issues.append(f"isolation_mode={isolation} (expected codex_thread)")
+    if not codex_tid or codex_tid == "none":
+        issues.append("codex_thread_id missing or empty")
+    if backend != "codex":
+        issues.append(f"actual_backend={backend} (expected codex)")
+    if fallback != "false":
+        issues.append(f"fallback_used={fallback} (expected false)")
+    if verdict not in ("select_cand_001", "select_cand_002"):
+        issues.append(f"verdict={verdict} (expected select_cand_001 or select_cand_002)")
+
+    if issues:
+        result["status"] = "needs_resume"
+        result["issues"] = issues
+        result["next_action"] = f"Selection report header incomplete: {'; '.join(issues)}"
+        return _add_normalized(result)
+
+    # Check ledger alignment
+    ledger_path = ROOT / ".aris" / "calls" / "llm_calls.jsonl"
+    ledger_ok = False
+    if ledger_path.exists():
+        for line in ledger_path.read_text(encoding="utf-8", errors="ignore").strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+                entry_role = entry.get("role", "")
+                entry_outputs = entry.get("output_files", [])
+                entry_tid = entry.get("codex_thread_id", "")
+                if entry_role == "final_selector" or any("IDEA_SELECTION_REPORT" in str(o) for o in entry_outputs):
+                    if entry_tid == codex_tid:
+                        ledger_ok = True
+                        break
+            except json.JSONDecodeError:
+                pass
+
+    if not ledger_ok:
+        result["status"] = "needs_resume"
+        result["issues"] = ["ledger entry missing role=final_selector or output_files=IDEA_SELECTION_REPORT"]
+        result["next_action"] = "Selection report exists but ledger entry missing. Check .aris/calls/llm_calls.jsonl for final_selector entry."
+        return _add_normalized(result)
+
+    result["status"] = "completed"
+    result["verdict"] = verdict
+    result["next_action"] = "Final selection complete. Proceed to research-contract."
+    return _add_normalized(result)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -806,15 +963,24 @@ def _parse_cand_status(filepath: Path) -> Optional[str]:
     for line in text.splitlines():
         lower = line.lower()
         if "**status**" in lower or "status:" in lower:
-            if "killed" in lower:
+            # Extract the status value after the colon
+            if ":" in line:
+                val = line.split(":", 1)[1].strip().lower()
+            else:
+                val = lower
+            if "killed" in val:
                 return "killed"
-            if "active" in lower:
-                return "active"
-            if "backup" in lower:
+            if "provisional" in val:
+                return "provisional_selected"
+            if "backup" in val:
                 return "backup_baseline"
-            if "exploratory" in lower or "hold" in lower:
+            if "exploratory" in val or "hold" in val:
                 return "exploratory_hold"
-            if "revised" in lower:
+            if "selected" in val:
+                return "selected"
+            if "active" in val:
+                return "active"
+            if "revised" in val:
                 return "revised_active"
     return None
 
@@ -860,6 +1026,11 @@ def main():
         result = check_phase_novelty_check(candidate)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         sys.exit(0 if result["status"] not in ("not_started", "blocked") else 1)
+
+    elif command == "final-selection":
+        result = check_phase_final_selection()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        sys.exit(0 if result["status"] not in ("not_started", "blocked", "failed") else 1)
 
     else:
         print(f"Unknown command: {command}", file=sys.stderr)

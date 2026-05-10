@@ -39,16 +39,24 @@ def parse_cand_status(filepath: Path) -> Optional[str]:
     text = filepath.read_text(encoding="utf-8", errors="ignore")
     for line in text.splitlines():
         if "**Status**:" in line or "**Status**: " in line:
-            lower = line.lower()
-            if "killed" in lower:
+            # Extract the status value after the colon
+            if ":" in line:
+                val = line.split(":", 1)[1].strip().lower()
+            else:
+                val = line.lower()
+            if "killed" in val:
                 return "killed"
-            if "active" in lower:
-                return "active"
-            if "backup" in lower:
+            if "provisional" in val:
+                return "provisional_selected"
+            if "backup" in val:
                 return "backup_baseline"
-            if "exploratory" in lower or "hold" in lower:
+            if "exploratory" in val or "hold" in val:
                 return "exploratory_hold"
-            if "revised" in lower:
+            if "selected" in val:
+                return "selected"
+            if "active" in val:
+                return "active"
+            if "revised" in val:
                 return "revised_active"
     return None
 
@@ -227,7 +235,58 @@ def main():
                         "Ad hoc novelty cannot enter formal final selection."
                     )
 
-    # 9. Check codex_thread_id presence for codex artifacts
+    # 9. Check if IDEA_BANK/CAND_XXX says selected but lacks Codex final_selector
+    final_sel_dir = idea_stage / "FINAL_SELECTION"
+    has_codex_final_selection = False
+    if final_sel_dir.exists():
+        report_path = final_sel_dir / "IDEA_SELECTION_REPORT.md"
+        if report_path.exists():
+            text = report_path.read_text(encoding="utf-8", errors="ignore")
+            header_lines = text.splitlines()[:30]
+            found_mode = False
+            found_sel_mode = False
+            found_codex_tid = False
+            found_codex_backend = False
+            for line in header_lines:
+                ll = line.strip().lower()
+                if ll.startswith("mode:") and "final_selection" in ll:
+                    found_mode = True
+                if ll.startswith("selection_mode:") and "codex_gate" in ll:
+                    found_sel_mode = True
+                if ll.startswith("codex_thread_id:"):
+                    tid = ll.split(":", 1)[1].strip()
+                    if tid and tid not in ("none", ""):
+                        found_codex_tid = True
+                if ll.startswith("actual_backend:") and "codex" in ll:
+                    found_codex_backend = True
+            has_codex_final_selection = all([found_mode, found_sel_mode, found_codex_tid, found_codex_backend])
+
+    # Check IDEA_BANK for selected candidates
+    # Data may be at top level or nested under "summary"
+    summary = bank.get("summary", {})
+    selected_in_bank = bank.get("selected", summary.get("selected", []))
+    provisional_in_bank = bank.get("provisional_selected", summary.get("provisional_selected", []))
+
+    for cand_id in selected_in_bank:
+        # Check if cand file exists
+        cand_file = canonical_dir / f"{cand_id}.md"
+        if cand_file.exists() and not has_codex_final_selection:
+            violations.append(
+                f"{cand_file.name}: marked SELECTED in IDEA_BANK but no Codex final_selector artifact found. "
+                "This should be PROVISIONAL_SELECTED until a Codex gate completes."
+            )
+
+    for cand_id in provisional_in_bank:
+        cand_file = canonical_dir / f"{cand_id}.md"
+        if cand_file.exists():
+            cand_status = parse_cand_status(cand_file)
+            if cand_status and "selected" in cand_status.lower() and "provisional" not in cand_status.lower():
+                violations.append(
+                    f"{cand_file.name}: IDEA_BANK says provisional_selected but file says '{cand_status}'. "
+                    "PROVISIONAL_SELECTED required for manual/provisional selections."
+                )
+
+    # 10. Check codex_thread_id presence for codex artifacts
     all_artifacts = []
     if reviews_dir.exists():
         all_artifacts.extend(reviews_dir.glob("CAND_*_review*.md"))

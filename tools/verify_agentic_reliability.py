@@ -2216,6 +2216,80 @@ else:
     check("57a. AGENT_GUIDE.md exists", False)
 
 # ---------------------------------------------------------------------------
+# 58. final-selection Codex gate integrity
+# ---------------------------------------------------------------------------
+print("\n=== 58. final-selection Codex gate integrity ===")
+
+# 58a. idea-bank SKILL final-select requires Codex
+bank_skill = ROOT / "skills" / "idea-bank" / "SKILL.md"
+if bank_skill.exists():
+    content = bank_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "58a. idea-bank SKILL final-select mode requires Codex final_selector gate",
+        "final-select" in content and "Codex" in content and "final_selector" in content,
+        "Missing final-select mode or Codex final_selector requirement" if "final-select" not in content else "",
+    )
+    check(
+        "58b. idea-bank SKILL final-select has FAIL_REQUIRES_AGENT_MCP_CODEX for Codex unavailable",
+        "FAIL_REQUIRES_AGENT_MCP_CODEX" in content,
+        "Missing FAIL_REQUIRES_AGENT_MCP_CODEX for Codex unavailable" if "FAIL_REQUIRES_AGENT_MCP_CODEX" not in content else "",
+    )
+    check(
+        "58c. idea-bank SKILL does NOT create /final-selection as a new user entry point",
+        "sub-mode" in content and "/idea-bank" in content and "NOT" in content and "/final-selection" in content,
+        "Should define final-select as sub-mode of idea-bank, not /final-selection",
+    )
+    check(
+        "58d. idea-bank SKILL manual-select is manual_override with protocol_only",
+        "manual_override" in content and "protocol_only" in content,
+        "Missing manual_override or protocol_only for manual-select" if "manual_override" not in content else "",
+    )
+    check(
+        "58e. idea-bank SKILL manual-select max verdict is PASS_WITH_WARNINGS",
+        "PASS_WITH_WARNINGS" in content,
+        "Missing PASS_WITH_WARNINGS limit for manual-select" if "PASS_WITH_WARNINGS" not in content else "",
+    )
+else:
+    for c in ["58a", "58b", "58c", "58d", "58e"]:
+        check(f"{c} idea-bank SKILL.md exists", False)
+
+# 58f. resume_stage_state.py supports final-selection
+resume_tool = ROOT / "tools" / "resume_stage_state.py"
+if resume_tool.exists():
+    src = resume_tool.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "58f. resume_stage_state.py supports final-selection command",
+        "final-selection" in src and "check_phase_final_selection" in src,
+        "Missing final-selection support" if "final-selection" not in src else "",
+    )
+else:
+    check("58f. resume_stage_state.py exists", False)
+
+# 58g. validate_idea_stage_state.py detects PROVISIONAL_SELECTION
+validator = ROOT / "tools" / "validate_idea_stage_state.py"
+if validator.exists():
+    src = validator.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "58g. validate_idea_stage_state.py detects PROVISIONAL_SELECTION_NEEDS_CODEX_GATE",
+        "PROVISIONAL" in src and "codex_tid" in src and "codex_gate" in src,
+        "Missing PROVISIONAL_SELECTION detection" if "PROVISIONAL" not in src else "",
+    )
+else:
+    check("58g. validate_idea_stage_state.py exists", False)
+
+# 58h. status SKILL checks final-selection before suggesting next steps
+status_skill = ROOT / "skills" / "status" / "SKILL.md"
+if status_skill.exists():
+    content = status_skill.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "58h. status SKILL final-selection check in Next Steps",
+        "final-selection" in content and "final-select" in content,
+        "Missing final-selection/select check in status SKILL" if "final-selection" not in content else "",
+    )
+else:
+    check("58h. status SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'='*40}")
