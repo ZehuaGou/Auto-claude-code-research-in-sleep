@@ -1186,6 +1186,175 @@ for fname, label in [
         check(f"33a. {label} exists", False)
 
 # ---------------------------------------------------------------------------
+# 34. /idea-discovery is the single user-facing entry point
+# ---------------------------------------------------------------------------
+print("\n=== 34. /idea-discovery single entry point ===")
+idea_disc = ROOT / "skills" / "idea-discovery" / "SKILL.md"
+if idea_disc.exists():
+    content = idea_disc.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "34a. idea-discovery declares itself as sole user-facing entry point",
+        "single user-facing entry point" in content or "sole entry" in content.lower()
+        or "SINGLE ENTRY" in content,
+    )
+    check(
+        "34b. idea-discovery defines Phase 1-6 clearly",
+        "Phase 1" in content and "Phase 2" in content and "Phase 3" in content
+        and "Phase 4" in content and "Phase 5" in content and "Phase 6" in content,
+    )
+    check(
+        "34c. idea-discovery does NOT direct users to python tools/",
+        "python tools/" not in content and "python3 tools/" not in content,
+    )
+else:
+    for c in ["34a", "34b", "34c"]:
+        check(f"{c} idea-discovery SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 35. Sub-skills declare themselves as internal phases
+# ---------------------------------------------------------------------------
+print("\n=== 35. Sub-skills phase alignment ===")
+for path, label, must_contain in [
+    ("skills/research-lit/SKILL.md", "research-lit", "literature"),
+    ("skills/idea-creator/SKILL.md", "idea-creator", "idea generation"),
+]:
+    f = ROOT / path
+    if f.exists():
+        content = f.read_text(encoding="utf-8", errors="ignore")
+        check(
+            f"35a. {label} mentions '{must_contain}'",
+            must_contain.lower() in content.lower(),
+        )
+        # Check the skill description doesn't claim downstream capabilities
+        desc_line = ""
+        for line in content.splitlines()[:5]:
+            if line.startswith("description:"):
+                desc_line = line
+                break
+        # description should mention the skill's OWN role, not claim downstream phases
+        downstream = "novelty" if "idea-creator" in label else ""
+        if downstream:
+            check(
+                f"35b. {label} description does NOT claim '{downstream}'",
+                downstream not in desc_line.lower(),
+        )
+    else:
+        check(f"35a. {label} SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 36. session-orchestrator declares codex_thread as default gate
+# ---------------------------------------------------------------------------
+print("\n=== 36. codex_thread default gate ===")
+orch = ROOT / "skills" / "session-orchestrator" / "SKILL.md"
+if orch.exists():
+    content = orch.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "36a. session-orchestrator declares codex_thread as default for critical gates",
+        "codex_thread" in content and ("default" in content.lower() or "Default" in content),
+    )
+    check(
+        "36b. session-orchestrator says users invoke /idea-discovery, not session tools directly",
+        "/idea-discovery" in content and "user" in content.lower(),
+    )
+else:
+    for c in ["36a", "36b"]:
+        check(f"{c} session-orchestrator SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
+# 37. validate_idea_stage_state.py exists and runs
+# ---------------------------------------------------------------------------
+print("\n=== 37. validate_idea_stage_state.py ===")
+validator = ROOT / "tools" / "validate_idea_stage_state.py"
+if validator.exists():
+    check("37a. validate_idea_stage_state.py exists", True)
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, str(validator)], capture_output=True, text=True, timeout=15
+    )
+    try:
+        data = json.loads(result.stdout)
+        verdict = data.get("verdict", "UNKNOWN")
+        check(
+            f"37b. validator returns verdict (not crash): {verdict}",
+            verdict in ("PASS", "PASS_WITH_WARNINGS", "FAIL", "NO_IDEA_STAGE"),
+        )
+        check(
+            "37c. validator checks CAND status consistency",
+            "violations" in data,
+        )
+        check(
+            "37d. validator checks legacy archive exclusion",
+            "legacy_archive_present" in data,
+        )
+        check(
+            "37e. validator checks artifact headers",
+            "header_issues" in data,
+        )
+    except Exception as e:
+        check("37b. validator runs successfully", False, str(e))
+else:
+    for c in ["37a", "37b", "37c", "37d", "37e"]:
+        check(f"{c} validator exists", False)
+
+# ---------------------------------------------------------------------------
+# 38. No false multi-session claim in session-orchestrator or protocol
+# ---------------------------------------------------------------------------
+print("\n=== 38. session model honesty ===")
+for fname, label in [
+    ("skills/session-orchestrator/SKILL.md", "session-orchestrator"),
+    ("skills/shared-references/session-protocol.md", "session-protocol"),
+]:
+    f = ROOT / fname
+    if f.exists():
+        content = f.read_text(encoding="utf-8", errors="ignore")
+        check(
+            f"38a. {label} acknowledges session is file-level protocol, not auto multi-process",
+            "文件级" in content or "file-level" in content.lower() or "not auto" in content.lower()
+            or "不会自动" in content,
+        )
+        check(
+            f"38b. {label} mentions codex_thread as isolation mode",
+            "codex_thread" in content,
+        )
+    else:
+        check(f"38a. {label} exists", False)
+
+# ---------------------------------------------------------------------------
+# 39. protocol_only restricted for critical phases
+# ---------------------------------------------------------------------------
+print("\n=== 39. protocol_only restrictions ===")
+for fname, label in [
+    ("skills/session-orchestrator/SKILL.md", "session-orchestrator"),
+    ("skills/shared-references/session-protocol.md", "session-protocol"),
+    ("skills/idea-discovery/SKILL.md", "idea-discovery"),
+]:
+    f = ROOT / fname
+    if f.exists():
+        content = f.read_text(encoding="utf-8", errors="ignore")
+        check(
+            f"39a. {label}: protocol_only cannot yield full PASS for critical gates",
+            ("protocol_only" in content and ("not acceptable" in content.lower()
+             or "PASS_WITH_WARNINGS" in content or "not a full" in content.lower()
+             or "cannot yield" in content.lower())),
+        )
+    else:
+        check(f"39a. {label} exists", False)
+
+# ---------------------------------------------------------------------------
+# 40. No user direction to run python tools/
+# ---------------------------------------------------------------------------
+print("\n=== 40. No user direction to python tools ===")
+idea_disc = ROOT / "skills" / "idea-discovery" / "SKILL.md"
+if idea_disc.exists():
+    content = idea_disc.read_text(encoding="utf-8", errors="ignore")
+    check(
+        "40a. idea-discovery does NOT tell users to run python tools/",
+        "python tools/" not in content and "python3 tools/" not in content,
+    )
+else:
+    check("40a. idea-discovery SKILL.md exists", False)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print(f"\n{'='*40}")

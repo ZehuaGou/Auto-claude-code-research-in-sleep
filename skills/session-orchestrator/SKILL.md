@@ -1,17 +1,23 @@
 ---
 name: session-orchestrator
-description: Manage ARIS multi-session research workflow with role-specific sessions and file-based handoffs.
+description: Manage ARIS multi-session research workflow with role-specific sessions and file-based handoffs. Internal tool — not a user-facing entry point.
 argument-hint: [init|start|list|close|assign]
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob
 ---
 
 # Session Orchestrator
 
+**Internal tool.** Users invoke `/idea-discovery`, not `/session-orchestrator` directly. This tool manages file-level session registry and handoff protocol behind the scenes.
+
+## Default Isolation: codex_thread
+
+For normal `/idea-discovery` execution, critical judgment gates (Phase 1 audit, Phase 2 shortlist, Phase 3 review, Phase 4 novelty, Phase 5 adversarial, Phase 6 final) use `codex_thread` isolation by default — Codex MCP provides model-level context isolation without requiring the user to manually open new terminal sessions.
+
+`manual_subsession` (user opens new Claude Code window) is only used when the user explicitly requests it.
+
 ## Purpose
 
-管理多 session，防止一个主 session 塞满所有上下文。主 session 只做调度和判断，副 session 做具体任务并通过文件 handoff。
-
-## When to Use
+管理 session registry 和 handoff 协议。主 session 只做调度，关键审查通过 Codex MCP thread 隔离。
 
 - 需要分配长任务给副 session。
 - 主 session 上下文快满时。

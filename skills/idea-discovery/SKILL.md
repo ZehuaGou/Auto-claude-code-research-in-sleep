@@ -5,34 +5,35 @@ argument-hint: [research-direction]
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, Agent, Skill, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
-# Workflow 1: Idea Discovery Pipeline
+# Workflow 1: Idea Discovery Pipeline (SOLE ENTRY POINT)
+
+`/idea-discovery` is the **single user-facing entry point** for the ARIS research idea discovery pipeline. Users invoke only `/idea-discovery "direction"`. All phases (Phase 1–6) are internal execution steps — users do NOT manually chain `/research-lit`, `/idea-creator`, `/exec-review`, or `/novelty-check` unless debugging.
 
 Orchestrate a complete idea discovery workflow for: **$ARGUMENTS**
 
-## Overview
+## Phase Definitions
 
-This skill chains sub-skills into a single automated pipeline:
+| Phase | Name | What happens | Codex Gate? |
+|-------|------|-------------|-------------|
+| Phase 1 | Literature + Gap Extraction | Research-lit survey → paper-ingest → GAP_MAP generation | Yes: evidence_integrity_auditor |
+| Phase 2 | Idea Generation + Shortlist | Raw idea generation → dedup → canonicalization → IDEA_BANK | Yes: idea_shortlist_auditor |
+| Phase 3 | Independent Review | Per-CAND review (one CAND at a time), verdict: go/revise/kill | Yes (idea_reviewer uses codex_thread) |
+| Phase 4 | Novelty Check | Deep novelty search per active CAND | Yes (novelty_checker uses codex_thread) |
+| Phase 5 | Adversarial Review | Weakness-only critique per surviving CAND | Yes (adversarial_reviewer uses codex_thread) |
+| Phase 6 | Final Selection | Read all evidence → recommendation | Yes (final_selector uses codex_thread) |
 
-```
-/research-lit → /idea-creator → /exec-review → /novelty-check → adversarial → final selection
-  (lit + gaps)   (ideas + dedup)   (review)      (novelty)       (critique)     (report)
-```
+**Gate rules**: FAIL stops the pipeline. PASS_WITH_WARNINGS continues but writes warnings into the next phase's input constraints. Codex gates default to `codex_thread` isolation — no manual subsession required.
 
-Each phase builds on the previous one's output. The pipeline ends with
-`FINAL_SELECTION/IDEA_SELECTION_REPORT.md` — a recommendation that may
-conclude `no strong idea found`.
-
-This pipeline does NOT default to pilot experiments, experiment plans,
-or paper writing. Those are optional user-driven next steps.
+This pipeline does NOT default to pilot experiments, experiment plans, or paper writing. Those are optional user-driven next steps: `/experiment-bridge`, `/research-contract`, `/baseline-repro`, or `/research-pipeline`.
 
 ## Constants
 
-- **AUTO_PROCEED = true** — If user doesn't respond at a checkpoint, automatically proceed with the best option after presenting results. Set to `false` to always wait for explicit user confirmation.
-- **REVIEWER_MODEL = `gpt-5.4`** — Model used via Codex MCP. Must be an OpenAI model (e.g., `gpt-5.4`, `o3`, `gpt-4o`). Passed to sub-skills.
-- **OUTPUT_DIR = `idea-stage/`** — All idea-stage outputs go here. Create the directory if it doesn't exist.
-- **COMPACT = false** — When `true`, generate compact summary files for short-context models and session recovery.
+- **AUTO_PROCEED = true** — Auto-proceed at checkpoints if user doesn't respond.
+- **REVIEWER_BACKEND = `codex`** — Default for all judgment gates. See `shared-references/model-routing.md`.
+- **OUTPUT_DIR = `idea-stage/`** — All idea-stage outputs. Create if absent.
+- **COMPACT = false** — When true, generate compact summary files.
 
-> 💡 Override by telling the skill, e.g., `/idea-discovery "topic" — compact: true`.
+> `/idea-discovery` delegates to internal sub-skills but users should invoke only `/idea-discovery` for normal workflow.
 
 ## Pipeline
 
