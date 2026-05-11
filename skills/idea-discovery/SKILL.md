@@ -35,7 +35,7 @@ Orchestrate a complete idea discovery workflow for: **$ARGUMENTS**
 - `deepseek_only`: DeepSeek V4 Pro directly; mark codex_used=false
 
 See `shared-references/model-routing.md` for details.
-See `shared-references/trusted-role-execution.md` for global trusted role execution rules.
+See `shared-references/trusted-role-execution.md` for global trusted role execution rules. All sub-skills (research-lit, idea-creator, exec-review, novelty-check, final_selector) MUST use `tools/trusted_role_runner.py` for ROLE_* tasks — external agents cannot substitute.
 
 This pipeline does NOT default to pilot experiments, experiment plans, or paper writing. Those are optional user-driven next steps: `/experiment-bridge`, `/research-contract`, `/baseline-repro`, or `/research-pipeline`.
 

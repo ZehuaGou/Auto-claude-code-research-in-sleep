@@ -73,8 +73,8 @@ def create_call_entry(
         "role": role,
         "primary_backend": primary_backend,
         "primary_model": primary_model,
-        "actual_backend": primary_backend,
-        "actual_model": primary_model,
+        "actual_backend": "",   # MUST be empty — not primary_backend
+        "actual_model": "",      # MUST be empty — not primary_model
         "status": "started",
         "fallback_used": False,
         "fallback_reason": None,
@@ -212,6 +212,8 @@ def cmd_finish(args: List[str]):
         print("current_call.json corrupt.", file=sys.stderr)
         return
 
+    ext_agent = kwargs.get("external_agent_name")
+
     now = datetime.now(timezone.utc)
     start = datetime.fromisoformat(entry.get("timestamp", now.isoformat()))
     entry["completed_at"] = now.isoformat()
@@ -225,20 +227,12 @@ def cmd_finish(args: List[str]):
     output_files = kwargs.get("output_files") or entry.get("output_files", [])
     selection_mode = kwargs.get("selection_mode") or entry.get("selection_mode")
     codex_used = kwargs.get("codex_used") or entry.get("codex_used")
-    confidence_downgraded = kwargs.get("confidence_downgraded") or entry.get("confidence_downgraded")
     routing_source = kwargs.get("routing_source") or entry.get("routing_source", "env")
     global_codex_gate_mode = kwargs.get("global_codex_gate_mode") or entry.get("global_codex_gate_mode")
     impl_source = kwargs.get("implementation_source") or entry.get("implementation_source", "external_agent_direct")
     routed_used_str = kwargs.get("routed_model_used")
     if routed_used_str is not None:
         entry["routed_model_used"] = routed_used_str.lower() in ("true", "1", "yes")
-    verif_status = kwargs.get("verification_status")
-    allowed_next = kwargs.get("allowed_next_stage")
-    ext_agent = kwargs.get("external_agent_name")
-    route_role = kwargs.get("route_role")
-    route_backend = kwargs.get("route_expected_backend")
-    route_model = kwargs.get("route_expected_model")
-
     if codex_thread_id:
         entry["codex_thread_id"] = codex_thread_id
     if isolation_mode:
@@ -253,26 +247,29 @@ def cmd_finish(args: List[str]):
         entry["selection_mode"] = selection_mode
     if codex_used:
         entry["codex_used"] = codex_used
-    if confidence_downgraded:
-        entry["confidence_downgraded"] = confidence_downgraded
     if routing_source:
         entry["routing_source"] = routing_source
     if global_codex_gate_mode:
         entry["global_codex_gate_mode"] = global_codex_gate_mode
     if impl_source:
         entry["implementation_source"] = impl_source
-    if verif_status:
-        entry["verification_status"] = verif_status
-    if allowed_next is not None:
-        entry["allowed_next_stage"] = allowed_next.lower() in ("true", "1", "yes")
+    ext_agent = kwargs.get("external_agent_name")
     if ext_agent:
         entry["external_agent_name"] = ext_agent
+    route_role = kwargs.get("route_role")
     if route_role:
         entry["route_role"] = route_role
+    route_backend = kwargs.get("route_expected_backend")
     if route_backend:
         entry["route_expected_backend"] = route_backend
+    route_model = kwargs.get("route_expected_model")
     if route_model:
         entry["route_expected_model"] = route_model
+
+    # NOTE: verification_status and allowed_next_stage are determined ONLY by _auto_verify.
+    # Caller CANNOT override them — they are security-critical fields.
+    # confidence_downgraded is also determined by _auto_verify.
+    # Do NOT pass --verification-status or --allowed-next-stage from caller.
 
     # Auto-verification: determine verification_status and allowed_next_stage
     _auto_verify(entry)
@@ -299,7 +296,10 @@ def cmd_finish(args: List[str]):
 
 
 def _auto_verify(entry: Dict[str, Any]):
-    """Auto-determine verification_status and allowed_next_stage based on trust fields."""
+    """Auto-determine verification_status and allowed_next_stage based on trust fields.
+
+    This ALWAYS determines the final value — caller CANNOT override.
+    """
     impl_source = entry.get("implementation_source", "external_agent_direct")
     routed_used = entry.get("routed_model_used", False)
     actual_backend = entry.get("actual_backend", "")
@@ -307,10 +307,20 @@ def _auto_verify(entry: Dict[str, Any]):
     fallback_used = entry.get("fallback_used", False)
     fallback_reason = entry.get("fallback_reason")
     codex_thread_id = entry.get("codex_thread_id", "")
-    verif_status = entry.get("verification_status", "")
+    dry_run = entry.get("dry_run", False)
+    call_failed = entry.get("status") == "failed"
 
-    # Skip if caller already set a specific verification_status
-    if verif_status and verif_status not in ("started_unverified", ""):
+    # call_failed always wins
+    if call_failed:
+        entry["verification_status"] = "call_failed"
+        entry["allowed_next_stage"] = False
+        entry["confidence_downgraded"] = True
+        return
+
+    if dry_run:
+        entry["verification_status"] = "dry_run_untrusted"
+        entry["allowed_next_stage"] = False
+        entry["confidence_downgraded"] = True
         return
 
     if impl_source == "external_agent_direct":

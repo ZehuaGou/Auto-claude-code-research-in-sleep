@@ -121,6 +121,33 @@ All available roles:
 - `paper_writer`, `claims_drafter`, `final_auditor`
 - `log_summarizer`, `baseline_reviewer`
 
+### Role Assignment Table
+
+| Stage | Role | Purpose | Default Backend |
+|-------|------|---------|-----------------|
+| Discovery | literature_scout | Find relevant papers | DS_FLASH |
+| Discovery | paper_summarizer | Summarize paper content | DS_FLASH |
+| Discovery | gap_extractor | Extract research gaps | DS_PRO_HIGH |
+| Discovery | idea_generator | Generate research ideas | DS_PRO_HIGH |
+| Discovery | idea_deduplicator | Deduplicate and canonicalize ideas | DS_PRO_HIGH |
+| Discovery | idea_reviewer | Review idea quality and feasibility | CODEX |
+| Discovery | novelty_checker | Check novelty of ideas | CODEX |
+| Discovery | adversarial_reviewer | Adversarial critique of ideas | CODEX |
+| Discovery | final_selector | Select final candidate | CODEX |
+| Contract | contract_reviewer | Review research contract | CODEX |
+| Baseline | baseline_reviewer | Verify baseline reproduction | DS_PRO_HIGH |
+| Experiment | experiment_implementer | Implement experiments | DS_PRO_HIGH |
+| Experiment | experiment_code_reviewer | Review experiment code | CODEX |
+| Experiment | experiment_auditor | Audit experiment design | CODEX |
+| Experiment | result_judge | Judge experimental results | CODEX |
+| Writing | paper_writer | Write research paper | DS_PRO_HIGH |
+| Writing | claims_drafter | Draft claims and contributions | DS_PRO_HIGH |
+| Writing | final_paper_auditor | Final paper quality audit | CODEX |
+| Writing | paper_claim_auditor | Audit paper claims | CODEX |
+| Meta | evidence_integrity_auditor | Audit literature evidence integrity | CODEX |
+| Meta | idea_shortlist_auditor | Audit idea shortlist quality | CODEX |
+| Meta | log_summarizer | Summarize experimental logs | DS_FLASH |
+
 ## Switching Models Per-Role
 
 To change a role's model, just update its `ROLE_<ROLE>` value:

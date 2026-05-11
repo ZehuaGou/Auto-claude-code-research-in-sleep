@@ -268,9 +268,6 @@ def run_trusted(
 
     if dry_run:
         output_text = mock_response or f"[DRY-RUN] {role} output for: {input_spec[:200]}"
-        actual_backend = "dry_run"
-        actual_model = "dry_run"
-        verification_status = "dry_run_untrusted"
         entry = cmd_finish(
             call_id=call_id,
             output=output_text,
@@ -279,19 +276,20 @@ def run_trusted(
             actual_model="dry_run",
             dry_run=True,
         )
+        # Dry-run always exits non-zero (not a real execution)
+        print(json.dumps(entry, ensure_ascii=False, indent=2))
+        sys.exit(1)
     else:
         # Real execution path — call the actual backend
+        # If backend client is unavailable, fail closed (write failed entry, exit non-zero)
         if expected_backend == "mcp":
-            # Codex MCP call
+            # Codex MCP call — requires mcp_codex_client
             try:
                 sys.path.insert(0, str(TOOLS_DIR))
-                from mcp_codex_client import CodexMCPClient
-                client = CodexMCPClient()
+                import mcp_codex_client
+                client = mcp_codex_client.CodexMCPClient()
                 thread_id = client.call(input_spec)
                 codex_thread_id = thread_id
-                actual_backend = "codex"
-                actual_model = expected_model
-                verification_status = "verified_routed_call"
                 entry = cmd_finish(
                     call_id=call_id,
                     output="[Codex MCP call made]",
@@ -300,31 +298,37 @@ def run_trusted(
                     actual_model=expected_model,
                     codex_thread_id=codex_thread_id,
                 )
+            except (ImportError, ModuleNotFoundError, AttributeError) as e:
+                # Client not available — fail closed
+                entry["status"] = "failed"
+                entry["verification_status"] = "call_failed"
+                entry["allowed_next_stage"] = False
+                entry["confidence_downgraded"] = True
+                entry["error"] = f"mcp_codex_client not available: {e}"
+                _write_ledger_entry(entry, ledger_path)
+                print(json.dumps(entry, ensure_ascii=False, indent=2), file=sys.stderr)
+                sys.exit(1)
             except Exception as e:
-                # Fail closed — cannot substitute
-                entry = cmd_finish(
-                    call_id=call_id,
-                    output=f"[Codex MCP call failed: {e}]",
-                    ledger_path=ledger_path,
-                    actual_backend="codex",
-                    actual_model=expected_model,
-                    fallback_used=True,
-                    fallback_reason=f"codex call failed: {e}",
-                )
+                # Real call failed — fail closed
+                entry["status"] = "failed"
+                entry["verification_status"] = "call_failed"
+                entry["allowed_next_stage"] = False
+                entry["confidence_downgraded"] = True
+                entry["error"] = f"codex call failed: {e}"
+                _write_ledger_entry(entry, ledger_path)
+                print(json.dumps(entry, ensure_ascii=False, indent=2), file=sys.stderr)
+                sys.exit(1)
         elif expected_backend in ("openai_compatible_api", "llm-chat"):
-            # API call (DeepSeek, Kimi, etc.)
+            # API call (DeepSeek, Kimi, etc.) — requires llm_chat_client
             provider = resolved.get("expected_provider", "deepseek")
             try:
                 sys.path.insert(0, str(TOOLS_DIR))
-                import llm_chat_client as llm_client
-                result = llm_client.call(
+                import llm_chat_client
+                result = llm_chat_client.call(
                     provider=provider,
                     model=expected_model,
                     prompt=input_spec,
                 )
-                actual_backend = provider
-                actual_model = expected_model
-                verification_status = "verified_routed_call"
                 output_text = result
                 entry = cmd_finish(
                     call_id=call_id,
@@ -333,27 +337,36 @@ def run_trusted(
                     actual_backend=provider,
                     actual_model=expected_model,
                 )
+            except (ImportError, ModuleNotFoundError, AttributeError) as e:
+                # Client not available — fail closed
+                entry["status"] = "failed"
+                entry["verification_status"] = "call_failed"
+                entry["allowed_next_stage"] = False
+                entry["confidence_downgraded"] = True
+                entry["error"] = f"llm_chat_client not available: {e}"
+                _write_ledger_entry(entry, ledger_path)
+                print(json.dumps(entry, ensure_ascii=False, indent=2), file=sys.stderr)
+                sys.exit(1)
             except Exception as e:
-                # Fail closed
-                entry = cmd_finish(
-                    call_id=call_id,
-                    output=f"[API call failed: {e}]",
-                    ledger_path=ledger_path,
-                    actual_backend=provider,
-                    actual_model=expected_model,
-                    fallback_used=True,
-                    fallback_reason=f"api call failed: {e}",
-                )
+                # Real call failed — fail closed
+                entry["status"] = "failed"
+                entry["verification_status"] = "call_failed"
+                entry["allowed_next_stage"] = False
+                entry["confidence_downgraded"] = True
+                entry["error"] = f"api call failed: {e}"
+                _write_ledger_entry(entry, ledger_path)
+                print(json.dumps(entry, ensure_ascii=False, indent=2), file=sys.stderr)
+                sys.exit(1)
         else:
-            entry = cmd_finish(
-                call_id=call_id,
-                output=f"[Unknown backend: {expected_backend}]",
-                ledger_path=ledger_path,
-                actual_backend=expected_backend,
-                actual_model=expected_model,
-                fallback_used=True,
-                fallback_reason=f"unknown backend: {expected_backend}",
-            )
+            # Unknown backend — fail closed
+            entry["status"] = "failed"
+            entry["verification_status"] = "call_failed"
+            entry["allowed_next_stage"] = False
+            entry["confidence_downgraded"] = True
+            entry["error"] = f"unknown backend: {expected_backend}"
+            _write_ledger_entry(entry, ledger_path)
+            print(json.dumps(entry, ensure_ascii=False, indent=2), file=sys.stderr)
+            sys.exit(1)
 
     # Write output artifact
     if output_path:
@@ -390,19 +403,29 @@ def cmd_summary(ledger_path: Optional[Path] = None) -> Dict[str, Any]:
 
 def cmd_self_test() -> bool:
     """Run self-test using temporary ledger. No real API calls."""
+    import subprocess
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-        temp_path = Path(f.name)
+        temp_path = Path(f.name).resolve()
 
     try:
         # Test 1: dry-run mode → dry_run_untrusted, allowed_next_stage=false
-        entry1 = run_trusted(
-            role="idea_generator",
-            input_spec="test input for dry run",
-            output_path=None,
-            dry_run=True,
-            mock_response="[dry-run mock output]",
-            ledger_path=temp_path,
+        # Run in subprocess so sys.exit(1) doesn't kill the test harness
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()),
+             "--role", "idea_generator",
+             "--input", "test input for dry run",
+             "--dry-run",
+             "--ledger-path", str(temp_path)],
+            capture_output=True, text=True, timeout=30,
         )
+        # Exit code 1 is expected (dry-run is rejected)
+        assert result.returncode == 1, f"Expected exit 1 for dry-run, got {result.returncode}"
+        # Verify the ledger entry was written before exit
+        entries = _read_ledger(temp_path)
+        dry_run_entries = [e for e in entries if e.get("status") == "completed_dry_run"]
+        assert len(dry_run_entries) >= 1, f"Expected at least 1 dry_run entry, got {len(dry_run_entries)}"
+        entry1 = dry_run_entries[0]
         assert entry1["verification_status"] == "dry_run_untrusted", \
             f"Expected dry_run_untrusted, got {entry1['verification_status']}"
         assert entry1["allowed_next_stage"] is False, \
@@ -512,7 +535,7 @@ def cmd_self_test() -> bool:
         assert summary["total_calls"] >= 4
 
         print("SELF-TEST RESULTS:")
-        print(f"  Test 1 (dry-run): verification_status={entry1['verification_status']}, allowed_next_stage={entry1['allowed_next_stage']} [OK]")
+        print(f"  Test 1 (dry-run): exit={result.returncode}, verification_status={entry1['verification_status']}, allowed_next_stage={entry1['allowed_next_stage']} [OK]")
         print(f"  Test 2 (external_agent_direct): [OK]")
         print(f"  Test 3 (routed_internal_model+codex_thread): verification_status={finish['verification_status']}, allowed_next_stage={finish['allowed_next_stage']} [OK]")
         print(f"  Test 4 (codex no thread): verification_status={finish2['verification_status']}, allowed_next_stage={finish2['allowed_next_stage']} [OK]")
@@ -617,7 +640,17 @@ def main():
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
-    if result.get("verification_status") in ("dry_run_untrusted", "unverified_external_execution"):
+    # Fail if not allowed to proceed — call_failed always exits non-zero
+    fail_statuses = (
+        "dry_run_untrusted",
+        "unverified_external_execution",
+        "call_failed",
+        "missing_actual_backend",
+        "codex_missing_thread_id",
+        "fallback_unverified",
+        "started_unverified",
+    )
+    if result.get("verification_status") in fail_statuses:
         sys.exit(1)
     if result.get("allowed_next_stage") is False and result.get("verification_status") not in ("verified_routed_call", "verified_with_fallback"):
         sys.exit(1)

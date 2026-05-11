@@ -94,24 +94,42 @@ For EACH core claim, search using ALL available sources:
 
 3. **Read abstracts**: For each potentially overlapping paper, WebFetch its abstract and related work section
 
-### Phase C: Cross-Model Verification
-Before calling the reviewer, resolve routing via:
-```
-python tools/model_route.py novelty_checker
-```
-Parse the output JSON. Follow the resolved route:
-- `codex_required`: Use Codex MCP only; fail if unavailable
-- `codex_preferred`: Try Codex first; fallback to DeepSeek V4 Pro with warning
-- `deepseek_only`: Use DeepSeek V4 Pro directly; mark codex_used=false
+### Phase C: Trusted Role Execution via trusted_role_runner.py
 
-Then invoke the reviewer (Codex MCP or LLM chat per route):
-```
-config: {"model_reasoning_effort": "xhigh"}
-```
-Prompt should include:
-- The proposed method description
-- All papers found in Phase B
-- Ask: "Is this method novel? What is the closest prior work? What is the delta?"
+**All novelty_checker calls MUST use the trusted role runner — external agents cannot substitute.**
+
+1. **Resolve routing** (via model_route.py, config-only):
+   ```
+   python tools/model_route.py novelty_checker
+   ```
+   This only declares the route — it does NOT call any model.
+
+2. **Build the context** for the novelty check:
+   - The proposed method description
+   - All papers found in Phase B
+   - Ask: "Is this method novel? What is the closest prior work? What is the delta?"
+
+3. **Execute via trusted_role_runner.py**:
+   ```
+   python tools/trusted_role_runner.py \
+       --role novelty_checker \
+       --input "<context>" \
+       --output "idea-stage/AGENTIC/NOVELTY/CAND_XXX_novelty.md" \
+       --require-codex-thread
+   ```
+   For Codex-assigned roles, `--require-codex-thread` is mandatory.
+   For `deepseek_only` mode (set via `ARIS_CODEX_GATE_MODE` in `.env`), omit `--require-codex-thread`.
+
+4. **Verify the execution**:
+   ```
+   python tools/validate_model_invocation.py --role novelty_checker
+   ```
+   - If `verification_status` is NOT `verified_routed_call` or `verified_with_fallback`: **FAIL closed**
+   - If `allowed_next_stage` is `false`: **FAIL closed**
+   - If `codex_used=true` but no `codex_thread_id`: **FAIL closed**
+   - If dry-run or mock: **FAIL closed** — dry-run is not a real execution
+
+5. **If trusted runner fails**: Do NOT substitute with external agent output. Report failure and stop.
 
 ### Phase D: Novelty Report
 Output a structured report:

@@ -493,75 +493,40 @@ The tools `tools/agentic_idea_discovery.py` and `tools/isolated_job_runner.py` m
 
 **This is NOT a routine continuation. This is an isolated judgment gate.**
 **This gate runs automatically on every `/research-lit` invocation — whether called from `/idea-discovery` or manually.**
+**The evidence_integrity_auditor executes with `isolation_mode=codex_thread`.**
 
-**Isolation requirement:** evidence_integrity_auditor must run as
-`codex_thread` or `manual_subsession`. `protocol_only` only yields
-PASS_WITH_WARNINGS.
-
-**Default outputs** of `/research-lit "direction"`:
-- `LITERATURE_INDEX.md`
-- `GAP_MAP.md`
-- `PHASE1_EVIDENCE_AUDIT.md`
-
-After literature survey and gap extraction, run an evidence integrity audit before results are considered complete:
+**All evidence_integrity_auditor calls MUST use `tools/trusted_role_runner.py`.**
 
 1. **Trigger**: After LITERATURE_INDEX.md and GAP_MAP.md are produced.
-2. **Resolve routing**:
+2. **Resolve routing** (via model_route.py, config-only):
    ```
    python tools/model_route.py evidence_integrity_auditor
    ```
-   Parse the output JSON. Follow the resolved route to determine backend.
-3. **Gate invocation**: Use the resolved backend for the audit — this is a judgment gate, not a generation task.
+3. **Execute via `tools/trusted_role_runner.py`**:
+   ```
+   python tools/trusted_role_runner.py \
+       --role evidence_integrity_auditor \
+       --input "<LITERATURE_INDEX.md + GAP_MAP.md context>" \
+       --output "idea-stage/AGENTIC/EVIDENCE_AUDIT/PHASE1_EVIDENCE_AUDIT.md" \
+       --require-codex-thread   # omit for deepseek_only mode
+   ```
+4. **Verify the execution**:
+   ```
+   python tools/validate_model_invocation.py --role evidence_integrity_auditor
+   ```
+   - If `verification_status` is NOT `verified_routed_call` or `verified_with_fallback`: **FAIL closed**
+   - If `allowed_next_stage` is `false`: **FAIL closed**
+   - If `codex_used=true` but no `codex_thread_id`: **FAIL closed**
+   - If `confidence_downgraded=true`: note caveat but allow proceeding with warning
+   - `routing_source` and `global_codex_gate_mode` are recorded by `trusted_role_runner.py` in the artifact provenance header
+5. **If trusted runner fails**: Do NOT substitute with external agent output. Report failure and stop.
 
-```
-mcp__codex__codex:
-  prompt: |
-    You are an evidence integrity auditor. Review the following literature
-    survey outputs and assess whether the evidence is sufficient to proceed
-    to idea generation.
+6. **Output**: `idea-stage/AGENTIC/EVIDENCE_AUDIT/PHASE1_EVIDENCE_AUDIT.md`
 
-    LITERATURE_INDEX.md:
-    [content]
-
-    GAP_MAP.md:
-    [content]
-
-    Assess:
-    1. Search coverage: Are the key sub-areas covered? Rate 0-10.
-    2. Gap authenticity: Are the identified gaps real, or artifacts of
-       incomplete search?
-    3. Missing evidence: What key papers or directions are clearly missing?
-    4. Verdict: PASS (≥6/10 coverage, gaps are real), PASS_WITH_WARNINGS
-       (some coverage gaps, but usable), or FAIL (search too narrow,
-       gaps are fake or insufficiently supported).
-
-    Do NOT generate ideas. Do NOT suggest research directions.
-    Only audit evidence integrity.
-```
-
-4. **Output**: `idea-stage/AGENTIC/EVIDENCE_AUDIT/PHASE1_EVIDENCE_AUDIT.md`
-
-5. **Gate decision**:
+7. **Gate decision** (after trusted runner succeeds):
    - **PASS** → proceed to idea generation
    - **PASS_WITH_WARNINGS** → proceed but note caveats for Phase 2
    - **FAIL** → stop pipeline, suggest broader literature search
-
-6. **Artifact header**: The output MUST begin with routing and isolation fields:
-   ```
-   routing_source: env
-   global_codex_gate_mode: <value from ARIS_CODEX_GATE_MODE>
-   isolation_mode: codex_thread|manual_subsession
-   codex_thread_id: <id>|none
-   primary_backend: codex|llm-chat
-   actual_backend: codex|llm-chat
-   actual_model: DEFAULT|<model>
-   fallback_used: True|False
-   fallback_reason: None|<reason>
-   codex_used: true|false
-   confidence_downgraded: true|false
-   ```
-
-7. **Fallback**: If Codex is unavailable and route is `codex_preferred`, fallback to `LLM_EVIDENCE_AUDITOR_FALLBACK_MODEL`. Mark output with `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`. Isolation mode becomes `protocol_only` — verdict max is PASS_WITH_WARNINGS. If route is `codex_required` and Codex unavailable, fail. If route is `deepseek_only`, skip Codex and use fallback model directly.
 
 ## Resume / Interruption Recovery
 

@@ -163,50 +163,38 @@ After generation, run deduplication against the existing idea bank:
 
 **This is an isolated judgment gate, not a generation continuation.**
 
-**Isolation requirement:** idea_shortlist_auditor must run as
-`codex_thread` or `manual_subsession`. `protocol_only` only yields
-PASS_WITH_WARNINGS — cannot give full PASS.
+**All idea_shortlist_auditor calls MUST use `tools/trusted_role_runner.py`.**
+
+1. **Resolve routing** (via model_route.py, config-only):
+   ```
+   python tools/model_route.py idea_shortlist_auditor
+   ```
+
+2. **Execute via `tools/trusted_role_runner.py`**:
+   ```
+   python tools/trusted_role_runner.py \
+       --role idea_shortlist_auditor \
+       --input "<IDEA_BANK.md + CANONICAL_IDEAS/* context>" \
+       --output "idea-stage/AGENTIC/SHORTLIST_AUDIT/PHASE2_SHORTLIST_AUDIT.md" \
+       --require-codex-thread   # omit for deepseek_only mode
+   ```
+
+3. **Verify the execution**:
+   ```
+   python tools/validate_model_invocation.py --role idea_shortlist_auditor
+   ```
+   - If `verification_status` is NOT `verified_routed_call` or `verified_with_fallback`: **FAIL closed**
+   - If `allowed_next_stage` is `false`: **FAIL closed**
+   - If `codex_used=true` but no `codex_thread_id`: **FAIL closed**
+
+4. **If trusted runner fails**: Do NOT substitute with external agent output. Report failure and stop.
+
+5. **Output**: `idea-stage/AGENTIC/SHORTLIST_AUDIT/PHASE2_SHORTLIST_AUDIT.md`
 
 The auditor must NOT read:
 - Raw generation trace from `RUNS/<run_id>/IDEA_CARDS/`
 - Generator prompts or intermediate outputs
 - Old scores, previous reviews, or user preferences
-
-Default input: IDEA_BANK.md + CANONICAL_IDEAS/* + verified GAP_MAP only.
-
-After dedup and canonicalization, run a shortlist audit to kill weak ideas before they proceed to Phase 3:
-
-1. **Resolve routing**:
-   ```
-   python tools/model_route.py idea_shortlist_auditor
-   ```
-   Parse the output JSON. Follow the resolved route to determine backend.
-2. **Gate invocation**: Use the resolved backend for the audit — this is a judgment gate.
-
-```
-mcp__codex__codex:
-  prompt: |
-    You are an idea shortlist auditor. Review the following canonical
-    candidates and determine which are worth pursuing.
-
-    IDEA_BANK.md:
-    [content]
-
-    CANONICAL_IDEAS/CAND_*.md:
-    [content]
-
-    For each candidate, assess:
-    1. Prior work rename: Is this an existing method renamed, or genuinely new?
-    2. Method delta: How different is this from the closest prior work?
-    3. Minimum experiment: Is there a clear minimum experiment to test this?
-    4. Claim boundary: Does the idea overclaim what it can deliver?
-    5. Fatal flaw: Is there a fundamental reason this cannot work?
-
-    Verdict per candidate: keep or kill.
-    If kill, provide the single strongest reason.
-```
-
-3. **Output**: `idea-stage/AGENTIC/SHORTLIST_AUDIT/PHASE2_SHORTLIST_AUDIT.md`
 
 4. **Gate decision**: Killed candidates are excluded from Phase 3 onward.
 

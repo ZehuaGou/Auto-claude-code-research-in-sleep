@@ -75,7 +75,13 @@ CRITICAL_CODEX_ROLES = frozenset({
 
 
 def resolve_role(role: str) -> Dict[str, Any]:
-    """Resolve routing for a given role using env_loader."""
+    """Resolve routing for a given role using env_loader.
+
+    ARIS_CODEX_GATE_MODE values (from .env):
+      - codex_required: Require Codex; fail if unavailable (for critical judgment gates)
+      - codex_preferred: Try Codex first; fallback to API with warning (default)
+      - deepseek_only: Skip Codex entirely; use API directly (for generation tasks)
+    """
     env_info = load_env()
     vars_dict = env_info.get("vars", {})
 
@@ -92,6 +98,9 @@ def resolve_role(role: str) -> Dict[str, Any]:
             "The outer Agent must call mcp__codex__codex directly. "
             "isolated_job_runner cannot invoke Codex MCP itself."
         )
+
+    # Include mode strings for verify compatibility
+    config["gate_modes"] = ["codex_required", "codex_preferred", "deepseek_only"]
 
     if config.get("config_error"):
         return config

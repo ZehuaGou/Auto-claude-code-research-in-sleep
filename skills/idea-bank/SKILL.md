@@ -66,97 +66,59 @@ Perform a final selection. Routing is determined by `tools/model_route.py final_
    python tools/model_route.py final_selector
    ```
    Parse the output JSON. The `effective_mode` field determines the path:
-   - `codex_required` → Step 3 (Codex only; fail if unavailable)
-   - `codex_preferred` → Step 3, with Step 4 fallback
-   - `deepseek_only` → skip to Step 4 (DeepSeek V4 Pro directly)
-   - `primary_backend`, `actual_model`, `selection_mode` are set from the route output
+   - `codex_required` → Use `trusted_role_runner.py` with `--require-codex-thread`
+   - `codex_preferred` → Use `trusted_role_runner.py` with `--require-codex-thread`; fallback handled by runner
+   - `deepseek_only` → Use `trusted_role_runner.py` (no `--require-codex-thread`)
 
-3. **Codex Gate** (when route says `codex_required` or `codex_preferred`):
-   - Call Codex via `mcp__codex__codex` with role `final_selector`
-   - Config: `{"model_reasoning_effort": "xhigh"}`
-   - Allowed input files:
-     - `IDEA_BANK.md`, `IDEA_BANK.json`
-     - `CANONICAL_IDEAS/CAND_001.md` (and CAND_002.md for comparison)
-     - `REVIEWS/CAND_001_review.md`, `REVIEWS/CAND_002_review.md`
-     - `NOVELTY/CAND_001_novelty.md`, `NOVELTY/CAND_002_novelty.md`
-     - `FINAL_SELECTION/IDEA_SELECTION_REPORT.md` (only if marked provisional, i.e. no codex_thread_id)
-     - `LITERATURE_INDEX.md`, `GAP_MAP.md`
-   - Forbidden input files:
-     - `RUNS/<run_id>/IDEA_CARDS/` (raw brainstorm)
-     - Generator traces, user preference notes
-     - Old scores, ad_hoc novelty files
-   - Prompt must include:
-     - Full candidate descriptions (CAND_001, CAND_002)
-     - Review verdicts and key criticisms
-     - Novelty verdicts
-     - Comparison of complementary vs overlapping aspects
-     - Ask: "Which candidate should proceed to experiments? Verdict must be one of: SELECT_CAND_001, SELECT_CAND_002, NO_STRONG_IDEA, NEEDS_REVISION"
-   - **If Codex succeeds**:
-     - Write `FINAL_SELECTION/IDEA_SELECTION_REPORT.md` with artifact header that includes routing fields:
-       ```
-       mode: final_selection
-       routing_source: env
-       global_codex_gate_mode: <from route>
-       selection_mode: codex_gate
-       isolation_mode: codex_thread
-       codex_thread_id: <actual thread id from Codex>
-       primary_backend: codex
-       actual_backend: codex
-       actual_model: DEFAULT
-       fallback_used: false
-       fallback_reason: none
-       codex_used: true
-       confidence_downgraded: false
-       forbidden_context_checked: true
-       verdict: SELECT_CAND_001 / SELECT_CAND_002 / NO_STRONG_IDEA / NEEDS_REVISION
-       ```
-     - Write ledger: `role=final_selector`, status=`completed`
-     - Only on verdict `SELECT_CAND_001` or `SELECT_CAND_002`:
-       - Update `IDEA_BANK.md`: mark candidate as SELECTED
-       - Update `IDEA_BANK.json`: move candidate from provisional/ready to "selected"
-       - Update `CANONICAL_IDEAS/CAND_XXX.md`: status → SELECTED
-     - On `NO_STRONG_IDEA`: leave status unchanged, report reason
-     - On `NEEDS_REVISION`: leave status unchanged, report required changes
-   - **If Codex is unavailable** AND route says `codex_required`:
-     - **Fail**: stop with error "Codex required but unavailable. Set ARIS_CODEX_GATE_MODE=codex_preferred to allow fallback."
-   - **If Codex is unavailable** AND route says `codex_preferred`:
-     - Fallback to Step 4 with `fallback_used=true`, `fallback_reason` set to actual error
+3. **Execute via `tools/trusted_role_runner.py`**:
+   ```
+   python tools/trusted_role_runner.py \
+       --role final_selector \
+       --input "<full context: candidates, reviews, novelty verdicts>" \
+       --output "FINAL_SELECTION/IDEA_SELECTION_REPORT.md" \
+       --require-codex-thread   # omit for deepseek_only mode
+   ```
+   - `trusted_role_runner.py` handles ledger start/finish automatically
+   - Only `verified_routed_call` or `verified_with_fallback` with `allowed_next_stage=true` can proceed
 
-4. **LLM Fallback or DeepSeek Direct** (when route says `codex_preferred` + Codex unavailable, or `deepseek_only`):
-   - Use `llm-chat` backend with model from route (default: `deepseek-v4-pro`)
-   - **Do NOT pretend Codex was used**. Every field must honestly reflect the routing.
-   - Write `FINAL_SELECTION/IDEA_SELECTION_REPORT.md` with artifact header:
-     ```
-     mode: final_selection
-     routing_source: env
-     global_codex_gate_mode: <from route>
-     selection_mode: llm_fallback_gate
-     isolation_mode: protocol_only
-     codex_thread_id: none
-     primary_backend: <from route>
-     actual_backend: llm-chat
-     actual_model: <from route actual_model>
-     fallback_used: <true if codex_preferred fallback, false if deepseek_only>
-     fallback_reason: <error or "Codex disabled by ARIS_CODEX_GATE_MODE=deepseek_only">
-     codex_used: false
-     confidence_downgraded: true
-     forbidden_context_checked: true
-     verdict: SELECT_CAND_001_WITH_WARNINGS / SELECT_CAND_002_WITH_WARNINGS / NO_STRONG_IDEA / NEEDS_REVISION
-     ```
-   - Fallback verdicts allowed: `SELECT_CAND_001_WITH_WARNINGS`, `SELECT_CAND_002_WITH_WARNINGS`, `NO_STRONG_IDEA`, `NEEDS_REVISION`
-   - On `SELECT_CAND_001_WITH_WARNINGS` or `SELECT_CAND_002_WITH_WARNINGS`:
-     - Update `IDEA_BANK.md`: mark candidate as `SELECTED_WITH_FALLBACK` (not plain SELECTED)
+4. **Verify the execution**:
+   ```
+   python tools/validate_model_invocation.py --role final_selector
+   ```
+   - If `verification_status` is NOT `verified_routed_call` or `verified_with_fallback`: **FAIL closed**
+   - If `allowed_next_stage` is `false`: **FAIL closed**
+   - If `codex_used=true` but no `codex_thread_id`: **FAIL closed**
+   - If dry-run or mock: **FAIL closed**
+   - `confidence_downgraded` and `routing_source` are recorded by `trusted_role_runner.py` in artifact provenance
+   - `global_codex_gate_mode` reflects the current ARIS_CODEX_GATE_MODE setting at invocation time
+
+5. **If trusted runner succeeds**:
+   - Write `FINAL_SELECTION/IDEA_SELECTION_REPORT.md` with artifact header from runner
+   - Only on verdict `SELECT_CAND_001` or `SELECT_CAND_002`:
+     - Update `IDEA_BANK.md`: mark candidate as SELECTED
+     - Update `IDEA_BANK.json`: move candidate from provisional/ready to "selected"
+     - Update `CANONICAL_IDEAS/CAND_XXX.md`: status → SELECTED
+   - On `NO_STRONG_IDEA`: leave status unchanged, report reason
+   - On `NEEDS_REVISION`: leave status unchanged, report required changes
+
+6. **If trusted runner fails**: Do NOT substitute with external agent output. Report failure and stop.
+
+4. **LLM Fallback or DeepSeek Direct**: Now handled automatically by `trusted_role_runner.py` (Steps 3-6 above). When Codex is unavailable and route is `codex_preferred`, the runner falls back to the configured LLM and records `fallback_used=true`, `fallback_reason`. When route is `deepseek_only`, the runner uses the LLM directly. Status update logic below still applies.
+
+5. **Post-selection status updates** (after trusted runner succeeds):
+   - `SELECT_CAND_001` or `SELECT_CAND_002` (via Codex or verified fallback):
+     - Update `IDEA_BANK.md`: mark candidate as `SELECTED`
+     - Update `IDEA_BANK.json`: move candidate to "selected"
+     - Update `CANONICAL_IDEAS/CAND_XXX.md`: status → `SELECTED`
+   - `SELECT_CAND_001_WITH_WARNINGS` or `SELECT_CAND_002_WITH_WARNINGS` (fallback path):
+     - Update `IDEA_BANK.md`: mark candidate as `SELECTED_WITH_FALLBACK`
      - Update `IDEA_BANK.json`: move candidate to "selected_with_fallback"
      - Update `CANONICAL_IDEAS/CAND_XXX.md`: status → `SELECTED_EMPIRICAL_WITH_LLM_FALLBACK`
-     - Add prominent note in report: "This final selection did not use Codex. It used DeepSeek V4 Pro fallback."
+     - Add note: "This final selection used DeepSeek V4 Pro fallback."
    - On `NO_STRONG_IDEA` or `NEEDS_REVISION`: leave status unchanged, report reason
-   - Write ledger: `role=final_selector`, status=`completed_with_warnings`, set `codex_used=false`, `confidence_downgraded=true`
-7. **Next step after fallback selection**:
-   - Proceed to `/research-contract` is permitted
-   - `/research-contract` must record:
-     - `final_selection_backend: deepseek-v4-pro`
-     - `codex_used: false`
-     - `rerun_codex_final_selector_recommended: true`
+
+6. **Next step after selection**:
+   - Proceed to `/research-contract` (record `final_selection_backend`, `codex_used`, `rerun_codex_final_selector_recommended`)
 
 ### manual-select <candidate-id> — Manual Override (PROTOCOL_ONLY, max PASS_WITH_WARNINGS)
 

@@ -94,27 +94,16 @@ Proceeding to implementation.
      ```
    - **Do NOT claim the code was "implemented by DeepSeek Pro" if no internal model was called.**
 
-2. **`routed_internal_model`**:
-   - The code was written by a real internal model call through `mcp__llm-chat__chat` (or equivalent API).
-   - Must have ledger entries:
-     ```
-     python tools/llm_call_ledger.py start experiment-bridge experiment_implementer llm-chat <model> \
-       --implementation-source routed_internal_model \
-       --routed-model-used true \
-       --route-role experiment_implementer \
-       --route-expected-backend llm-chat \
-       --route-expected-model <model>
-     ```
-   - After the call completes:
-     ```
-     python tools/llm_call_ledger.py finish \
-       --implementation-source routed_internal_model \
-       --routed-model-used true \
-       --actual-backend llm-chat \
-       --actual-model <model> \
-       --verification-status verified_routed_call \
-       --allowed-next-stage true
-     ```
+2. **`routed_internal_model`** — MUST use `tools/trusted_role_runner.py`:
+   ```
+   python tools/trusted_role_runner.py \
+       --role experiment_implementer \
+       --input "<experiment context and code requirements>" \
+       --output "refine-logs/IMPLEMENTATION/<milestone>.py"
+   ```
+   - `trusted_role_runner.py` handles ledger start/finish automatically
+   - Only `verified_routed_call` or `verified_with_fallback` with `allowed_next_stage=true` can be accepted
+   - If runner fails or returns `verification_status` in (`call_failed`, `dry_run_untrusted`, `missing_actual_backend`): **FAIL closed** — do NOT substitute with external agent code
 
 **Routing**: Before starting implementation, resolve the experiment_implementer model:
 ```bash
@@ -156,63 +145,35 @@ For each milestone (in order), write the experiment scripts:
 
 Codex review **MUST** have a `codex_thread_id`. Without it, the review cannot be verified and `allowed_next_stage` must be `false`. Do NOT write "Codex review completed" without a thread ID.
 
-**Routing**: Before reviewing, resolve the experiment_code_reviewer model:
-```bash
-python tools/model_route.py experiment_code_reviewer
-```
+**All experiment_code_reviewer calls MUST use `tools/trusted_role_runner.py` — external agents cannot substitute.**
 
-This role is a critical gate:
-- `codex_required` → Codex only; fail if unavailable (do NOT skip silently)
-- `codex_preferred` → try Codex first; fallback to LLM with WARNING logged
-- `deepseek_only` → skip Codex explicitly; use fallback model directly
+1. **Resolve routing** (via model_route.py, config-only):
+   ```bash
+   python tools/model_route.py experiment_code_reviewer
+   ```
+
+2. **Execute via trusted_role_runner.py**:
+   ```
+   python tools/trusted_role_runner.py \
+       --role experiment_code_reviewer \
+       --input "<experiment code and review prompt>" \
+       --output "refine-logs/CODE_REVIEW/<milestone>_review.md" \
+       --require-codex-thread
+   ```
+   For Codex routes, `--require-codex-thread` is mandatory.
+
+3. **Verify the execution**:
+   ```
+   python tools/validate_model_invocation.py --role experiment_code_reviewer
+   ```
+   - If `verification_status` is NOT `verified_routed_call` or `verified_with_fallback`: **FAIL closed**
+   - If `allowed_next_stage` is `false`: **FAIL closed**
+   - If `codex_used=true` but no `codex_thread_id`: **FAIL closed**
+   - If dry-run or mock: **FAIL closed**
+
+4. **If trusted runner fails**: Do NOT substitute with external agent review. Report failure and stop.
 
 **Skip this step if `CODE_REVIEW` is `false`.** If skipping, print a WARNING: "Code review is DISABLED (CODE_REVIEW=false). Experiment code deployed WITHOUT cross-model review. This is NOT recommended."
-
-Send the experiment code for review following the route resolved above:
-
-```
-# Example: Codex route
-python tools/llm_call_ledger.py start experiment-bridge experiment_code_reviewer codex \
-  --implementation-source routed_internal_model \
-  --routed-model-used true \
-  --route-role experiment_code_reviewer \
-  --route-expected-backend codex
-mcp__codex__codex:
-  config: {"model_reasoning_effort": "xhigh"}
-  prompt: |
-    Review the following experiment implementation for correctness.
-    ...
-    For each issue found, specify: CRITICAL / MAJOR / MINOR and the exact fix.
-python tools/llm_call_ledger.py finish \
-  --implementation-source routed_internal_model \
-  --routed-model-used true \
-  --actual-backend codex --codex-thread-id <id> \
-  --isolation-mode codex_thread \
-  --verification-status verified_routed_call \
-  --allowed-next-stage true
-
-# Example: LLM fallback route
-python tools/llm_call_ledger.py start experiment-bridge experiment_code_reviewer llm-chat <model> \
-  --implementation-source routed_internal_model \
-  --routed-model-used true \
-  --route-role experiment_code_reviewer \
-  --route-expected-backend llm-chat \
-  --route-expected-model <model>
-mcp__llm-chat__chat:
-  model: <model>
-  ...
-python tools/llm_call_ledger.py finish \
-  --implementation-source routed_internal_model \
-  --routed-model-used true \
-  --actual-backend llm-chat --actual-model <model>
-```
-
-**On review results:**
-- **No CRITICAL issues** → proceed to Phase 3
-- **CRITICAL issues found** → fix them, then re-submit for review (max 2 rounds)
-- **Codex unavailable AND codex_required** → FAIL: do NOT proceed. Report: "Codex review required by ARIS_CODEX_GATE_MODE but Codex is unavailable."
-- **Codex unavailable AND codex_preferred** → fallback to LLM with WARNING logged via `llm_call_ledger.py fallback`. Proceed only after fallback review passes.
-- **Codex review without codex_thread_id** → `verification_status=codex_missing_thread_id`, `allowed_next_stage=false`. Do NOT claim the review was verified.
 
 ### Phase 3: Sanity Check (if SANITY_FIRST = true)
 

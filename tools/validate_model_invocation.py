@@ -32,19 +32,30 @@ sys.path.insert(0, str(TOOLS_DIR))
 from env_loader import find_project_root
 
 
-# Roles to show in --summary
+# Roles to show in --summary (all ARIS ROLE_* roles)
 SUMMARY_ROLES = [
+    "literature_scout",
+    "paper_summarizer",
+    "gap_extractor",
     "idea_generator",
+    "idea_deduplicator",
     "idea_reviewer",
     "novelty_checker",
+    "adversarial_reviewer",
     "final_selector",
     "contract_reviewer",
+    "baseline_reviewer",
     "experiment_implementer",
     "experiment_code_reviewer",
     "experiment_auditor",
     "result_judge",
     "paper_writer",
-    "final_auditor",
+    "claims_drafter",
+    "final_paper_auditor",
+    "paper_claim_auditor",
+    "evidence_integrity_auditor",
+    "idea_shortlist_auditor",
+    "log_summarizer",
 ]
 
 
@@ -201,7 +212,7 @@ def validate_role(
             status = "PASS_WITH_WARNINGS"
             reasons.append("fallback was used")
 
-    if verification_status in ("unverified_external_execution", "missing_actual_backend", "fallback_unverified"):
+    if verification_status in ("unverified_external_execution", "missing_actual_backend", "fallback_unverified", "dry_run_untrusted"):
         status = "FAIL"
         reasons.append(f"verification_status={verification_status}")
 
@@ -355,8 +366,18 @@ def cmd_self_test():
         f.write(json.dumps(entry5) + "\n")
         temp_path = f.name
 
+    # Create a second temp ledger for the "no ledger" test
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f2:
+        empty_temp_path = f2.name
+
     try:
         test_results: Dict[str, Dict] = {}
+
+        # Test case 0: no ledger → FAIL
+        r = validate_role("experiment_implementer", Path(empty_temp_path), max_age_hours=24)
+        test_results["no_ledger"] = r
+        assert r["status"] == "FAIL", f"Expected FAIL for no_ledger, got {r['status']}"
+        assert r["reason"] == "no_ledger", f"Expected reason=no_ledger, got {r.get('reason','')}"
 
         # Test case 1
         r = validate_role("experiment_implementer", Path(temp_path), max_age_hours=24)
@@ -384,6 +405,95 @@ def cmd_self_test():
         test_results["fallback_explicit"] = r
         assert r["status"] == "PASS_WITH_WARNINGS", f"Expected PASS_WITH_WARNINGS for fallback_explicit, got {r['status']}"
 
+        # Test case 6: fallback without fallback_reason → FAIL
+        entry6 = {
+            "call_id": "call_test_006",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "paper_writer",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "llm-chat",
+            "actual_model": "deepseek-v4-pro",
+            "fallback_used": True,
+            "fallback_reason": "",
+            "verification_status": "fallback_unverified",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "status": "completed_with_fallback",
+        }
+        with open(temp_path, "a") as f:
+            f.write(json.dumps(entry6) + "\n")
+        r = validate_role("paper_writer", Path(temp_path), max_age_hours=24)
+        test_results["fallback_no_reason"] = r
+        assert r["status"] == "FAIL", f"Expected FAIL for fallback_no_reason, got {r['status']}"
+
+        # Test case 7: routed_model_used=true but missing actual_backend → FAIL
+        entry7 = {
+            "call_id": "call_test_007",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "result_judge",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "",
+            "actual_model": "",
+            "verification_status": "missing_actual_backend",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "status": "completed",
+        }
+        with open(temp_path, "a") as f:
+            f.write(json.dumps(entry7) + "\n")
+        r = validate_role("result_judge", Path(temp_path), max_age_hours=24)
+        test_results["missing_actual_backend"] = r
+        assert r["status"] == "FAIL", f"Expected FAIL for missing_actual_backend, got {r['status']}"
+
+        # Test case 8: verified_routed_call but missing actual_model → FAIL
+        entry8 = {
+            "call_id": "call_test_008",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "claims_drafter",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "llm-chat",
+            "actual_model": "",
+            "verification_status": "verified_routed_call",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "status": "completed",
+        }
+        with open(temp_path, "a") as f:
+            f.write(json.dumps(entry8) + "\n")
+        r = validate_role("claims_drafter", Path(temp_path), max_age_hours=24)
+        test_results["verified_call_missing_model"] = r
+        # verified_routed_call with no actual_model is suspicious; should be FAIL or at least not PASS
+        assert r["status"] != "PASS", f"Did not expect PASS for verified_call_missing_model, got {r['status']}"
+
+        # Test case 9: dry_run_untrusted cannot be accepted as real trusted output
+        entry9 = {
+            "call_id": "call_test_009",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "gap_extractor",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "dry_run",
+            "actual_model": "dry_run",
+            "verification_status": "dry_run_untrusted",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "status": "completed_dry_run",
+        }
+        with open(temp_path, "a") as f:
+            f.write(json.dumps(entry9) + "\n")
+        r = validate_role("gap_extractor", Path(temp_path), max_age_hours=24)
+        test_results["dry_run_untrusted"] = r
+        assert r["status"] == "FAIL", f"Expected FAIL for dry_run_untrusted, got {r['status']}"
+        assert r["allowed_next_stage"] is False
+
+        # Test case 10: codex with codex_thread_id in fixture → PASS
+        r = validate_role("novelty_checker", Path(temp_path), max_age_hours=24)
+        test_results["codex_thread_fixture"] = r
+        assert r["status"] == "PASS", f"Expected PASS for codex_thread_fixture, got {r['status']}"
+
         print("SELF-TEST RESULTS:")
         print(json.dumps(test_results, ensure_ascii=False, indent=2))
 
@@ -404,6 +514,7 @@ def cmd_self_test():
         return True
     finally:
         os.unlink(temp_path)
+        os.unlink(empty_temp_path)
 
 
 def main():

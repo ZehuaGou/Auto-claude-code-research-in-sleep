@@ -114,12 +114,24 @@ One CAND at a time. Codex thread. Auto artifact header + ledger.
    (`skills/shared-references/trusted-role-execution.md`). The reviewer role
    must be executed via `tools/trusted_role_runner.py`, not by the external
    agent directly.
-5. **Agent 调用前**写 `current_call.json`（通过 llm_call_ledger start）。
-6. **Agent 执行** 根据 route 决定 Codex 或 LLM Chat 调用。
-7. 如果 Codex 失败且 route 允许 fallback，Agent 切换到对应 LLM fallback。
-7. **Agent 调用后**写 `llm_calls.jsonl`（通过 llm_call_ledger finish / fallback）。
-8. 输出 markdown 和 json。
-9. markdown 必须保留 reviewer raw response。
+5. **Execute via `tools/trusted_role_runner.py`**:
+   ```
+   python tools/trusted_role_runner.py \
+       --role <reviewer_role> \
+       --input "<context>" \
+       --output "review-stage/exec_reviews/<id>.md" \
+       --require-codex-thread   # omit for deepseek_only mode
+   ```
+6. **Verify the execution**:
+   ```
+   python tools/validate_model_invocation.py --role <reviewer_role>
+   ```
+   - If `verification_status` is NOT `verified_routed_call` or `verified_with_fallback`: **FAIL closed**
+   - If `allowed_next_stage` is `false`: **FAIL closed**
+   - If `codex_used=true` but no `codex_thread_id`: **FAIL closed**
+7. 输出 markdown 和 json。
+8. markdown 必须保留 reviewer raw response。
+9. **If trusted runner fails**: Do NOT substitute with external agent review. Report failure and stop.
 
 **注意：** `tools/exec_review.py` 只负责 review 初始化（init）和完成记录（complete/status），**不直接调用 Codex/LLM**。实际模型调用由外层 Agent 按本 SKILL.md 执行。
 
