@@ -44,6 +44,66 @@ SEED = 42
 VALID_LABEL_MODES = {"token", "span", "sentence", "sample_weak", "synthetic"}
 FORMAL_LABEL_MODES = {"token", "span", "sentence"}
 WEAK_LABEL_MODES = {"sample_weak", "synthetic"}
+RAGTRUTH_SCHEMA_FIELDS = {"id", "source_id", "response", "prompt", "labels", "ground_truth"}
+
+
+def detect_ragtruth_xtended(row):
+    """Check if a row matches RAGTruth_Xtended schema."""
+    if not all(k in row for k in RAGTRUTH_SCHEMA_FIELDS):
+        return False
+    if not isinstance(row.get("labels"), list):
+        return False
+    if not isinstance(row.get("ground_truth"), dict):
+        return False
+    return True
+
+
+def normalize_ragtruth_row(row, tok):
+    """
+    Normalize a RAGTruth_Xtended row to TokenTR schema.
+    Converts char-offset ground_truth.annotation → per-token labels using tokenizer
+    offset_mapping. Char offsets are relative to the response string only.
+
+    Returns (normalized_row, error_msg).
+    """
+    try:
+        sample_id = str(row["source_id"])
+        prompt = row["prompt"]
+        response = row["response"]
+
+        # Tokenize response with offset_mapping (relative to response string only)
+        enc = tok(response, add_special_tokens=False, return_offsets_mapping=True)
+        resp_ids = enc["input_ids"]
+        offsets = enc["offset_mapping"]  # list of (start_char, end_char) per token
+        n_tokens = len(resp_ids)
+
+        gt = row.get("ground_truth", {})
+        if "annotation" not in gt:
+            return None, f"sample {sample_id}: missing ground_truth.annotation"
+        char_spans = gt["annotation"]  # [] is valid (all factual)
+
+        # Map char spans → token indices using tokenizer offsets
+        token_labels = [0] * n_tokens
+        for start_char, end_char in char_spans:
+            for t, (tok_start, tok_end) in enumerate(offsets):
+                if tok_start == tok_end:
+                    continue  # skip zero-width tokens
+                # Overlap check: span overlaps token iff start < tok_end AND end > tok_start
+                if start_char < tok_end and end_char > tok_start:
+                    token_labels[t] = 1
+
+        # Warning if spans exist but produced no token labels (possible offset mismatch)
+        if char_spans and sum(token_labels) == 0:
+            print(f"  WARNING: sample {sample_id}: char spans found but no token overlap", flush=True)
+
+        return {
+            "sample_id": sample_id,
+            "prompt": prompt,
+            "response": response,
+            "token_labels": token_labels,
+        }, None
+    except Exception as e:
+        return None, str(e)
 
 
 def set_seed(seed):
@@ -170,9 +230,9 @@ def extract_and_align_labels(row, tok, full_text, prompt_len, comp_start, comp_l
         raw = row.get("token_labels", None)
         if raw is None:
             raise ValueError(f"token mode requires token_labels but none found for sample {row.get('sample_id')}")
-        if len(raw) < comp_len:
-            raise ValueError(f"token_labels too short ({len(raw)}) for comp_len={comp_len}")
-        return raw[:comp_len]
+        if len(raw) != comp_len:
+            raise ValueError(f"token_labels length mismatch: {len(raw)} labels for {comp_len} response tokens (sample {row.get('sample_id')})")
+        return raw
 
     elif label_mode == "span":
         spans = row.get("hallucination_spans", [])
@@ -214,6 +274,11 @@ def main():
                              "'sample_weak' or 'synthetic' for weak-label sanity only.")
     parser.add_argument("--dry_run", action="store_true",
                         help="Validate data schema and metadata only; skip hidden state extraction.")
+    parser.add_argument("--dataset_format", type=str, default=None,
+                        choices=["ragtruth_xtended", "longfact", None],
+                        help="Force dataset format. 'ragtruth_xtended' normalizes char-offset "
+                             "ground_truth.annotation → token_labels using tokenizer. "
+                             "Default: auto-detect from file content.")
 
     args = parser.parse_args()
     set_seed(args.seed)
@@ -227,6 +292,7 @@ def main():
     print(f"Layers: {args.layers}")
     print(f"Max samples: {args.max_samples}")
     print(f"Label mode: {args.label_mode}")
+    print(f"Dataset format: {args.dataset_format or 'auto'}")
     print(f"Dry run: {args.dry_run}")
     print()
 
@@ -259,6 +325,39 @@ def main():
 
     rows = rows[:args.max_samples]
 
+    # ── Load tokenizer (needed for RAGTruth normalization) ─────────────────────
+    print("Loading tokenizer...", flush=True)
+    tok = AutoTokenizer.from_pretrained(MODEL, local_files_only=True)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+
+    # ── RAGTruth_Xtended normalization ─────────────────────────────────────────
+    dataset_format = args.dataset_format
+    norm_errors = 0
+    if dataset_format == "ragtruth_xtended" or (dataset_format is None and detect_ragtruth_xtended(rows[0])):
+        dataset_format = "ragtruth_xtended"
+        print(f"\nNormalizing RAGTruth_Xtended rows (char-offset → token labels)...", flush=True)
+        normalized_rows = []
+        norm_errors = 0
+        for i, row in enumerate(rows):
+            norm_row, err = normalize_ragtruth_row(row, tok)
+            if err:
+                print(f"  ERROR normalizing row {i} (source_id={row.get('source_id')}): {err}", flush=True)
+                norm_errors += 1
+                continue
+            normalized_rows.append(norm_row)
+        if normalized_rows:
+            rows = normalized_rows
+            print(f"  Normalized: {len(rows)} rows OK, {norm_errors} errors", flush=True)
+        else:
+            print(f"  FATAL: all rows failed normalization", flush=True)
+            return 1
+        print(f"  sample_id present: {all('sample_id' in r for r in rows)}", flush=True)
+        print(f"  token_labels present: {all('token_labels' in r for r in rows)}", flush=True)
+        if norm_errors > 0 and args.label_mode in FORMAL_LABEL_MODES:
+            # Partial normalization failure → block formal M1
+            pass  # handled below after schema validation
+
     # ── Schema validation ──────────────────────────────────────────────────────
     is_valid, err_msg, metadata = validate_dataset_schema(rows, args.label_mode, args.dataset_path)
     if not is_valid:
@@ -270,6 +369,11 @@ def main():
             json.dump(metadata, f, indent=2)
         print(f"Metadata written (with block): {METADATA_PATH}")
         return 1
+
+    # Block formal M1 if normalization had partial failures
+    if dataset_format == "ragtruth_xtended" and args.label_mode in FORMAL_LABEL_MODES and norm_errors > 0:
+        metadata["can_run_formal_m1"] = False
+        metadata["block_reason"] = f"{norm_errors} RAGTruth rows failed normalization; formal M1 blocked"
 
     print(f"\nDataset schema valid.")
     print(f"  has_token_labels={metadata['has_token_labels']}")
@@ -288,8 +392,6 @@ def main():
         return 0
 
     # ── Load tokenizer + model ───────────────────────────────────────────────
-    print("Loading tokenizer...", flush=True)
-    tok = AutoTokenizer.from_pretrained(MODEL, local_files_only=False)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
 
@@ -297,7 +399,7 @@ def main():
     t0 = time.time()
     model = AutoModelForCausalLM.from_pretrained(
         MODEL, torch_dtype=torch.float16, device_map="auto",
-        local_files_only=False, output_hidden_states=True, return_dict=True,
+        local_files_only=True, output_hidden_states=True, return_dict=True,
     )
     model.eval()
     hidden_dim = model.config.hidden_size
@@ -334,29 +436,34 @@ def main():
 
         prompt = row.get("prompt", row.get("user_prompt", ""))
         response = row.get("response", row.get("assistant_response", ""))
-        full_text = prompt + " " + response
-
-        prompt_tok = tok(prompt, return_tensors="pt", truncation=True, max_length=args.max_tokens)
-        response_tok = tok(response, return_tensors="pt", truncation=True, max_length=args.max_tokens)
-        prompt_len = prompt_tok.input_ids.shape[1]
-        resp_len = response_tok.input_ids.shape[1]
-        total_len = min(prompt_len + resp_len, args.max_tokens)
 
         try:
-            inputs = tok(full_text, return_tensors="pt", truncation=True,
-                        max_length=args.max_tokens).to(device)
+            # Compositional tokenization: prompt (special_tokens) + response (no special_tokens)
+            # Avoids space-separator offset mismatch
+            prompt_enc = tok(prompt, return_tensors="pt", truncation=True, max_length=args.max_tokens)
+            response_enc = tok(response, return_tensors="pt", add_special_tokens=False,
+                              truncation=True, max_length=args.max_tokens)
+
+            prompt_ids = prompt_enc.input_ids[0]
+            response_ids = response_enc.input_ids[0]
+            combined_ids = torch.cat([prompt_ids, response_ids])
+            combined_ids = combined_ids[:args.max_tokens]
+
+            prompt_len = prompt_ids.shape[0]
+            seq_len = combined_ids.shape[0]
+            comp_start = prompt_len
+            comp_len = seq_len - comp_start
+
+            inputs = {"input_ids": combined_ids.unsqueeze(0).to(device),
+                      "attention_mask": torch.ones((1, seq_len), dtype=torch.long, device=device)}
             with torch.no_grad():
                 outputs = model(**inputs, output_hidden_states=True, return_dict=True)
                 hss = outputs.hidden_states
 
-            seq_len = inputs.input_ids.shape[1]
-            comp_start = min(prompt_len, seq_len - 1)
-            comp_len = seq_len - comp_start
-
             # Label extraction FIRST (may raise for formal modes) — before appending hidden states
             if args.label_mode in FORMAL_LABEL_MODES:
                 # Raises ValueError on failure → caught by except, no hidden states appended
-                labels = extract_and_align_labels(row, tok, full_text, prompt_len, comp_start, comp_len, args.label_mode)
+                labels = extract_and_align_labels(row, tok, "", prompt_len, comp_start, comp_len, args.label_mode)
             elif args.label_mode in ("sample_weak", "synthetic"):
                 labels = None  # signals weak/synthetic label
             else:
@@ -407,6 +514,10 @@ def main():
     final_metadata = dict(metadata)
     final_metadata["n_extracted"] = len(rows) - extraction_errors
     final_metadata["extraction_errors"] = extraction_errors
+    # can_run_formal_m1=true only if all formal samples extracted without errors
+    if args.label_mode in FORMAL_LABEL_MODES and extraction_errors > 0:
+        final_metadata["can_run_formal_m1"] = False
+        final_metadata["block_reason"] = f"{extraction_errors} samples failed extraction; formal M1 blocked"
     with open(METADATA_PATH, "w") as f:
         json.dump(final_metadata, f, indent=2)
 

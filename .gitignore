@@ -62,6 +62,16 @@ literature/
 literature-md/
 *.pdf
 
+# ===== TokenTR runtime =====
+external_data/
+experiments/TokenTR/reports/
+experiments/TokenTR/data/
+experiments/TokenTR/data/hidden_states*/
+experiments/TokenTR/data/splits/
+experiments/TokenTR/data/raw/
+experiments/TokenTR/fixtures/tokentr_sanity.jsonl
+experiments/TokenTR/reports/data_validation_report.json
+
 # ===== Datasets / experiment outputs =====
 data/
 datasets/

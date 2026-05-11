@@ -7,6 +7,10 @@ Usage:
     python experiments/TokenTR/validate_tokentr_data.py \
         --dataset_path experiments/TokenTR/fixtures/tokentr_sanity.jsonl
 
+    python experiments/TokenTR/validate_tokentr_data.py \
+        --dataset_path external_data/TokenTR/RAGTruth_Xtended/dataset/rtx/mistral-7B-instruct/mistral-7B-instruct.json \
+        --dataset_format ragtruth_xtended
+
 Output:
     PASS_FORMAL_TOKEN_LABELS
     PASS_SPAN_LABELS
@@ -23,12 +27,25 @@ from pathlib import Path
 
 VALID_LABEL_MODES = {"token", "span", "sentence", "sample_weak", "synthetic"}
 FORMAL_MODES = {"token", "span", "sentence"}
+RAGTRUTH_SCHEMA_FIELDS = {"id", "source_id", "response", "prompt", "labels", "ground_truth"}
 
 
-def validate_dataset(rows):
+def detect_ragtruth_xtended(row):
+    """Check if a row matches RAGTruth_Xtended schema."""
+    if not all(k in row for k in RAGTRUTH_SCHEMA_FIELDS):
+        return False
+    if not isinstance(row.get("labels"), list):
+        return False
+    if not isinstance(row.get("ground_truth"), dict):
+        return False
+    return True
+
+
+def validate_dataset(rows, dataset_format=None):
     """
     Validate dataset for TokenTR requirements.
     Returns (verdict, report_dict).
+    dataset_format: None (auto-detect), "ragtruth_xtended", "longfact", "jsonl"
     """
     report = {
         "n_samples": len(rows),
@@ -43,9 +60,46 @@ def validate_dataset(rows):
         "can_run_formal_m1": False,
         "block_reason": None,
         "sample_issues": [],
+        "dataset_format": dataset_format or "auto",
     }
 
-    # Check sample_id
+    # Auto-detect RAGTruth_Xtended
+    if dataset_format == "ragtruth_xtended" or (dataset_format is None and detect_ragtruth_xtended(rows[0])):
+        report["dataset_format"] = "ragtruth_xtended"
+        # RAGTruth_Xtended: uses source_id as sample_id, has ground_truth.annotation
+        # ground_truth.annotation is char-offset based → requires tokenizer conversion at M0 load time.
+        # We cannot verify token alignment in the validator (no tokenizer available here),
+        # so we return PASS_SPAN_LABELS_REQUIRES_MAPPING instead of PASS_FORMAL_TOKEN_LABELS.
+        has_sample_id = all("source_id" in r for r in rows)
+        has_annotation = all(
+            "ground_truth" in r and "annotation" in r["ground_truth"]
+            for r in rows
+        )
+        # Check if token_labels already exist (normalized externally)
+        normalized_count = sum(1 for r in rows if "token_labels" in r)
+
+        if has_sample_id and normalized_count == len(rows):
+            # All rows already have token_labels (pre-normalized) — can run formal M1
+            report["has_sample_id"] = True
+            report["has_token_labels"] = True
+            report["label_mode_detected"] = "token"
+            report["verdict"] = "PASS_FORMAL_TOKEN_LABELS"
+            report["can_run_formal_m1"] = True
+        elif has_sample_id and has_annotation:
+            # Raw RAGTruth with char-offset annotation — cannot verify token mapping here
+            report["has_sample_id"] = True
+            report["has_spans"] = True
+            report["label_mode_detected"] = "span"
+            report["verdict"] = "PASS_SPAN_LABELS_REQUIRES_MAPPING"
+            report["can_run_formal_m1"] = False
+            report["block_reason"] = "RAGTruth_Xtended char-offset spans require tokenizer offset_mapping conversion before formal M1; use --dataset_format ragtruth_xtended with m0_hidden_extraction.py"
+        else:
+            report["verdict"] = "FAIL_SCHEMA"
+            report["block_reason"] = "RAGTruth_Xtended rows missing source_id or ground_truth.annotation"
+            report["can_run_formal_m1"] = False
+        return report["verdict"], report
+
+    # Check sample_id presence
     for i, row in enumerate(rows):
         if "sample_id" not in row:
             report["sample_issues"].append(f"Sample {i}: missing sample_id")
@@ -53,7 +107,7 @@ def validate_dataset(rows):
     if any("sample_id" in r for r in rows):
         report["has_sample_id"] = True
 
-    # Check label fields — ALL rows must have the formal field (not just any row)
+    # Check label fields — ALL rows must have the formal field
     has_token_labels = all("token_labels" in r for r in rows)
     has_spans = all("hallucination_spans" in r for r in rows)
     has_sample_hallu = all("is_hallucinated" in r for r in rows)
@@ -78,7 +132,7 @@ def validate_dataset(rows):
         report["can_run_formal_m1"] = True
     elif has_sentence_labels:
         report["label_mode_detected"] = "sentence"
-        report["verdict"] = "FAIL_SENTENCE_REQUIRES_MAPPING"  # sentence requires verified mapping metadata
+        report["verdict"] = "FAIL_SENTENCE_REQUIRES_MAPPING"
         report["can_run_formal_m1"] = False
         report["block_reason"] = "sentence mode requires verified sentence_token_mapping metadata"
     elif has_sample_hallu:
@@ -105,6 +159,9 @@ def main():
                         help="Path to dataset JSON/JSONL file")
     parser.add_argument("--output_dir", type=str, default=None,
                         help="Directory to write report (default: experiments/TokenTR/reports)")
+    parser.add_argument("--dataset_format", type=str, default=None,
+                        choices=["ragtruth_xtended", "longfact", "jsonl", None],
+                        help="Force dataset format (default: auto-detect)")
     args = parser.parse_args()
 
     p = Path(args.dataset_path)
@@ -123,12 +180,13 @@ def main():
         print(f"ERROR: unsupported file type: {p.suffix}")
         return 1
 
-    verdict, report = validate_dataset(rows)
+    verdict, report = validate_dataset(rows, dataset_format=args.dataset_format)
 
     # Print verdict
     print(f"\n{verdict}")
     print(f"  n_samples: {report['n_samples']}")
     print(f"  label_mode: {report['label_mode_detected']}")
+    print(f"  dataset_format: {report['dataset_format']}")
     print(f"  can_run_formal_m1: {report['can_run_formal_m1']}")
     if report.get("block_reason"):
         print(f"  block_reason: {report['block_reason']}")
