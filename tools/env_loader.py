@@ -47,20 +47,44 @@ def find_project_root() -> Path:
 
 
 def parse_env_line(line: str) -> Optional[tuple[str, str]]:
-    """Parse a single .env line. Returns (key, value) or None."""
+    """Parse a single .env line. Returns (key, value) or None.
+
+    Handles inline comments outside of quotes.
+    Examples:
+      CODEX_DEFAULT_MODEL=auto   # comment   → key="CODEX_DEFAULT_MODEL", value="auto"
+      KEY="value with # inside"           → key="KEY", value="value with # inside"
+      KEY=value#no-space-comment           → key="KEY", value="value"
+    """
     line = line.strip()
     if not line or line.startswith("#"):
         return None
     if line.startswith("export "):
         line = line[7:].strip()
-    match = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.*)$', line)
-    if not match:
+
+    # Extract key= first
+    eq_pos = line.find("=")
+    if eq_pos < 0:
         return None
-    key = match.group(1)
-    value = match.group(2).strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-        value = value[1:-1]
-    return key, value
+    key = line[:eq_pos].strip()
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
+        return None
+    raw_value = line[eq_pos + 1:].strip()
+
+    # Strip inline comment only if NOT inside quotes
+    if len(raw_value) >= 2 and raw_value[0] in ('"', "'"):
+        # Quoted — find matching closing quote
+        quote_char = raw_value[0]
+        if raw_value[-1] == quote_char:
+            raw_value = raw_value[1:-1]
+    else:
+        # Unquoted — strip everything after # (with or without preceding space)
+        for sep in (" #", "#"):
+            comment_pos = raw_value.find(sep)
+            if comment_pos >= 0:
+                raw_value = raw_value[:comment_pos].rstrip()
+                break
+
+    return key, raw_value
 
 
 def resolve_variable(value: str, variables: Dict[str, str]) -> str:
@@ -96,8 +120,8 @@ def load_env(env_path: Optional[str] = None) -> dict:
             key, value = parsed
             variables[key] = value
 
-    for key, value in variables.items():
-        result[key] = resolve_variable(value, variables)
+    # Normalize: resolve all ${VAR} references within vars itself
+    result = normalize_env(variables)
 
     return {
         "env_path": str(env_file),
@@ -375,6 +399,7 @@ def _resolve_legacy_role(role: str, vars: Dict[str, str]) -> Optional[Dict[str, 
         "paper_writer": "LLM_PAPER_WRITER",
         "claims_drafter": "LLM_CLAIMS_DRAFTER",
         "final_auditor": "LLM_FINAL_AUDITOR",
+        "final_paper_auditor": "LLM_FINAL_AUDITOR",
         "log_summarizer": "LLM_LOG_SUMMARIZER",
         "baseline_reviewer": "LLM_BASELINE_REVIEWER",
         "evidence_integrity_auditor": "LLM_EVIDENCE_AUDITOR",

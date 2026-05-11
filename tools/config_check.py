@@ -123,7 +123,7 @@ def main():
                     status = "error"
                     status_detail = f"{key_env} missing or placeholder"
                     missing_key = True
-                    errors.append(f"ROLE_{role.upper()}=ROLE_{role.upper()} but {key_env} is not set")
+                    errors.append(f"ROLE_{role.upper()}={alias} but {key_env} is not configured")
             if not base_url:
                 status = "warn"
                 status_detail = f"{provider.upper()}_BASE_URL not set"
