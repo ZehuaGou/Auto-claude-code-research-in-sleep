@@ -58,6 +58,34 @@ SUMMARY_ROLES = [
     "log_summarizer",
 ]
 
+CRITICAL_CONTEXT_ROLES = {
+    "novelty_checker",
+    "idea_reviewer",
+    "adversarial_reviewer",
+    "final_selector",
+    "experiment_code_reviewer",
+    "experiment_auditor",
+    "result_judge",
+    "final_paper_auditor",
+    "paper_claim_auditor",
+    "evidence_integrity_auditor",
+    "idea_shortlist_auditor",
+}
+
+REQUIRED_CONTEXT_FIELDS = [
+    "isolation_mode",
+    "task_id",
+    "context_manifest",
+    "allowed_input_files",
+    "forbidden_context",
+    "forbidden_context_checked",
+    "context_hash",
+    "prompt_file",
+    "response_file",
+    "source_boundary",
+    "contamination_scan_status",
+]
+
 
 def _get_ledger_path() -> Path:
     """Resolve ledger path from env var or default location."""
@@ -183,6 +211,11 @@ def validate_role(
     confidence_downgraded = latest.get("confidence_downgraded", True)
     routing_source = latest.get("routing_source", "")
     response_file = latest.get("response_file", "")
+    forbidden_context_checked = latest.get("forbidden_context_checked", False)
+    contamination_scan_status = latest.get("contamination_scan_status", "")
+    context_manifest = latest.get("context_manifest", None)
+    context_hash = latest.get("context_hash", "")
+    context_values = {field: latest.get(field, None) for field in REQUIRED_CONTEXT_FIELDS}
 
     # Determine pass/fail
     status = "PASS"
@@ -270,6 +303,32 @@ def validate_role(
         status = "FAIL"
         reasons.append("non-Codex role should not record codex_thread_id")
 
+    if verification_status in ("verified_routed_call", "verified_with_fallback", "pending_external_mcp"):
+        missing_context_fields = [
+            field
+            for field, value in context_values.items()
+            if value is None or (field == "context_hash" and verification_status != "pending_external_mcp" and not str(value).strip())
+        ]
+        if missing_context_fields:
+            status = "FAIL"
+            reasons.append(f"missing context fields: {', '.join(missing_context_fields)}")
+
+        if not forbidden_context_checked:
+            if role in CRITICAL_CONTEXT_ROLES:
+                status = "FAIL"
+                reasons.append("critical role requires forbidden_context_checked=true")
+            elif status == "PASS":
+                status = "PASS_WITH_WARNINGS"
+                reasons.append("forbidden_context_checked=false")
+
+        if contamination_scan_status in ("", "not_checked") and role in CRITICAL_CONTEXT_ROLES and verification_status != "pending_external_mcp":
+            status = "FAIL"
+            reasons.append("critical role requires contamination_scan_status beyond not_checked")
+
+        if context_manifest in (None, ""):
+            status = "FAIL"
+            reasons.append("context_manifest missing")
+
     if not allowed_next_stage and status == "PASS":
         status = "PASS_WITH_WARNINGS"
         reasons.append("allowed_next_stage=false")
@@ -294,6 +353,10 @@ def validate_role(
         "confidence_downgraded": confidence_downgraded,
         "routing_source": routing_source,
         "response_file": response_file or None,
+        "context_manifest": context_manifest,
+        "context_hash": context_hash,
+        "forbidden_context_checked": forbidden_context_checked,
+        "contamination_scan_status": contamination_scan_status,
         "reason": "; ".join(reasons) if reasons else "all checks passed",
     }
 
@@ -340,6 +403,35 @@ def cmd_self_test():
     import shutil
     import tempfile, os
 
+    def with_context(
+        entry: Dict[str, Any],
+        *,
+        manifest: str = "none",
+        checked: bool = False,
+        scan_status: str = "not_checked",
+        source_boundary: str = "role_input_only",
+        prompt_file: str = "",
+        response_file: str = "",
+        context_hash: str = "fixture-context-hash",
+    ) -> Dict[str, Any]:
+        enriched = dict(entry)
+        enriched.update(
+            {
+                "isolation_mode": "context_manifest" if manifest != "none" else "not_declared",
+                "task_id": f"task_{entry['call_id']}",
+                "context_manifest": manifest,
+                "allowed_input_files": ["allowed/input.md"] if manifest != "none" else [],
+                "forbidden_context": ["old review", "user preference"] if manifest != "none" else [],
+                "forbidden_context_checked": checked,
+                "context_hash": context_hash,
+                "prompt_file": prompt_file,
+                "response_file": response_file,
+                "source_boundary": source_boundary,
+                "contamination_scan_status": scan_status,
+            }
+        )
+        return enriched
+
     # Create temp ledger
     with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
         # Case 1: external_agent_direct → FAIL, allowed_next_stage=false
@@ -357,7 +449,7 @@ def cmd_self_test():
             "status": "completed",
         }
         # Case 2: routed_internal_model + llm-chat → PASS
-        entry2 = {
+        entry2 = with_context({
             "call_id": "call_test_002",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "idea_generator",
@@ -369,7 +461,7 @@ def cmd_self_test():
             "allowed_next_stage": True,
             "confidence_downgraded": False,
             "status": "completed",
-        }
+        }, manifest="manifest_idea_generator.json", checked=True, scan_status="passed")
         # Case 3: codex without codex_thread_id → FAIL
         entry3 = {
             "call_id": "call_test_003",
@@ -386,7 +478,7 @@ def cmd_self_test():
             "status": "completed_with_warnings",
         }
         # Case 4: codex with codex_thread_id → PASS
-        entry4 = {
+        entry4 = with_context({
             "call_id": "call_test_004",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "novelty_checker",
@@ -399,9 +491,9 @@ def cmd_self_test():
             "allowed_next_stage": True,
             "confidence_downgraded": False,
             "status": "completed",
-        }
+        }, manifest="manifest_novelty_checker.json", checked=True, scan_status="passed", prompt_file="prompt.md")
         # Case 5: fallback with explicit fallback_reason → PASS_WITH_WARNINGS
-        entry5 = {
+        entry5 = with_context({
             "call_id": "call_test_005",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "final_selector",
@@ -415,9 +507,9 @@ def cmd_self_test():
             "allowed_next_stage": False,
             "confidence_downgraded": True,
             "status": "completed_with_fallback",
-        }
+        }, manifest="manifest_final_selector.json", checked=True, scan_status="passed")
         # Case 6: external MCP pending
-        entry6 = {
+        entry6 = with_context({
             "call_id": "call_test_006",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "adversarial_reviewer",
@@ -430,7 +522,7 @@ def cmd_self_test():
             "confidence_downgraded": True,
             "status": "pending_external_mcp",
             "routing_source": "trusted_role_runner_external_mcp_prepare",
-        }
+        }, manifest="manifest_adversarial_reviewer.json", checked=False, scan_status="not_checked", prompt_file="pending_prompt.md")
         f.write(json.dumps(entry1) + "\n")
         f.write(json.dumps(entry2) + "\n")
         f.write(json.dumps(entry3) + "\n")
@@ -479,10 +571,10 @@ def cmd_self_test():
         test_results["fallback_explicit"] = r
         assert r["status"] == "PASS_WITH_WARNINGS", f"Expected PASS_WITH_WARNINGS for fallback_explicit, got {r['status']}"
 
-        # Test case 5b: pending_external_mcp -> PASS_WITH_WARNINGS and not allowed
+        # Test case 5b: pending_external_mcp cannot be treated as completed trusted output
         r = validate_role("adversarial_reviewer", Path(temp_path), max_age_hours=24)
         test_results["pending_external_mcp"] = r
-        assert r["status"] == "PASS_WITH_WARNINGS", f"Expected PASS_WITH_WARNINGS for pending_external_mcp, got {r['status']}"
+        assert r["status"] in ("FAIL", "PASS_WITH_WARNINGS"), f"Expected FAIL/PASS_WITH_WARNINGS for pending_external_mcp, got {r['status']}"
         assert r["allowed_next_stage"] is False
 
         # Test case 6: fallback without fallback_reason → FAIL
@@ -528,7 +620,7 @@ def cmd_self_test():
         assert r["status"] == "FAIL", f"Expected FAIL for missing_actual_backend, got {r['status']}"
 
         # Test case 8: verified_routed_call but missing actual_model → FAIL
-        entry9 = {
+        entry9 = with_context({
             "call_id": "call_test_009",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "claims_drafter",
@@ -540,7 +632,7 @@ def cmd_self_test():
             "allowed_next_stage": False,
             "confidence_downgraded": True,
             "status": "completed",
-        }
+        }, manifest="manifest_claims_drafter.json", checked=True, scan_status="passed")
         with open(temp_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry9) + "\n")
         r = validate_role("claims_drafter", Path(temp_path), max_age_hours=24)
@@ -618,7 +710,7 @@ def cmd_self_test():
         response_dir = Path(tempfile.mkdtemp())
         response_file = response_dir / "codex_response.md"
         response_file.write_text("trusted external codex response", encoding="utf-8")
-        entry13 = {
+        entry13 = with_context({
             "call_id": "call_test_013",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "idea_reviewer",
@@ -633,7 +725,7 @@ def cmd_self_test():
             "status": "completed",
             "routing_source": "trusted_role_runner_external_mcp",
             "response_file": str(response_file),
-        }
+        }, manifest="manifest_idea_reviewer.json", checked=True, scan_status="passed", prompt_file="external_prompt.md", response_file=str(response_file))
         with open(temp_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry13) + "\n")
         r = validate_role("idea_reviewer", Path(temp_path), max_age_hours=24)
@@ -641,7 +733,7 @@ def cmd_self_test():
         assert r["status"] == "PASS", f"Expected PASS for external_mcp_completed, got {r['status']}"
 
         # Test case 14: external MCP completed but response artifact missing -> FAIL
-        entry14 = {
+        entry14 = with_context({
             "call_id": "call_test_014",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "contract_reviewer",
@@ -656,7 +748,7 @@ def cmd_self_test():
             "status": "completed",
             "routing_source": "trusted_role_runner_external_mcp",
             "response_file": str(response_dir / "missing.md"),
-        }
+        }, manifest="manifest_contract_reviewer.json", checked=True, scan_status="passed", prompt_file="external_prompt_missing.md", response_file=str(response_dir / "missing.md"))
         with open(temp_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry14) + "\n")
         r = validate_role("contract_reviewer", Path(temp_path), max_age_hours=24)
@@ -664,7 +756,7 @@ def cmd_self_test():
         assert r["status"] == "FAIL", f"Expected FAIL for external_mcp_missing_response, got {r['status']}"
 
         # Test case 15: API role with codex_thread_id should fail
-        entry15 = {
+        entry15 = with_context({
             "call_id": "call_test_015",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "idea_generator",
@@ -677,7 +769,7 @@ def cmd_self_test():
             "allowed_next_stage": True,
             "confidence_downgraded": False,
             "status": "completed",
-        }
+        }, manifest="manifest_idea_generator_2.json", checked=True, scan_status="passed")
         with open(temp_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry15) + "\n")
         r = validate_role("idea_generator", Path(temp_path), max_age_hours=24)

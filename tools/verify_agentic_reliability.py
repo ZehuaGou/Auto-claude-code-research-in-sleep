@@ -3245,6 +3245,32 @@ check("78l. routing docs say ROLE_* switch does not require skill edits",
 check("78m. DeepSeek/API path does not require codex_thread_id",
       "non-Codex role should not record codex_thread_id" in validate_src or "DeepSeek/API role" in docs_proto)
 
+print("\n=== 79. context isolation trust ===")
+check("79a. trusted_role_runner.py supports --context-manifest",
+      "--context-manifest" in trusted_runner_src)
+check("79b. trusted_role_runner.py records context isolation header fields",
+      "context_manifest" in trusted_runner_src and "context_hash" in trusted_runner_src and "forbidden_context_checked" in trusted_runner_src and "contamination_scan_status" in trusted_runner_src)
+check("79c. external MCP prompt file records context_hash",
+      "_build_codex_prompt" in trusted_runner_src and "context_hash" in trusted_runner_src)
+check("79d. external MCP completion preserves prompt_file/response_file/context_hash",
+      "response_file" in trusted_runner_src and "prompt_file" in trusted_runner_src and "context_hash" in trusted_runner_src)
+check("79e. validate_model_invocation.py checks context fields",
+      "REQUIRED_CONTEXT_FIELDS" in validate_src and "forbidden_context_checked" in validate_src and "contamination_scan_status" in validate_src)
+check("79f. shared protocol explains context isolation",
+      "Context Isolation" in docs_proto and "forbidden context" in docs_proto.lower())
+check("79g. shared protocol lists forbidden context categories",
+      "当前聊天记录" in docs_proto and "旧结论" in docs_proto and "raw brainstorm trace" in docs_proto and "mock/dry-run artifact" in docs_proto)
+check("79h. shared protocol includes novelty_checker context rules",
+      "novelty_checker" in docs_proto and "LITERATURE_INDEX.md" in docs_proto and "RUNS/IDEA_CARDS/" in docs_proto)
+check("79i. shared protocol includes final_selector context rules",
+      "final_selector" in docs_proto and "selection criteria" in docs_proto and "外层 Agent 主观总结" in docs_proto)
+check("79j. shared protocol includes experiment_code_reviewer context rules",
+      "experiment_code_reviewer" in docs_proto and "实现者自我辩解" in docs_proto)
+check("79k. shared protocol includes result_judge and paper_writer context rules",
+      "result_judge" in docs_proto and "paper_writer" in docs_proto and "未验证结果" in docs_proto)
+check("79l. docs keep model routing via trusted_role_runner only",
+      "trusted_role_runner.py" in docs_routing and "ROLE_*" in docs_routing and "do not need to modify skill" in docs_routing.lower())
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

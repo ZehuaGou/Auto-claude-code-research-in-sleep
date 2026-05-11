@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
 import sys
 import tempfile
 import uuid
@@ -100,6 +101,71 @@ def _load_input_spec(input_spec: str) -> str:
     return input_spec
 
 
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _header_value(value: Any) -> str:
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _load_context_manifest(context_manifest_path: Optional[str]) -> Dict[str, Any]:
+    if not context_manifest_path:
+        return {
+            "isolation_mode": "not_declared",
+            "task_id": "",
+            "context_manifest": "none",
+            "allowed_input_files": [],
+            "forbidden_context": [],
+            "forbidden_context_checked": False,
+            "source_boundary": "role_input_only",
+            "contamination_scan_status": "not_checked",
+        }
+
+    manifest_path = Path(context_manifest_path)
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"context manifest not found: {manifest_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"context manifest is not valid JSON: {manifest_path}") from exc
+
+    allowed_input_files = raw.get("allowed_input_files", [])
+    forbidden_context = raw.get("forbidden_context", [])
+    if isinstance(allowed_input_files, str):
+        allowed_input_files = [allowed_input_files]
+    if isinstance(forbidden_context, str):
+        forbidden_context = [forbidden_context]
+
+    return {
+        "isolation_mode": str(raw.get("isolation_mode", "context_manifest")),
+        "task_id": str(raw.get("task_id", "")),
+        "context_manifest": str(manifest_path),
+        "allowed_input_files": [str(item) for item in allowed_input_files],
+        "forbidden_context": [str(item) for item in forbidden_context],
+        "forbidden_context_checked": bool(raw.get("forbidden_context_checked", True)),
+        "source_boundary": str(raw.get("source_boundary", "manifest_declared")),
+        "contamination_scan_status": str(raw.get("contamination_scan_status", "declared_only")),
+    }
+
+
+def _attach_context_fields(
+    entry: Dict[str, Any],
+    *,
+    context_manifest_path: Optional[str],
+    context_hash_source: str,
+) -> None:
+    context_info = _load_context_manifest(context_manifest_path)
+    entry.update(context_info)
+    entry["context_hash"] = _sha256_text(context_hash_source)
+
+
 def _find_latest_call(call_id: str, ledger_path: Optional[Path]) -> Optional[Dict[str, Any]]:
     for entry in reversed(_read_ledger(ledger_path)):
         if entry.get("call_id") == call_id:
@@ -152,6 +218,15 @@ def _build_started_entry(role: str, resolved: Dict[str, Any]) -> Dict[str, Any]:
         "response_file": "",
         "output_path": "",
         "response_file_required": False,
+        "isolation_mode": "not_declared",
+        "task_id": "",
+        "context_manifest": "none",
+        "allowed_input_files": [],
+        "forbidden_context": [],
+        "forbidden_context_checked": False,
+        "context_hash": "",
+        "source_boundary": "role_input_only",
+        "contamination_scan_status": "not_checked",
     }
 
 
@@ -272,8 +347,17 @@ def _build_artifact_header(entry: Dict[str, Any]) -> str:
         f"allowed_next_stage: {entry.get('allowed_next_stage', False)}",
         f"status: {entry.get('status', '')}",
         f"routing_source: {entry.get('routing_source', '')}",
+        f"isolation_mode: {_header_value(entry.get('isolation_mode', 'not_declared'))}",
+        f"task_id: {_header_value(entry.get('task_id', ''))}",
+        f"context_manifest: {_header_value(entry.get('context_manifest', 'none'))}",
+        f"allowed_input_files: {_header_value(entry.get('allowed_input_files', []))}",
+        f"forbidden_context: {_header_value(entry.get('forbidden_context', []))}",
+        f"forbidden_context_checked: {_header_value(entry.get('forbidden_context_checked', False))}",
+        f"context_hash: {_header_value(entry.get('context_hash', ''))}",
         f"prompt_file: {entry.get('prompt_file', '')}",
         f"response_file: {entry.get('response_file', '')}",
+        f"source_boundary: {_header_value(entry.get('source_boundary', 'role_input_only'))}",
+        f"contamination_scan_status: {_header_value(entry.get('contamination_scan_status', 'not_checked'))}",
         f"error_code: {entry.get('error_code', '') or ''}",
         f"error: {entry.get('error', '') or ''}",
         "---",
@@ -290,7 +374,15 @@ def _write_artifact(output_path: Optional[str], entry: Dict[str, Any], body: str
         handle.write(f"{header}\n\n{body}".rstrip() + "\n")
 
 
-def _build_codex_prompt(role: str, input_text: str, route_config: Dict[str, Any], call_id: str) -> str:
+def _build_codex_prompt(
+    role: str,
+    input_text: str,
+    route_config: Dict[str, Any],
+    call_id: str,
+    context_info: Dict[str, Any],
+    *,
+    context_hash: str,
+) -> str:
     return "\n".join(
         [
             f"# ARIS Trusted Role Task: {role}",
@@ -300,6 +392,12 @@ def _build_codex_prompt(role: str, input_text: str, route_config: Dict[str, Any]
             f"- expected_model: {route_config.get('model', 'auto') or 'auto'}",
             "- source: trusted_role_runner external MCP handoff",
             "- requirement: return the role output only; thread metadata is recorded separately by the outer Agent.",
+            f"- context_manifest: {context_info.get('context_manifest', 'none')}",
+            f"- context_hash: {context_hash}",
+            f"- task_id: {context_info.get('task_id', '')}",
+            f"- source_boundary: {context_info.get('source_boundary', 'role_input_only')}",
+            f"- allowed_input_files: {_header_value(context_info.get('allowed_input_files', []))}",
+            f"- forbidden_context: {_header_value(context_info.get('forbidden_context', []))}",
             "",
             "## Input",
             input_text,
@@ -337,6 +435,7 @@ def _prepare_external_mcp(
     output_path: Optional[str],
     ledger_path: Optional[Path],
     require_codex_thread: bool,
+    context_manifest_path: Optional[str] = None,
     resolved_override: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     resolved = resolved_override or _resolve_role(role)
@@ -367,9 +466,37 @@ def _prepare_external_mcp(
     entry["response_file_required"] = True
     if require_codex_thread:
         entry["route_requires_codex_thread"] = True
+    try:
+        context_info = _load_context_manifest(context_manifest_path)
+    except ValueError as exc:
+        return {
+            "status": "failed",
+            "verification_status": "call_failed",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "error": str(exc),
+            "error_code": "call_failed",
+            "exit_code": 1,
+        }
 
     prompt_file = _get_calls_dir(ledger_path) / f"{entry['call_id']}_prompt.md"
-    prompt_text = _build_codex_prompt(role, input_text, route_config, entry["call_id"])
+    prompt_text_without_hash = _build_codex_prompt(
+        role,
+        input_text,
+        route_config,
+        entry["call_id"],
+        context_info,
+        context_hash="pending",
+    )
+    context_hash = _sha256_text(prompt_text_without_hash)
+    prompt_text = _build_codex_prompt(
+        role,
+        input_text,
+        route_config,
+        entry["call_id"],
+        context_info,
+        context_hash=context_hash,
+    )
     try:
         prompt_file.write_text(prompt_text, encoding="utf-8")
     except OSError as exc:
@@ -382,11 +509,14 @@ def _prepare_external_mcp(
             "error_code": "call_failed",
             "exit_code": 1,
         }
+    entry.update(context_info)
+    entry["context_hash"] = context_hash
     entry["prompt_file"] = str(prompt_file)
     entry["raw_metadata"] = {
         "prepare_external_mcp": True,
         "prompt_file": str(prompt_file),
         "output_path": output_path or "",
+        "context_hash": context_hash,
     }
     _write_ledger_entry(entry, ledger_path)
 
@@ -405,6 +535,8 @@ def _prepare_external_mcp(
         "output_path": output_path or "",
         "verification_status": "pending_external_mcp",
         "allowed_next_stage": False,
+        "context_manifest": entry.get("context_manifest", "none"),
+        "context_hash": context_hash,
         "finish_command": finish_command,
         "exit_code": 0,
     }
@@ -533,6 +665,7 @@ def run_trusted(
     input_spec: str,
     output_path: Optional[str] = None,
     require_codex_thread: bool = False,
+    context_manifest_path: Optional[str] = None,
     dry_run: bool = False,
     mock_response: str = "",
     ledger_path: Optional[Path] = None,
@@ -553,6 +686,24 @@ def run_trusted(
     entry["output_path"] = output_path or ""
     if require_codex_thread:
         entry["route_requires_codex_thread"] = True
+    try:
+        _attach_context_fields(
+            entry,
+            context_manifest_path=context_manifest_path,
+            context_hash_source=input_text,
+        )
+    except ValueError as exc:
+        error_result = _finalize_entry(
+            entry,
+            ledger_path=ledger_path,
+            status="failed",
+            output_text="",
+            error=str(exc),
+            error_code="call_failed",
+        )
+        _write_artifact(output_path, error_result, json.dumps({"error": str(exc)}, ensure_ascii=False))
+        error_result["exit_code"] = 1
+        return error_result
     _write_ledger_entry(entry, ledger_path)
 
     if dry_run:
@@ -705,6 +856,7 @@ def cmd_self_test() -> bool:
                 output_path=artifact_path,
                 ledger_path=ledger_path,
                 require_codex_thread=True,
+                context_manifest_path=None,
                 resolved_override={
                     "expected_backend": "mcp",
                     "expected_model": "auto",
@@ -721,6 +873,8 @@ def cmd_self_test() -> bool:
             assert prepare_codex["allowed_next_stage"] is False
             assert prepare_codex["exit_code"] == 0
             assert Path(prepare_codex["prompt_file"]).exists()
+            assert prepare_codex["context_manifest"] == "none"
+            assert prepare_codex["context_hash"]
 
             missing_thread = _complete_external_mcp(
                 call_id=prepare_codex["call_id"],
@@ -738,6 +892,7 @@ def cmd_self_test() -> bool:
                 output_path=artifact_path,
                 ledger_path=ledger_path,
                 require_codex_thread=True,
+                context_manifest_path=None,
                 resolved_override={
                     "expected_backend": "mcp",
                     "expected_model": "auto",
@@ -766,6 +921,7 @@ def cmd_self_test() -> bool:
                 output_path=artifact_path,
                 ledger_path=ledger_path,
                 require_codex_thread=True,
+                context_manifest_path=None,
                 resolved_override={
                     "expected_backend": "mcp",
                     "expected_model": "auto",
@@ -790,6 +946,9 @@ def cmd_self_test() -> bool:
             artifact_text = Path(artifact_path).read_text(encoding="utf-8")
             assert "routing_source: trusted_role_runner_external_mcp" in artifact_text
             assert "response_file:" in artifact_text
+            assert "context_manifest: none" in artifact_text
+            assert "context_hash:" in artifact_text
+            assert "forbidden_context_checked: false" in artifact_text
 
             non_codex_prepare = _prepare_external_mcp(
                 role="paper_writer",
@@ -797,6 +956,7 @@ def cmd_self_test() -> bool:
                 output_path=artifact_path,
                 ledger_path=ledger_path,
                 require_codex_thread=False,
+                context_manifest_path=None,
                 resolved_override={
                     "expected_backend": "openai_compatible_api",
                     "expected_model": "deepseek-v4-pro",
@@ -1033,6 +1193,7 @@ def main() -> None:
     call_id = ""
     codex_thread_id = ""
     response_file = ""
+    context_manifest_path: Optional[str] = None
 
     i = 0
     while i < len(args):
@@ -1082,6 +1243,9 @@ def main() -> None:
         elif arg == "--response-file" and i + 1 < len(args):
             response_file = args[i + 1]
             i += 2
+        elif arg == "--context-manifest" and i + 1 < len(args):
+            context_manifest_path = args[i + 1]
+            i += 2
         else:
             i += 1
 
@@ -1109,6 +1273,7 @@ def main() -> None:
             output_path=output_path,
             ledger_path=ledger_path,
             require_codex_thread=require_codex_thread,
+            context_manifest_path=context_manifest_path,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         sys.exit(int(result.get("exit_code", 1)))
@@ -1139,6 +1304,7 @@ def main() -> None:
         input_spec=input_spec,
         output_path=output_path,
         require_codex_thread=require_codex_thread,
+        context_manifest_path=context_manifest_path,
         dry_run=dry_run,
         mock_response=mock_response,
         ledger_path=ledger_path,

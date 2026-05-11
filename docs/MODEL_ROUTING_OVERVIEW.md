@@ -221,6 +221,22 @@ When a real model call is made, the ledger entry (`.aris/calls/llm_calls.jsonl`)
 }
 ```
 
+Trusted role artifacts must also carry context isolation metadata:
+
+```text
+isolation_mode
+task_id
+context_manifest
+allowed_input_files
+forbidden_context
+forbidden_context_checked
+context_hash
+prompt_file
+response_file
+source_boundary
+contamination_scan_status
+```
+
 For Codex calls, `codex_thread_id` is **required** for verification. Without it, the entry is marked `codex_missing_thread_id`.
 `codex_thread_id` must come from real Codex tool/session metadata, never from
 commit hashes, plain terminal output, or human-written placeholders.
@@ -284,6 +300,41 @@ python tools/trusted_role_runner.py \
 DeepSeek/OpenAI-compatible API roles do **not** use Codex handoff. They execute
 directly via `tools/model_backends/openai_compatible.py` and do not require
 `codex_thread_id`.
+
+`prepare-external-mcp` is a successful handoff preparation state. It must return
+`status=NEEDS_EXTERNAL_MCP_CALL`, `verification_status=pending_external_mcp`,
+`allowed_next_stage=false`, and exit `0` so the outer Agent can continue into
+the real MCP call before `complete-external-mcp`.
+
+### Context Isolation Trust
+
+The outer Agent may orchestrate files and prompts, but it must not inject
+contaminating context into a trusted role prompt. Forbidden context includes:
+
+- 当前聊天记录
+- 旧结论
+- 其他候选
+- 用户偏好
+- 历史 praise
+- raw brainstorm trace
+- 旧 review positive conclusion
+- 未验证实验结果
+- `external_agent_direct` output
+- mock/dry-run artifact
+
+Every `ROLE_*` stage must only see explicitly allowed inputs. `ROLE_*` switching
+between Codex and DeepSeek/API still goes through `trusted_role_runner.py`; skill
+documents do not need to modify skill text when the route changes.
+
+Minimum stage rules:
+
+- `novelty_checker`: allow current candidate, literature evidence, `LITERATURE_INDEX.md`, `GAP_MAP.md`; forbid other candidates, old novelty conclusions, generator trace, ad hoc results, `RUNS/IDEA_CARDS/`.
+- `idea_reviewer` / `adversarial_reviewer`: allow current candidate, necessary background, explicit evidence; forbid generator trace, other candidates, old scores, user preference, historical praise.
+- `final_selector`: allow canonical candidates, independent reviews, novelty reports, selection criteria; forbid raw brainstorm trace, user preference, old final selection, 外层 Agent 主观总结.
+- `experiment_implementer`: allow experiment plan, final proposal, necessary code context, research contract; forbid old failure narratives, unverified results, outer-Agent implementation preference.
+- `experiment_code_reviewer`: allow reviewed code, experiment plan, metric definition, split definition, expected behavior; forbid 实现者自我辩解, “已经没问题”, old positive review, unrelated experiment results.
+- `result_judge`: allow experiment results, logs, metric definition, research contract; forbid optimistic outer-Agent summaries, unverified results, old conclusions, mock/dry-run artifacts.
+- `paper_writer` / `final_paper_auditor`: allow verified results, research contract, approved claims, verified reviews; forbid unverified exploratory notes, `external_agent_direct` output, mock/dry-run artifacts, 未验证结果.
 
 ### Ledger Call ID
 

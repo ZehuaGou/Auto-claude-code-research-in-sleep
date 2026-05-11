@@ -71,7 +71,55 @@ must execute directly through `tools/model_backends/openai_compatible.py`.
 
 ---
 
-## Rule 3: Ledger Entry Requirements
+## Rule 3: Context Isolation Is Part Of Trust
+
+Trusted execution is not only about which backend ran. It is also about which
+context the role was allowed to see.
+
+External agents must not freely stuff arbitrary chat state into a role prompt.
+Forbidden context includes:
+
+- 当前聊天记录
+- 旧结论
+- 其他候选
+- 用户偏好
+- 历史 praise
+- raw brainstorm trace
+- 旧 review positive conclusion
+- 未验证实验结果
+- `external_agent_direct` output
+- mock/dry-run artifact
+
+Each trusted role artifact header must include or reserve:
+
+```text
+isolation_mode:
+task_id:
+context_manifest:
+allowed_input_files:
+forbidden_context:
+forbidden_context_checked:
+context_hash:
+prompt_file:
+response_file:
+source_boundary:
+contamination_scan_status:
+```
+
+If `--context-manifest` is provided, `trusted_role_runner.py` must record the
+manifest path, allowed inputs, forbidden context list, source boundary, and a
+`context_hash`. If no manifest is provided, the runner must still record:
+
+- `context_manifest: none`
+- `forbidden_context_checked: false`
+- `contamination_scan_status: not_checked`
+
+`pending_external_mcp` is not completed trusted evidence. It may represent a
+successful handoff preparation, but it must keep `allowed_next_stage=false`.
+
+---
+
+## Rule 4: Ledger Entry Requirements
 
 ### For real model calls (routed_internal_model):
 
@@ -115,7 +163,7 @@ confidence_downgraded: true
 
 ---
 
-## Rule 4: Codex Gate Requires codex_thread_id
+## Rule 5: Codex Gate Requires codex_thread_id
 
 Every Codex call must produce a `codex_thread_id`. Without it:
 - `verification_status` → `codex_missing_thread_id`
@@ -133,7 +181,7 @@ thread id and response artifact.
 
 ---
 
-## Rule 5: API Backend Requires actual_backend / actual_model
+## Rule 6: API Backend Requires actual_backend / actual_model
 
 For non-Codex backends (DeepSeek, Kimi, etc.), the ledger must contain:
 - `actual_backend` (provider name)
@@ -149,7 +197,7 @@ not be forced through Codex handoff mode.
 
 ---
 
-## Rule 6: Silent Fallback Is Forbidden
+## Rule 7: Silent Fallback Is Forbidden
 
 Fallbacks must always be explicit. The ledger must contain:
 - `fallback_used: true`
@@ -165,7 +213,7 @@ unless fallback next-stage use is explicitly allowed.
 
 ---
 
-## Rule 7: external_agent_direct Is Never Trusted
+## Rule 8: external_agent_direct Is Never Trusted
 
 `external_agent_direct` always means:
 - `verification_status` = `unverified_external_execution`
@@ -176,7 +224,7 @@ It cannot be upgraded to `verified_routed_call` by changing the ledger entry.
 
 ---
 
-## Rule 8: No Masquerading
+## Rule 9: No Masquerading
 
 It is a violation to write `implementation_source=routed_internal_model` in an
 artifact when the work was done by an external agent. The ledger is the source of
@@ -184,7 +232,7 @@ truth. Artifacts that misrepresent their execution source are untrusted.
 
 ---
 
-## Rule 9: Dry-Run / Mock Cannot Be Real Evidence
+## Rule 10: Dry-Run / Mock Cannot Be Real Evidence
 
 `--dry-run` or `--mock-response` mode:
 - `verification_status` → `dry_run_untrusted`
@@ -196,7 +244,7 @@ evidence chain as verified outputs.
 
 ---
 
-## Rule 10: Fail Closed When Runner Is Unavailable
+## Rule 11: Fail Closed When Runner Is Unavailable
 
 If `trusted_role_runner.py` cannot execute (network failure, API unavailable,
 Codex MCP unavailable), the skill must fail — not substitute with external agent
@@ -207,7 +255,7 @@ This includes `unsupported_runtime_backend`, `call_failed`,
 
 ---
 
-## Rule 11: Artifact Provenance Header
+## Rule 12: Artifact Provenance Header
 
 All artifacts produced by trusted_role_runner.py must include:
 
@@ -228,6 +276,18 @@ fallback_reason:
 confidence_downgraded:
 verification_status:
 allowed_next_stage:
+routing_source:
+isolation_mode:
+task_id:
+context_manifest:
+allowed_input_files:
+forbidden_context:
+forbidden_context_checked:
+context_hash:
+prompt_file:
+response_file:
+source_boundary:
+contamination_scan_status:
 ---
 ```
 
@@ -235,7 +295,112 @@ Any artifact without this header from a ROLE_* task is untrusted.
 
 ---
 
-## Rule 12: User Slash Commands Work Without Extra Reminders
+## Rule 13: Role Context Rules
+
+### novelty_checker
+
+Allowed context:
+- 当前 candidate
+- 相关 literature
+- 明确检索结果
+- `LITERATURE_INDEX.md`
+- `GAP_MAP.md`
+
+Forbidden context:
+- 其他 candidates
+- 旧 novelty 结论
+- 用户偏好
+- generator trace
+- ad_hoc 结果
+- `RUNS/IDEA_CARDS/`
+
+### idea_reviewer / adversarial_reviewer
+
+Allowed context:
+- 当前 candidate
+- 必要背景
+- 明确 evidence
+
+Forbidden context:
+- generator trace
+- 其他 candidate
+- 旧评分
+- 用户偏好
+- 历史 praise
+
+### final_selector
+
+Allowed context:
+- canonical candidates
+- 独立 reviews
+- novelty reports
+- selection criteria
+
+Forbidden context:
+- raw brainstorm trace
+- 用户偏好
+- 旧 final selection
+- 外层 Agent 主观总结
+
+### experiment_implementer
+
+Allowed context:
+- experiment plan
+- final proposal
+- 必要代码上下文
+- research contract
+
+Forbidden context:
+- 旧失败解释
+- 未验证实验结果
+- 外层 Agent 自己的实现偏好
+
+### experiment_code_reviewer
+
+Allowed context:
+- 被审代码
+- 实验计划
+- metric 定义
+- data split 定义
+- expected behavior
+
+Forbidden context:
+- 实现者自我辩解
+- 外层 Agent 说“已经没问题”
+- 旧 positive review
+- 无关实验结果
+
+### result_judge
+
+Allowed context:
+- 实验结果
+- 日志
+- metric 定义
+- research contract
+
+Forbidden context:
+- 外层 Agent 主观乐观总结
+- 未验证结果
+- 旧 conclusion
+- mock/dry-run artifact
+
+### paper_writer / final_paper_auditor
+
+Allowed context:
+- verified results
+- research contract
+- approved claims
+- verified reviews
+
+Forbidden context:
+- unverified exploratory notes
+- `external_agent_direct` output
+- mock/dry-run artifact
+- 未验证结果
+
+---
+
+## Rule 14: User Slash Commands Work Without Extra Reminders
 
 Users running `/idea-discovery`, `/novelty-check`, `/exec-review`, `/experiment-plan`,
 `/experiment-bridge`, `/auto-review-loop`, `/paper-writing`, `/status` do NOT need
