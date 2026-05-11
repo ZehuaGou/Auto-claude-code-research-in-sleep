@@ -3156,6 +3156,62 @@ check("76c. trusted_role_runner.py generates artifact header with verification_s
 check("76d. trusted_role_runner.py generates artifact header with allowed_next_stage",
       "_build_artifact_header" in tr_src_check)
 
+# 77. trusted backend adapter architecture
+print("\n=== 77. trusted backend adapter architecture ===")
+backend_dir = ROOT / "tools" / "model_backends"
+backend_base = backend_dir / "base.py"
+backend_api = backend_dir / "openai_compatible.py"
+backend_codex = backend_dir / "codex_mcp.py"
+trusted_runner_src = trusted_runner.read_text(encoding="utf-8", errors="ignore") if trusted_runner.exists() else ""
+validate_src = val_model.read_text(encoding="utf-8", errors="ignore") if val_model.exists() else ""
+
+check("77a. tools/model_backends/base.py exists", backend_base.exists())
+check("77b. tools/model_backends/openai_compatible.py exists", backend_api.exists())
+check("77c. tools/model_backends/codex_mcp.py exists", backend_codex.exists())
+
+if backend_base.exists():
+    base_src = backend_base.read_text(encoding="utf-8", errors="ignore")
+    check("77d. base.py defines BackendResult", "class BackendResult" in base_src)
+else:
+    check("77d. base.py defines BackendResult", False)
+
+if backend_api.exists():
+    api_src = backend_api.read_text(encoding="utf-8", errors="ignore")
+    check("77e. openai_compatible.py fail-closes on config_missing", "config_missing" in api_src)
+    check("77f. openai_compatible.py reports api_call_failed", "api_call_failed" in api_src)
+else:
+    check("77e. openai_compatible.py fail-closes on config_missing", False)
+    check("77f. openai_compatible.py reports api_call_failed", False)
+
+if backend_codex.exists():
+    codex_src = backend_codex.read_text(encoding="utf-8", errors="ignore")
+    check("77g. codex_mcp.py declares unsupported_runtime_backend", "unsupported_runtime_backend" in codex_src)
+    check("77h. codex_mcp.py forbids missing thread ids", "codex_missing_thread_id" in codex_src)
+    check("77i. codex_mcp.py requires metadata-based thread extraction", "_extract_thread_id_from_metadata" in codex_src)
+else:
+    check("77g. codex_mcp.py declares unsupported_runtime_backend", False)
+    check("77h. codex_mcp.py forbids missing thread ids", False)
+    check("77i. codex_mcp.py requires metadata-based thread extraction", False)
+
+check("77j. trusted_role_runner.py no longer imports mcp_codex_client",
+      "mcp_codex_client" not in trusted_runner_src)
+check("77k. trusted_role_runner.py no longer imports llm_chat_client",
+      "llm_chat_client" not in trusted_runner_src)
+check("77l. trusted_role_runner.py defaults allowed_next_stage=false to exit 1",
+      "if result.get(\"allowed_next_stage\") is False:" in trusted_runner_src and "sys.exit(1)" in trusted_runner_src)
+check("77m. trusted_role_runner.py does not allow verified_with_fallback by default",
+      "--allow-fallback-next-stage" in trusted_runner_src and "verified_with_fallback" in trusted_runner_src)
+check("77n. trusted_role_runner.py marks dry-run as untrusted evidence",
+      "dry_run_untrusted" in trusted_runner_src and "completed_dry_run" in trusted_runner_src)
+check("77o. validate_model_invocation.py fails unsupported_runtime_backend",
+      "unsupported_runtime_backend" in validate_src)
+check("77p. validate_model_invocation.py fails call_failed",
+      "call_failed" in validate_src)
+check("77q. validate_model_invocation.py fails codex_missing_thread_id",
+      "codex_missing_thread_id" in validate_src)
+check("77r. trusted_role_runner.py uses tools/model_backends",
+      "call_codex_mcp" in trusted_runner_src and "call_openai_compatible" in trusted_runner_src)
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

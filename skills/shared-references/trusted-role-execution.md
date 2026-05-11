@@ -11,6 +11,10 @@
 The actual model invocation must happen through `tools/trusted_role_runner.py`,
 which records to the ledger and can be verified by `tools/validate_model_invocation.py`.
 
+`trusted_role_runner.py` must call backends through the explicit adapters in
+`tools/model_backends/`. It must not directly depend on ad hoc imports such as
+`mcp_codex_client` or `llm_chat_client`.
+
 ---
 
 ## Rule 1: External Agents Are Orchestrators Only
@@ -44,6 +48,9 @@ The runner will:
 2. Call the actual backend (Codex MCP or API)
 3. Record `codex_thread_id` (for Codex) or `actual_backend`/`actual_model` (for API)
 4. Write a provenance header in the output artifact
+
+If the current Python runtime has no explicit Codex MCP adapter, the runner must
+return `unsupported_runtime_backend` and fail closed.
 
 ---
 
@@ -99,6 +106,9 @@ Every Codex call must produce a `codex_thread_id`. Without it:
 - `confidence_downgraded` → `true`
 
 No skill may claim "Codex review completed" without a valid `codex_thread_id`.
+Do not fabricate `codex_thread_id` from normal CLI output, commit hashes,
+human-written strings, or model self-description. Only real Codex tool/session
+metadata is acceptable.
 
 ---
 
@@ -110,6 +120,8 @@ For non-Codex backends (DeepSeek, Kimi, etc.), the ledger must contain:
 - `ledger_call_id`
 
 Missing either → `verification_status` → `missing_actual_backend`.
+If the backend is configured but missing API key, `base_url`, or model, the
+runner must mark the call as `call_failed` and fail closed.
 
 ---
 
@@ -122,6 +134,10 @@ Fallbacks must always be explicit. The ledger must contain:
 Without `fallback_reason`:
 - `verification_status` → `fallback_unverified`
 - `allowed_next_stage` → `false`
+
+`verified_with_fallback` does not automatically permit the next stage. The
+default is `allowed_next_stage=false`, and `trusted_role_runner.py` must exit 1
+unless fallback next-stage use is explicitly allowed.
 
 ---
 
@@ -161,6 +177,9 @@ evidence chain as verified outputs.
 If `trusted_role_runner.py` cannot execute (network failure, API unavailable,
 Codex MCP unavailable), the skill must fail — not substitute with external agent
 output. The framework must not proceed with untrusted results.
+
+This includes `unsupported_runtime_backend`, `call_failed`,
+`codex_missing_thread_id`, and `dry_run_untrusted`.
 
 ---
 
@@ -218,6 +237,9 @@ with `allowed_next_stage=true` can proceed to the next stage.
 ## Reference Implementation
 
 - `tools/trusted_role_runner.py` — trusted execution entry point
+- `tools/model_backends/base.py` — shared backend result contract
+- `tools/model_backends/openai_compatible.py` — OpenAI-compatible API adapter
+- `tools/model_backends/codex_mcp.py` — Codex MCP adapter with fail-closed runtime detection
 - `tools/llm_call_ledger.py` — ledger with trust fields
 - `tools/validate_model_invocation.py` — trust verification
 - `tools/model_route.py` — routing declaration (no real calls)

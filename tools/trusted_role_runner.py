@@ -1,23 +1,13 @@
 #!/usr/bin/env python3
 """
-ARIS Trusted Role Runner — Single Trusted Entry Point for All ROLE_* Tasks.
-
-This is the ONLY trusted execution path for ARIS ROLE_* tasks.
-
-Usage:
-    python tools/trusted_role_runner.py --role <role> --input <file_or_text> --output <artifact_path>
-    python tools/trusted_role_runner.py --role <role> --input <file_or_text> --output <artifact_path> --require-codex-thread
-    python tools/trusted_role_runner.py --role <role> --input <file_or_text> --output <artifact_path> --dry-run
-    python tools/trusted_role_runner.py --role <role> --input <file_or_text> --output <artifact_path> --mock-response <text>
-    python tools/trusted_role_runner.py --summary
-    python tools/trusted_role_runner.py --self-test
+ARIS Trusted Role Runner - Single trusted entry point for ROLE_* execution.
 
 Rules:
-- model_route.py only resolves routing config — it does NOT call any model.
-- This runner calls the actual backend (Codex MCP or API) and records to ledger.
-- External agents cannot masquerade as routed_internal_model.
-- dry-run / mock cannot be marked as verified_routed_call.
-- If runner fails, must fail closed — no external agent substitution.
+- model_route.py declares routing only; it does not call any backend.
+- Real ROLE_* trust requires a backend call through tools/model_backends/.
+- Codex trust requires a real codex_thread_id from backend metadata.
+- Dry-run/mock are self-test helpers only and can never enter the next stage.
+- If the runner cannot verify the backend call, it fails closed.
 """
 
 from __future__ import annotations
@@ -35,6 +25,7 @@ TOOLS_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(TOOLS_DIR))
 
 from env_loader import find_project_root
+from model_backends import BackendResult, call_codex_mcp, call_openai_compatible
 
 
 def _get_ledger_path() -> Path:
@@ -45,20 +36,21 @@ def _get_ledger_path() -> Path:
     return root / ".aris" / "calls" / "llm_calls.jsonl"
 
 
-def _read_ledger(ledger_path: Optional[Path] = None) -> list:
+def _read_ledger(ledger_path: Optional[Path] = None) -> list[Dict[str, Any]]:
     path = ledger_path or _get_ledger_path()
     if not path.exists():
         return []
-    calls = []
+    calls: list[Dict[str, Any]] = []
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
                 line = line.strip()
-                if line:
-                    try:
-                        calls.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
+                if not line:
+                    continue
+                try:
+                    calls.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
     except Exception:
         pass
     return calls
@@ -67,89 +59,47 @@ def _read_ledger(ledger_path: Optional[Path] = None) -> list:
 def _write_ledger_entry(entry: Dict[str, Any], ledger_path: Optional[Path] = None) -> None:
     path = ledger_path or _get_ledger_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def _resolve_role(role: str) -> Dict[str, Any]:
-    """Resolve role to expected backend/model via model_route.py (config only, no API call)."""
     try:
-        sys.path.insert(0, str(TOOLS_DIR))
         import model_route as mr
-        result = mr.resolve_role(role)
+
+        route_config = mr.resolve_role(role)
         return {
-            "expected_backend": result.get("backend_type", "") or result.get("primary_backend", ""),
-            "expected_model": result.get("model", "") or result.get("primary_model", ""),
-            "expected_provider": result.get("provider", ""),
-            "requires_api_key": result.get("requires_api_key", False),
-            "route_config": result,
+            "expected_backend": route_config.get("backend_type", "") or route_config.get("primary_backend", ""),
+            "expected_model": route_config.get("model", "") or route_config.get("primary_model", ""),
+            "expected_provider": route_config.get("provider", ""),
+            "route_config": route_config,
         }
-    except Exception as e:
+    except Exception as exc:
         return {
             "expected_backend": "",
             "expected_model": "",
             "expected_provider": "",
-            "requires_api_key": False,
             "route_config": {},
-            "error": str(e),
+            "error": str(exc),
         }
 
 
-def _auto_verify(entry: Dict[str, Any]) -> tuple[str, bool, bool]:
-    """Auto-determine verification_status, allowed_next_stage, confidence_downgraded."""
-    impl_source = entry.get("implementation_source", "external_agent_direct")
-    routed_used = entry.get("routed_model_used", False)
-    actual_backend = entry.get("actual_backend", "")
-    actual_model = entry.get("actual_model", "")
-    codex_thread_id = entry.get("codex_thread_id", "")
-    fallback_used = entry.get("fallback_used", False)
-    fallback_reason = entry.get("fallback_reason", "")
-    dry_run = entry.get("dry_run", False)
-
-    if dry_run:
-        return ("dry_run_untrusted", False, True)
-
-    if impl_source == "external_agent_direct":
-        return ("unverified_external_execution", False, True)
-
-    if routed_used and not actual_backend:
-        return ("missing_actual_backend", False, True)
-
-    if actual_backend == "codex":
-        if not codex_thread_id or codex_thread_id.strip() in ("", "none"):
-            return ("codex_missing_thread_id", False, True)
-        return ("verified_routed_call", True, False)
-
-    if fallback_used:
-        if fallback_reason:
-            return ("verified_with_fallback", False, True)
-        return ("fallback_unverified", False, True)
-
-    if impl_source == "routed_internal_model" and actual_backend and actual_model:
-        return ("verified_routed_call", True, False)
-
-    return ("started_unverified", False, True)
+def _load_input_spec(input_spec: str) -> str:
+    candidate = Path(input_spec)
+    if candidate.exists() and candidate.is_file():
+        return candidate.read_text(encoding="utf-8", errors="ignore")
+    return input_spec
 
 
-def cmd_start(
-    role: str,
-    ledger_path: Optional[Path] = None,
-    implementation_source: str = "routed_internal_model",
-    routed_model_used: bool = True,
-    global_codex_gate_mode: str = "",
-    routing_source: str = "",
-) -> Dict[str, Any]:
-    """Start a trusted role call — create ledger entry with conservative defaults."""
+def _build_started_entry(role: str, resolved: Dict[str, Any]) -> Dict[str, Any]:
     call_id = f"call_{uuid.uuid4().hex[:12]}"
-    resolved = _resolve_role(role)
-
-    entry = {
+    return {
         "call_id": call_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "role": role,
         "status": "started",
-        "implementation_source": implementation_source,
-        "routed_model_used": routed_model_used,
+        "implementation_source": "routed_internal_model",
+        "routed_model_used": True,
         "route_role": role,
         "route_expected_backend": resolved.get("expected_backend", ""),
         "route_expected_model": resolved.get("expected_model", ""),
@@ -162,57 +112,102 @@ def cmd_start(
         "verification_status": "started_unverified",
         "allowed_next_stage": False,
         "confidence_downgraded": True,
-        "global_codex_gate_mode": global_codex_gate_mode,
-        "routing_source": routing_source or "trusted_role_runner",
+        "routing_source": "trusted_role_runner",
+        "global_codex_gate_mode": "",
         "dry_run": False,
+        "error": None,
+        "error_code": None,
+        "raw_metadata": {},
+        "allow_fallback_next_stage": False,
     }
 
-    _write_ledger_entry(entry, ledger_path)
-    return entry
+
+def _auto_verify(entry: Dict[str, Any]) -> tuple[str, bool, bool]:
+    impl_source = entry.get("implementation_source", "external_agent_direct")
+    routed_used = entry.get("routed_model_used", False)
+    actual_backend = str(entry.get("actual_backend", "") or "")
+    actual_model = str(entry.get("actual_model", "") or "")
+    codex_thread_id = str(entry.get("codex_thread_id", "") or "")
+    fallback_used = bool(entry.get("fallback_used", False))
+    fallback_reason = str(entry.get("fallback_reason", "") or "")
+    dry_run = bool(entry.get("dry_run", False))
+    status = str(entry.get("status", "") or "")
+    error_code = str(entry.get("error_code", "") or "")
+
+    if dry_run:
+        return ("dry_run_untrusted", False, True)
+
+    if status == "failed":
+        if error_code == "unsupported_runtime_backend":
+            return ("unsupported_runtime_backend", False, True)
+        if error_code == "codex_missing_thread_id":
+            return ("codex_missing_thread_id", False, True)
+        return ("call_failed", False, True)
+
+    if impl_source == "external_agent_direct":
+        return ("unverified_external_execution", False, True)
+
+    if routed_used and not actual_backend:
+        return ("missing_actual_backend", False, True)
+
+    if actual_backend == "codex":
+        if not codex_thread_id or codex_thread_id.strip().lower() == "none":
+            return ("codex_missing_thread_id", False, True)
+
+    if fallback_used:
+        if actual_backend and actual_model and fallback_reason:
+            allowed = bool(entry.get("allow_fallback_next_stage", False))
+            return ("verified_with_fallback", allowed, True)
+        return ("fallback_unverified", False, True)
+
+    if impl_source == "routed_internal_model" and actual_backend and actual_model:
+        return ("verified_routed_call", True, False)
+
+    return ("started_unverified", False, True)
 
 
-def cmd_finish(
-    call_id: str,
-    output: str,
-    ledger_path: Optional[Path] = None,
+def _finalize_entry(
+    entry: Dict[str, Any],
+    *,
+    ledger_path: Optional[Path],
+    status: str,
+    output_text: str,
     actual_backend: str = "",
     actual_model: str = "",
     codex_thread_id: str = "",
     fallback_used: bool = False,
     fallback_reason: str = "",
     dry_run: bool = False,
+    error: Optional[str] = None,
+    error_code: Optional[str] = None,
+    raw_metadata: Optional[Dict[str, Any]] = None,
+    allow_fallback_next_stage: bool = False,
 ) -> Dict[str, Any]:
-    """Finish a trusted role call — update ledger entry with verification."""
-    entries = _read_ledger(ledger_path)
-    entry = None
-    for e in reversed(entries):
-        if e.get("call_id") == call_id:
-            entry = dict(e)
-            break
+    finished = dict(entry)
+    finished["status"] = status
+    finished["completed_at"] = datetime.now(timezone.utc).isoformat()
+    finished["actual_backend"] = actual_backend
+    finished["actual_model"] = actual_model
+    finished["codex_thread_id"] = codex_thread_id
+    finished["fallback_used"] = fallback_used
+    finished["fallback_reason"] = fallback_reason
+    finished["dry_run"] = dry_run
+    finished["error"] = error
+    finished["error_code"] = error_code
+    finished["raw_metadata"] = raw_metadata or {}
+    finished["allow_fallback_next_stage"] = allow_fallback_next_stage
 
-    if not entry:
-        raise ValueError(f"Call {call_id} not found in ledger")
+    verification_status, allowed_next_stage, confidence_downgraded = _auto_verify(finished)
+    finished["verification_status"] = verification_status
+    finished["allowed_next_stage"] = allowed_next_stage
+    finished["confidence_downgraded"] = confidence_downgraded
+    finished["output_text"] = output_text
 
-    entry["status"] = "completed" if not dry_run else "completed_dry_run"
-    entry["actual_backend"] = actual_backend
-    entry["actual_model"] = actual_model
-    entry["codex_thread_id"] = codex_thread_id
-    entry["fallback_used"] = fallback_used
-    entry["fallback_reason"] = fallback_reason
-    entry["dry_run"] = dry_run
-
-    verification_status, allowed_next_stage, confidence_downgraded = _auto_verify(entry)
-    entry["verification_status"] = verification_status
-    entry["allowed_next_stage"] = allowed_next_stage
-    entry["confidence_downgraded"] = confidence_downgraded
-
-    # Rewrite ledger (append completed entry)
-    _write_ledger_entry(entry, ledger_path)
-    return entry
+    _write_ledger_entry(finished, ledger_path)
+    return finished
 
 
 def _build_artifact_header(entry: Dict[str, Any]) -> str:
-    """Build provenance header for output artifact."""
     lines = [
         "---",
         f"implementation_source: {entry.get('implementation_source', 'unknown')}",
@@ -230,9 +225,44 @@ def _build_artifact_header(entry: Dict[str, Any]) -> str:
         f"confidence_downgraded: {entry.get('confidence_downgraded', True)}",
         f"verification_status: {entry.get('verification_status', 'unknown')}",
         f"allowed_next_stage: {entry.get('allowed_next_stage', False)}",
+        f"status: {entry.get('status', '')}",
+        f"error_code: {entry.get('error_code', '') or ''}",
+        f"error: {entry.get('error', '') or ''}",
         "---",
     ]
     return "\n".join(lines)
+
+
+def _write_artifact(output_path: Optional[str], entry: Dict[str, Any], body: str) -> None:
+    if not output_path:
+        return
+    header = _build_artifact_header(entry)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as handle:
+        handle.write(f"{header}\n\n{body}".rstrip() + "\n")
+
+
+def _call_backend(route_config: Dict[str, Any], prompt: str) -> BackendResult:
+    backend_type = str(route_config.get("backend_type", "") or route_config.get("primary_backend", ""))
+    if backend_type == "mcp":
+        return call_codex_mcp(route_config, prompt)
+    if backend_type in ("openai_compatible_api", "llm-chat"):
+        return call_openai_compatible(route_config, prompt)
+    return BackendResult(
+        ok=False,
+        actual_backend=str(route_config.get("provider", "") or ""),
+        actual_model=str(route_config.get("model", "") or ""),
+        output_text="",
+        error="call_failed",
+        raw_metadata={"reason": f"unknown backend_type {backend_type}"},
+    )
+
+
+def _resolve_explicit_fallback_route(route_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    fallback = route_config.get("fallback_route_config")
+    if isinstance(fallback, dict) and fallback:
+        return fallback
+    return None
 
 
 def run_trusted(
@@ -243,144 +273,121 @@ def run_trusted(
     dry_run: bool = False,
     mock_response: str = "",
     ledger_path: Optional[Path] = None,
+    allow_fallback_next_stage: bool = False,
+    *,
+    _resolved_override: Optional[Dict[str, Any]] = None,
+    _forced_primary_result: Optional[BackendResult] = None,
+    _forced_fallback_result: Optional[BackendResult] = None,
+    _fallback_route_override: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Run a trusted role execution."""
-    resolved = _resolve_role(role)
-    expected_backend = resolved.get("expected_backend", "")
-    expected_model = resolved.get("expected_model", "")
+    resolved = _resolved_override or _resolve_role(role)
+    route_config = dict(resolved.get("route_config", {}))
+    input_text = _load_input_spec(input_spec)
 
-    # Start ledger
-    entry = cmd_start(
-        role=role,
-        ledger_path=ledger_path,
-        implementation_source="routed_internal_model",
-        routed_model_used=True,
-        routing_source="trusted_role_runner",
-    )
-    call_id = entry["call_id"]
-
-    actual_backend = ""
-    actual_model = ""
-    codex_thread_id = ""
-    fallback_used = False
-    fallback_reason = ""
-    output_text = ""
+    entry = _build_started_entry(role, resolved)
+    entry["route_expected_backend"] = resolved.get("expected_backend", "")
+    entry["route_expected_model"] = resolved.get("expected_model", "")
+    if require_codex_thread:
+        entry["route_requires_codex_thread"] = True
+    _write_ledger_entry(entry, ledger_path)
 
     if dry_run:
-        output_text = mock_response or f"[DRY-RUN] {role} output for: {input_spec[:200]}"
-        entry = cmd_finish(
-            call_id=call_id,
-            output=output_text,
+        finished = _finalize_entry(
+            entry,
             ledger_path=ledger_path,
+            status="completed_dry_run",
+            output_text=mock_response or f"[DRY-RUN] {role} output for: {input_text[:200]}",
             actual_backend="dry_run",
             actual_model="dry_run",
             dry_run=True,
         )
-        # Dry-run always exits non-zero (not a real execution)
-        print(json.dumps(entry, ensure_ascii=False, indent=2))
-        sys.exit(1)
-    else:
-        # Real execution path — call the actual backend
-        # If backend client is unavailable, fail closed (write failed entry, exit non-zero)
-        if expected_backend == "mcp":
-            # Codex MCP call — requires mcp_codex_client
-            try:
-                sys.path.insert(0, str(TOOLS_DIR))
-                import mcp_codex_client
-                client = mcp_codex_client.CodexMCPClient()
-                thread_id = client.call(input_spec)
-                codex_thread_id = thread_id
-                entry = cmd_finish(
-                    call_id=call_id,
-                    output="[Codex MCP call made]",
-                    ledger_path=ledger_path,
-                    actual_backend="codex",
-                    actual_model=expected_model,
-                    codex_thread_id=codex_thread_id,
-                )
-            except (ImportError, ModuleNotFoundError, AttributeError) as e:
-                # Client not available — fail closed
-                entry["status"] = "failed"
-                entry["verification_status"] = "call_failed"
-                entry["allowed_next_stage"] = False
-                entry["confidence_downgraded"] = True
-                entry["error"] = f"mcp_codex_client not available: {e}"
-                _write_ledger_entry(entry, ledger_path)
-                print(json.dumps(entry, ensure_ascii=False, indent=2), file=sys.stderr)
-                sys.exit(1)
-            except Exception as e:
-                # Real call failed — fail closed
-                entry["status"] = "failed"
-                entry["verification_status"] = "call_failed"
-                entry["allowed_next_stage"] = False
-                entry["confidence_downgraded"] = True
-                entry["error"] = f"codex call failed: {e}"
-                _write_ledger_entry(entry, ledger_path)
-                print(json.dumps(entry, ensure_ascii=False, indent=2), file=sys.stderr)
-                sys.exit(1)
-        elif expected_backend in ("openai_compatible_api", "llm-chat"):
-            # API call (DeepSeek, Kimi, etc.) — requires llm_chat_client
-            provider = resolved.get("expected_provider", "deepseek")
-            try:
-                sys.path.insert(0, str(TOOLS_DIR))
-                import llm_chat_client
-                result = llm_chat_client.call(
-                    provider=provider,
-                    model=expected_model,
-                    prompt=input_spec,
-                )
-                output_text = result
-                entry = cmd_finish(
-                    call_id=call_id,
-                    output=output_text,
-                    ledger_path=ledger_path,
-                    actual_backend=provider,
-                    actual_model=expected_model,
-                )
-            except (ImportError, ModuleNotFoundError, AttributeError) as e:
-                # Client not available — fail closed
-                entry["status"] = "failed"
-                entry["verification_status"] = "call_failed"
-                entry["allowed_next_stage"] = False
-                entry["confidence_downgraded"] = True
-                entry["error"] = f"llm_chat_client not available: {e}"
-                _write_ledger_entry(entry, ledger_path)
-                print(json.dumps(entry, ensure_ascii=False, indent=2), file=sys.stderr)
-                sys.exit(1)
-            except Exception as e:
-                # Real call failed — fail closed
-                entry["status"] = "failed"
-                entry["verification_status"] = "call_failed"
-                entry["allowed_next_stage"] = False
-                entry["confidence_downgraded"] = True
-                entry["error"] = f"api call failed: {e}"
-                _write_ledger_entry(entry, ledger_path)
-                print(json.dumps(entry, ensure_ascii=False, indent=2), file=sys.stderr)
-                sys.exit(1)
-        else:
-            # Unknown backend — fail closed
-            entry["status"] = "failed"
-            entry["verification_status"] = "call_failed"
-            entry["allowed_next_stage"] = False
-            entry["confidence_downgraded"] = True
-            entry["error"] = f"unknown backend: {expected_backend}"
-            _write_ledger_entry(entry, ledger_path)
-            print(json.dumps(entry, ensure_ascii=False, indent=2), file=sys.stderr)
-            sys.exit(1)
+        _write_artifact(output_path, finished, finished["output_text"])
+        finished["exit_code"] = 1
+        return finished
 
-    # Write output artifact
-    if output_path:
-        header = _build_artifact_header(entry)
-        artifact_content = f"{header}\n\n{output_text or entry.get('status', '')}"
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(artifact_content)
+    primary_result = _forced_primary_result or _call_backend(route_config, input_text)
+    if primary_result.ok:
+        finished = _finalize_entry(
+            entry,
+            ledger_path=ledger_path,
+            status="completed",
+            output_text=primary_result.output_text,
+            actual_backend=primary_result.actual_backend,
+            actual_model=primary_result.actual_model,
+            codex_thread_id=primary_result.codex_thread_id or "",
+            raw_metadata=primary_result.raw_metadata,
+        )
+        _write_artifact(output_path, finished, primary_result.output_text)
+        finished["exit_code"] = 0 if finished.get("allowed_next_stage") else 1
+        return finished
 
-    return entry
+    fallback_route = _fallback_route_override or _resolve_explicit_fallback_route(route_config)
+    if fallback_route is not None:
+        fallback_reason = (
+            "primary backend failed"
+            if primary_result.error in ("call_failed", "api_call_failed")
+            else f"primary backend unavailable: {primary_result.error or 'unknown'}"
+        )
+        fallback_result = _forced_fallback_result or _call_backend(fallback_route, input_text)
+        if fallback_result.ok:
+            finished = _finalize_entry(
+                entry,
+                ledger_path=ledger_path,
+                status="completed_with_fallback",
+                output_text=fallback_result.output_text,
+                actual_backend=fallback_result.actual_backend,
+                actual_model=fallback_result.actual_model,
+                codex_thread_id=fallback_result.codex_thread_id or "",
+                fallback_used=True,
+                fallback_reason=fallback_reason,
+                raw_metadata={
+                    "primary_failure": primary_result.raw_metadata,
+                    "fallback_success": fallback_result.raw_metadata,
+                },
+                allow_fallback_next_stage=allow_fallback_next_stage,
+            )
+            _write_artifact(output_path, finished, fallback_result.output_text)
+            finished["exit_code"] = 0 if finished.get("allowed_next_stage") else 1
+            return finished
+
+        primary_result = BackendResult(
+            ok=False,
+            actual_backend=primary_result.actual_backend or fallback_result.actual_backend,
+            actual_model=primary_result.actual_model or fallback_result.actual_model,
+            output_text="",
+            error="call_failed",
+            raw_metadata={
+                "primary_failure": primary_result.raw_metadata,
+                "fallback_failure": fallback_result.raw_metadata,
+                "fallback_error": fallback_result.error,
+            },
+        )
+
+    error_code = primary_result.error or "call_failed"
+    if error_code == "config_missing":
+        error_code = "call_failed"
+    if error_code not in ("unsupported_runtime_backend", "codex_missing_thread_id", "call_failed"):
+        error_code = "call_failed"
+
+    error_body = json.dumps(primary_result.raw_metadata, ensure_ascii=False, indent=2)
+    finished = _finalize_entry(
+        entry,
+        ledger_path=ledger_path,
+        status="failed",
+        output_text="",
+        actual_backend=primary_result.actual_backend,
+        actual_model=primary_result.actual_model,
+        codex_thread_id=primary_result.codex_thread_id or "",
+        error=primary_result.error or "call_failed",
+        error_code=error_code,
+        raw_metadata=primary_result.raw_metadata,
+    )
+    _write_artifact(output_path, finished, error_body)
+    finished["exit_code"] = 1
+    return finished
 
 
 def cmd_summary(ledger_path: Optional[Path] = None) -> Dict[str, Any]:
-    """Show recent trusted role executions."""
     entries = _read_ledger(ledger_path)
     trusted = [e for e in entries if e.get("routing_source") == "trusted_role_runner" or e.get("route_role")]
     recent = trusted[-20:] if trusted else []
@@ -391,10 +398,9 @@ def cmd_summary(ledger_path: Optional[Path] = None) -> Dict[str, Any]:
                 "call_id": e.get("call_id", ""),
                 "role": e.get("role", ""),
                 "status": e.get("status", ""),
-                "implementation_source": e.get("implementation_source", ""),
                 "verification_status": e.get("verification_status", ""),
                 "allowed_next_stage": e.get("allowed_next_stage", False),
-                "confidence_downgraded": e.get("confidence_downgraded", True),
+                "error_code": e.get("error_code"),
             }
             for e in recent
         ],
@@ -402,168 +408,256 @@ def cmd_summary(ledger_path: Optional[Path] = None) -> Dict[str, Any]:
 
 
 def cmd_self_test() -> bool:
-    """Run self-test using temporary ledger. No real API calls."""
-    import subprocess
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-        temp_path = Path(f.name).resolve()
-
+    before_status = None
     try:
-        # Test 1: dry-run mode → dry_run_untrusted, allowed_next_stage=false
-        # Run in subprocess so sys.exit(1) doesn't kill the test harness
-        result = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve()),
-             "--role", "idea_generator",
-             "--input", "test input for dry run",
-             "--dry-run",
-             "--ledger-path", str(temp_path)],
-            capture_output=True, text=True, timeout=30,
-        )
-        # Exit code 1 is expected (dry-run is rejected)
-        assert result.returncode == 1, f"Expected exit 1 for dry-run, got {result.returncode}"
-        # Verify the ledger entry was written before exit
-        entries = _read_ledger(temp_path)
-        dry_run_entries = [e for e in entries if e.get("status") == "completed_dry_run"]
-        assert len(dry_run_entries) >= 1, f"Expected at least 1 dry_run entry, got {len(dry_run_entries)}"
-        entry1 = dry_run_entries[0]
-        assert entry1["verification_status"] == "dry_run_untrusted", \
-            f"Expected dry_run_untrusted, got {entry1['verification_status']}"
-        assert entry1["allowed_next_stage"] is False, \
-            "dry_run should not allow next stage"
-        assert entry1["confidence_downgraded"] is True
-
-        # Test 2: external_agent_direct via ledger entry
-        ext_entry = {
-            "call_id": f"call_{uuid.uuid4().hex[:12]}",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "role": "experiment_implementer",
-            "status": "completed",
-            "implementation_source": "external_agent_direct",
-            "routed_model_used": False,
-            "route_role": "experiment_implementer",
-            "route_expected_backend": "openai_compatible_api",
-            "route_expected_model": "deepseek-v4-pro",
-            "external_agent_name": "test_external_agent",
-            "actual_backend": "external_agent",
-            "actual_model": "unknown",
-            "verification_status": "unverified_external_execution",
-            "allowed_next_stage": False,
-            "confidence_downgraded": True,
-            "dry_run": False,
-        }
-        _write_ledger_entry(ext_entry, temp_path)
-
-        # Test 3: routed_internal_model with actual backend
-        start = cmd_start(role="novelty_checker", ledger_path=temp_path)
-        call_id = start["call_id"]
-        finish = cmd_finish(
-            call_id=call_id,
-            output="mock novelty output",
-            ledger_path=temp_path,
-            actual_backend="codex",
-            actual_model="auto",
-            codex_thread_id="thread_test_abc123",
-        )
-        assert finish["verification_status"] == "verified_routed_call", \
-            f"Expected verified_routed_call, got {finish['verification_status']}"
-        assert finish["allowed_next_stage"] is True
-        assert finish["confidence_downgraded"] is False
-
-        # Test 4: codex without thread_id → codex_missing_thread_id
-        start2 = cmd_start(role="idea_reviewer", ledger_path=temp_path)
-        call_id2 = start2["call_id"]
-        finish2 = cmd_finish(
-            call_id=call_id2,
-            output="codex output",
-            ledger_path=temp_path,
-            actual_backend="codex",
-            actual_model="auto",
-            codex_thread_id="",
-        )
-        assert finish2["verification_status"] == "codex_missing_thread_id", \
-            f"Expected codex_missing_thread_id, got {finish2['verification_status']}"
-        assert finish2["allowed_next_stage"] is False
-
-        # Test 5: fallback without reason → fallback_unverified
-        start3 = cmd_start(role="final_selector", ledger_path=temp_path)
-        call_id3 = start3["call_id"]
-        finish3 = cmd_finish(
-            call_id=call_id3,
-            output="fallback output",
-            ledger_path=temp_path,
-            actual_backend="llm-chat",
-            actual_model="deepseek-v4-flash",
-            fallback_used=True,
-            fallback_reason="",
-        )
-        assert finish3["verification_status"] == "fallback_unverified", \
-            f"Expected fallback_unverified, got {finish3['verification_status']}"
-
-        # Test 6: fallback with reason → verified_with_fallback
-        start4 = cmd_start(role="paper_writer", ledger_path=temp_path)
-        call_id4 = start4["call_id"]
-        finish4 = cmd_finish(
-            call_id=call_id4,
-            output="paper content",
-            ledger_path=temp_path,
-            actual_backend="llm-chat",
-            actual_model="deepseek-v4-pro",
-            fallback_used=True,
-            fallback_reason="codex unavailable",
-        )
-        assert finish4["verification_status"] == "verified_with_fallback", \
-            f"Expected verified_with_fallback, got {finish4['verification_status']}"
-
-        # Test 7: routed_model_used=true but missing actual_backend
-        start5 = cmd_start(role="result_judge", ledger_path=temp_path)
-        call_id5 = start5["call_id"]
-        # Manually add entry with missing actual_backend
-        entries = _read_ledger(temp_path)
-        for e in entries:
-            if e["call_id"] == call_id5:
-                e["actual_backend"] = ""
-                e["actual_model"] = ""
-        # Rewrite
-        with open(temp_path, "w") as f:
-            for e in entries:
-                f.write(json.dumps(e) + "\n")
-        verify_result = _auto_verify({"routed_model_used": True, "actual_backend": "", "implementation_source": "routed_internal_model"})
-        assert verify_result[0] == "missing_actual_backend"
-
-        # Test 8: summary works
-        summary = cmd_summary(temp_path)
-        assert summary["total_calls"] >= 4
-
-        print("SELF-TEST RESULTS:")
-        print(f"  Test 1 (dry-run): exit={result.returncode}, verification_status={entry1['verification_status']}, allowed_next_stage={entry1['allowed_next_stage']} [OK]")
-        print(f"  Test 2 (external_agent_direct): [OK]")
-        print(f"  Test 3 (routed_internal_model+codex_thread): verification_status={finish['verification_status']}, allowed_next_stage={finish['allowed_next_stage']} [OK]")
-        print(f"  Test 4 (codex no thread): verification_status={finish2['verification_status']}, allowed_next_stage={finish2['allowed_next_stage']} [OK]")
-        print(f"  Test 5 (fallback no reason): verification_status={finish3['verification_status']} [OK]")
-        print(f"  Test 6 (fallback with reason): verification_status={finish4['verification_status']} [OK]")
-        print(f"  Test 7 (missing actual_backend): {verify_result[0]} [OK]")
-        print(f"  Test 8 (summary): total_calls={summary['total_calls']} [OK]")
-
-        # Verify .aris unchanged (we used temp ledger)
         import subprocess
-        status_r = subprocess.run(
+
+        before_status = subprocess.run(
             ["git", "status", "--short", ".aris/"],
-            capture_output=True, text=True,
-            cwd=str(find_project_root())
-        )
-        aris_changed = bool(status_r.stdout.strip())
-        if aris_changed:
-            print(f"WARNING: .aris/ changed during self-test: {status_r.stdout.strip()}")
-        else:
-            print(".aris/ unchanged during self-test [OK]")
+            capture_output=True,
+            text=True,
+            cwd=str(find_project_root()),
+            timeout=30,
+        ).stdout.strip()
+    except Exception:
+        before_status = None
 
-        print("\nAll self-tests passed!")
-        return True
-    finally:
-        os.unlink(temp_path)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as handle:
+        ledger_path = Path(handle.name).resolve()
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        artifact_path = str(Path(tmp_dir) / "trusted_output.md")
+        try:
+            dry_run_result = run_trusted(
+                role="idea_generator",
+                input_spec="dry-run input",
+                ledger_path=ledger_path,
+                dry_run=True,
+                mock_response="dry-run output",
+            )
+            assert dry_run_result["verification_status"] == "dry_run_untrusted"
+            assert dry_run_result["allowed_next_stage"] is False
+            assert dry_run_result["exit_code"] == 1
+
+            unsupported_result = run_trusted(
+                role="idea_reviewer",
+                input_spec="codex task",
+                ledger_path=ledger_path,
+                _resolved_override={
+                    "expected_backend": "mcp",
+                    "expected_model": "auto",
+                    "expected_provider": "codex",
+                    "route_config": {
+                        "backend_type": "mcp",
+                        "provider": "codex",
+                        "model": "auto",
+                    },
+                },
+            )
+            assert unsupported_result["verification_status"] == "unsupported_runtime_backend"
+            assert unsupported_result["exit_code"] == 1
+
+            config_missing_result = run_trusted(
+                role="paper_writer",
+                input_spec="api task",
+                ledger_path=ledger_path,
+                _resolved_override={
+                    "expected_backend": "openai_compatible_api",
+                    "expected_model": "deepseek-v4-pro",
+                    "expected_provider": "deepseek",
+                    "route_config": {
+                        "backend_type": "openai_compatible_api",
+                        "provider": "deepseek",
+                        "model": "deepseek-v4-pro",
+                        "api_key_env": "DEEPSEEK_API_KEY",
+                        "base_url": "",
+                    },
+                },
+            )
+            assert config_missing_result["verification_status"] == "call_failed"
+            assert config_missing_result["exit_code"] == 1
+
+            codex_success = run_trusted(
+                role="novelty_checker",
+                input_spec="codex fixture",
+                output_path=artifact_path,
+                ledger_path=ledger_path,
+                _resolved_override={
+                    "expected_backend": "mcp",
+                    "expected_model": "auto",
+                    "expected_provider": "codex",
+                    "route_config": {
+                        "backend_type": "mcp",
+                        "provider": "codex",
+                        "model": "auto",
+                    },
+                },
+                _forced_primary_result=BackendResult(
+                    ok=True,
+                    actual_backend="codex",
+                    actual_model="auto",
+                    output_text="codex success",
+                    codex_thread_id="fixture-thread-001",
+                    raw_metadata={"threadId": "fixture-thread-001"},
+                ),
+            )
+            assert codex_success["verification_status"] == "verified_routed_call"
+            assert codex_success["allowed_next_stage"] is True
+            assert codex_success["exit_code"] == 0
+            artifact_text = Path(artifact_path).read_text(encoding="utf-8")
+            assert "ledger_call_id:" in artifact_text
+            assert "verification_status: verified_routed_call" in artifact_text
+
+            missing_thread = run_trusted(
+                role="idea_reviewer",
+                input_spec="codex missing thread",
+                ledger_path=ledger_path,
+                _resolved_override={
+                    "expected_backend": "mcp",
+                    "expected_model": "auto",
+                    "expected_provider": "codex",
+                    "route_config": {
+                        "backend_type": "mcp",
+                        "provider": "codex",
+                        "model": "auto",
+                    },
+                },
+                _forced_primary_result=BackendResult(
+                    ok=False,
+                    actual_backend="codex",
+                    actual_model="auto",
+                    output_text="",
+                    codex_thread_id=None,
+                    error="codex_missing_thread_id",
+                    raw_metadata={"metadata": {"threadId": ""}},
+                ),
+            )
+            assert missing_thread["verification_status"] == "codex_missing_thread_id"
+            assert missing_thread["exit_code"] == 1
+
+            fallback_blocked = run_trusted(
+                role="final_selector",
+                input_spec="fallback blocked",
+                ledger_path=ledger_path,
+                _resolved_override={
+                    "expected_backend": "mcp",
+                    "expected_model": "auto",
+                    "expected_provider": "codex",
+                    "route_config": {
+                        "backend_type": "mcp",
+                        "provider": "codex",
+                        "model": "auto",
+                    },
+                },
+                _forced_primary_result=BackendResult(
+                    ok=False,
+                    actual_backend="codex",
+                    actual_model="auto",
+                    output_text="",
+                    error="unsupported_runtime_backend",
+                    raw_metadata={"reason": "self-test unsupported runtime"},
+                ),
+                _fallback_route_override={
+                    "backend_type": "openai_compatible_api",
+                    "provider": "deepseek",
+                    "model": "deepseek-v4-pro",
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "base_url": "https://api.deepseek.com",
+                },
+                _forced_fallback_result=BackendResult(
+                    ok=True,
+                    actual_backend="deepseek",
+                    actual_model="deepseek-v4-pro",
+                    output_text="fallback success",
+                    raw_metadata={"self_test": True},
+                ),
+            )
+            assert fallback_blocked["verification_status"] == "verified_with_fallback"
+            assert fallback_blocked["allowed_next_stage"] is False
+            assert fallback_blocked["exit_code"] == 1
+
+            fallback_allowed = run_trusted(
+                role="final_selector",
+                input_spec="fallback allowed",
+                ledger_path=ledger_path,
+                allow_fallback_next_stage=True,
+                _resolved_override={
+                    "expected_backend": "mcp",
+                    "expected_model": "auto",
+                    "expected_provider": "codex",
+                    "route_config": {
+                        "backend_type": "mcp",
+                        "provider": "codex",
+                        "model": "auto",
+                    },
+                },
+                _forced_primary_result=BackendResult(
+                    ok=False,
+                    actual_backend="codex",
+                    actual_model="auto",
+                    output_text="",
+                    error="unsupported_runtime_backend",
+                    raw_metadata={"reason": "self-test unsupported runtime"},
+                ),
+                _fallback_route_override={
+                    "backend_type": "openai_compatible_api",
+                    "provider": "deepseek",
+                    "model": "deepseek-v4-pro",
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "base_url": "https://api.deepseek.com",
+                },
+                _forced_fallback_result=BackendResult(
+                    ok=True,
+                    actual_backend="deepseek",
+                    actual_model="deepseek-v4-pro",
+                    output_text="fallback success",
+                    raw_metadata={"self_test": True},
+                ),
+            )
+            assert fallback_allowed["verification_status"] == "verified_with_fallback"
+            assert fallback_allowed["allowed_next_stage"] is True
+            assert fallback_allowed["exit_code"] == 0
+
+            summary = cmd_summary(ledger_path)
+            assert summary["total_calls"] >= 6
+
+            print("SELF-TEST RESULTS:")
+            print(f"  dry-run: verification_status={dry_run_result['verification_status']} exit={dry_run_result['exit_code']} [OK]")
+            print(f"  unsupported runtime: verification_status={unsupported_result['verification_status']} exit={unsupported_result['exit_code']} [OK]")
+            print(f"  config missing: verification_status={config_missing_result['verification_status']} exit={config_missing_result['exit_code']} [OK]")
+            print(f"  codex fixture success: verification_status={codex_success['verification_status']} exit={codex_success['exit_code']} [OK]")
+            print(f"  codex missing thread: verification_status={missing_thread['verification_status']} exit={missing_thread['exit_code']} [OK]")
+            print(f"  fallback blocked by default: allowed_next_stage={fallback_blocked['allowed_next_stage']} exit={fallback_blocked['exit_code']} [OK]")
+            print(f"  fallback allowed only with flag: allowed_next_stage={fallback_allowed['allowed_next_stage']} exit={fallback_allowed['exit_code']} [OK]")
+            print(f"  summary total_calls={summary['total_calls']} [OK]")
+
+            try:
+                import subprocess
+
+                after_status = subprocess.run(
+                    ["git", "status", "--short", ".aris/"],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(find_project_root()),
+                    timeout=30,
+                ).stdout.strip()
+                if before_status == after_status:
+                    print(".aris/ unchanged during self-test [OK]")
+                else:
+                    print(f"WARNING: .aris/ status changed during self-test: before={before_status!r} after={after_status!r}")
+            except Exception as exc:
+                print(f"WARNING: could not compare .aris/ git status: {exc}")
+
+            print("\nAll self-tests passed!")
+            return True
+        finally:
+            try:
+                ledger_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
-def main():
+def main() -> None:
     args = sys.argv[1:]
     if not args or "-h" in args or "--help" in args:
         print(__doc__)
@@ -578,6 +672,7 @@ def main():
     mock_response = ""
     summary_mode = False
     self_test_mode = False
+    allow_fallback_next_stage = False
 
     i = 0
     while i < len(args):
@@ -609,22 +704,22 @@ def main():
         elif arg == "--self-test":
             self_test_mode = True
             i += 1
+        elif arg == "--allow-fallback-next-stage":
+            allow_fallback_next_stage = True
+            i += 1
         else:
             i += 1
 
     if self_test_mode:
-        success = cmd_self_test()
-        sys.exit(0 if success else 1)
+        sys.exit(0 if cmd_self_test() else 1)
 
     if summary_mode:
-        result = cmd_summary(ledger_path)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print(json.dumps(cmd_summary(ledger_path), ensure_ascii=False, indent=2))
         return
 
     if not role:
         print("Error: --role <role> is required", file=sys.stderr)
         sys.exit(1)
-
     if not input_spec:
         print("Error: --input <file_or_text> is required", file=sys.stderr)
         sys.exit(1)
@@ -637,23 +732,14 @@ def main():
         dry_run=dry_run,
         mock_response=mock_response,
         ledger_path=ledger_path,
+        allow_fallback_next_stage=allow_fallback_next_stage,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
-
-    # Fail if not allowed to proceed — call_failed always exits non-zero
-    fail_statuses = (
-        "dry_run_untrusted",
-        "unverified_external_execution",
-        "call_failed",
-        "missing_actual_backend",
-        "codex_missing_thread_id",
-        "fallback_unverified",
-        "started_unverified",
-    )
-    if result.get("verification_status") in fail_statuses:
+    if result.get("allowed_next_stage") is False:
         sys.exit(1)
-    if result.get("allowed_next_stage") is False and result.get("verification_status") not in ("verified_routed_call", "verified_with_fallback"):
+    if result.get("verification_status") == "verified_with_fallback" and not allow_fallback_next_stage:
         sys.exit(1)
+    sys.exit(int(result.get("exit_code", 1)))
 
 
 if __name__ == "__main__":

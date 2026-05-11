@@ -183,7 +183,7 @@ For **Codex MCP**:
 
 `model_route.py` is a **pure configuration resolver**. It only declares *which backend a role should use* — it does **not** make any real model calls.
 
-**The actual model invocation must go through `tools/trusted_role_runner.py`** — the single trusted entry point for all ROLE_* tasks. This runner calls the backend, records to the ledger, and produces verified artifacts with provenance headers.
+**The actual model invocation must go through `tools/trusted_role_runner.py`** — the single trusted entry point for all ROLE_* tasks. This runner calls the backend via `tools/model_backends/`, records to the ledger, and produces verified artifacts with provenance headers.
 
 ### Two Execution Sources
 
@@ -197,6 +197,7 @@ For **Codex MCP**:
 - It cannot verify a model was actually called
 - It cannot generate a `codex_thread_id` (only Codex MCP can)
 - It cannot write to the ledger — that is the caller's responsibility
+- It cannot invent a fallback backend when the runtime contract is ambiguous
 
 ### Ledger Entry Requirements
 
@@ -216,6 +217,8 @@ When a real model call is made, the ledger entry (`.aris/calls/llm_calls.jsonl`)
 ```
 
 For Codex calls, `codex_thread_id` is **required** for verification. Without it, the entry is marked `codex_missing_thread_id`.
+`codex_thread_id` must come from real Codex tool/session metadata, never from
+commit hashes, plain terminal output, or human-written placeholders.
 
 ### No Masquerading
 
@@ -224,6 +227,21 @@ It is a violation to claim `implementation_source=routed_internal_model` when th
 ### No Silent Fallback
 
 When a fallback occurs, it must always be recorded in the ledger with `fallback_used: true` and an explicit `fallback_reason`. A silent fallback — where the system falls back to a different backend without recording it — violates trust requirements.
+
+`verified_with_fallback` does not automatically allow the next stage. The safe
+default is `allowed_next_stage=false`, and the runner must exit non-zero unless
+fallback next-stage use is explicitly enabled.
+
+### Runtime Safety
+
+`tools/trusted_role_runner.py` must fail closed when the runtime cannot execute
+the declared backend:
+
+- Codex MCP without an explicit Python adapter → `unsupported_runtime_backend`
+- API backend missing key / `base_url` / model → `call_failed`
+- Codex result without real `codex_thread_id` metadata → `codex_missing_thread_id`
+
+These are verification failures, not soft warnings.
 
 ### Ledger Call ID
 
@@ -269,6 +287,7 @@ python tools/config_check.py
 - **Env template**: `.env.example` (committed, no secrets)
 - **Env config**: `.env` (user-local, never committed)
 - **Route resolver**: `tools/model_route.py`
+- **Backend adapters**: `tools/model_backends/base.py`, `tools/model_backends/openai_compatible.py`, `tools/model_backends/codex_mcp.py`
 - **Config checker**: `tools/config_check.py`
 - **Env loader**: `tools/env_loader.py`
 - **Call ledger**: `.aris/calls/llm_calls.jsonl`

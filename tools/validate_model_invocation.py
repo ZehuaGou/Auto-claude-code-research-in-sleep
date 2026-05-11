@@ -22,7 +22,7 @@ import json
 import os
 import sys
 import tempfile
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -204,6 +204,10 @@ def validate_role(
         status = "FAIL"
         reasons.append("actual_backend=codex but codex_thread_id is missing")
 
+    if actual_backend and actual_backend != "codex" and not actual_model:
+        status = "FAIL"
+        reasons.append("actual_backend is set but actual_model is missing")
+
     if fallback_used:
         if not (actual_backend and actual_model and fallback_reason):
             status = "FAIL"
@@ -211,10 +215,24 @@ def validate_role(
         elif status == "PASS":
             status = "PASS_WITH_WARNINGS"
             reasons.append("fallback was used")
+        if not allowed_next_stage:
+            reasons.append("fallback cannot enter next stage by default")
 
-    if verification_status in ("unverified_external_execution", "missing_actual_backend", "fallback_unverified", "dry_run_untrusted"):
+    if verification_status in (
+        "unverified_external_execution",
+        "missing_actual_backend",
+        "fallback_unverified",
+        "dry_run_untrusted",
+        "unsupported_runtime_backend",
+        "call_failed",
+        "codex_missing_thread_id",
+    ):
         status = "FAIL"
         reasons.append(f"verification_status={verification_status}")
+
+    if verification_status == "verified_routed_call" and actual_backend != "codex" and not actual_model:
+        status = "FAIL"
+        reasons.append("verified_routed_call requires non-empty actual_model for API backends")
 
     if not allowed_next_stage and status == "PASS":
         status = "PASS_WITH_WARNINGS"
@@ -306,7 +324,7 @@ def cmd_self_test():
             "role": "idea_generator",
             "implementation_source": "routed_internal_model",
             "routed_model_used": True,
-            "actual_backend": "llm-chat",
+            "actual_backend": "deepseek",
             "actual_model": "deepseek-v4-pro",
             "verification_status": "verified_routed_call",
             "allowed_next_stage": True,
@@ -350,7 +368,7 @@ def cmd_self_test():
             "role": "final_selector",
             "implementation_source": "routed_internal_model",
             "routed_model_used": True,
-            "actual_backend": "llm-chat",
+            "actual_backend": "deepseek",
             "actual_model": "deepseek-v4-flash",
             "fallback_used": True,
             "fallback_reason": "codex unavailable",
@@ -412,7 +430,7 @@ def cmd_self_test():
             "role": "paper_writer",
             "implementation_source": "routed_internal_model",
             "routed_model_used": True,
-            "actual_backend": "llm-chat",
+            "actual_backend": "deepseek",
             "actual_model": "deepseek-v4-pro",
             "fallback_used": True,
             "fallback_reason": "",
@@ -454,7 +472,7 @@ def cmd_self_test():
             "role": "claims_drafter",
             "implementation_source": "routed_internal_model",
             "routed_model_used": True,
-            "actual_backend": "llm-chat",
+            "actual_backend": "deepseek",
             "actual_model": "",
             "verification_status": "verified_routed_call",
             "allowed_next_stage": False,
@@ -493,6 +511,46 @@ def cmd_self_test():
         r = validate_role("novelty_checker", Path(temp_path), max_age_hours=24)
         test_results["codex_thread_fixture"] = r
         assert r["status"] == "PASS", f"Expected PASS for codex_thread_fixture, got {r['status']}"
+
+        # Test case 11: unsupported_runtime_backend → FAIL
+        entry10 = {
+            "call_id": "call_test_010",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "experiment_code_reviewer",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "codex",
+            "actual_model": "auto",
+            "verification_status": "unsupported_runtime_backend",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "status": "failed",
+        }
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry10) + "\n")
+        r = validate_role("experiment_code_reviewer", Path(temp_path), max_age_hours=24)
+        test_results["unsupported_runtime_backend"] = r
+        assert r["status"] == "FAIL", f"Expected FAIL for unsupported_runtime_backend, got {r['status']}"
+
+        # Test case 12: call_failed → FAIL
+        entry11 = {
+            "call_id": "call_test_011",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "paper_summarizer",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "deepseek",
+            "actual_model": "deepseek-v4-pro",
+            "verification_status": "call_failed",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "status": "failed",
+        }
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry11) + "\n")
+        r = validate_role("paper_summarizer", Path(temp_path), max_age_hours=24)
+        test_results["call_failed"] = r
+        assert r["status"] == "FAIL", f"Expected FAIL for call_failed, got {r['status']}"
 
         print("SELF-TEST RESULTS:")
         print(json.dumps(test_results, ensure_ascii=False, indent=2))
