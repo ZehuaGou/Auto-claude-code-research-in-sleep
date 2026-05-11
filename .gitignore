@@ -65,7 +65,6 @@ literature-md/
 # ===== TokenTR runtime =====
 external_data/
 experiments/TokenTR/
-experiments/TokenTR/data/
 experiments/TokenTR/reports/
 experiments/TokenTR/logs/
 experiments/TokenTR/results/
