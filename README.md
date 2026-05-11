@@ -9,7 +9,7 @@
 > 本仓库是在原作者 ARIS 项目基础上的个人研究改造版本，**不是原项目官方版本**。
 >
 > - Upstream project: `wanshuiyin/Auto-claude-code-research-in-sleep`
-> - This fork keeps the upstream ARIS workflow structure and adds fork-specific reliability, model-routing, validation, and TokenTR experiment scaffolding.
+> - This fork keeps the upstream ARIS workflow structure and adds stricter reliability, model-routing, validation, isolation, and auditability mechanisms.
 > - Fork-specific changes: [`docs/FORK_CHANGES.md`](docs/FORK_CHANGES.md)
 > - Upstream sync / merge guide: [`docs/FORK_MAINTENANCE.md`](docs/FORK_MAINTENANCE.md)
 <!-- FORK_NOTICE_END -->

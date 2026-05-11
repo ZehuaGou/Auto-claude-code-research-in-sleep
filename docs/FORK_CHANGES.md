@@ -95,55 +95,30 @@
 - research contract 锁定 hypothesis、metrics、baselines、failure gates 和 claim boundary
 - contract 修改需要新版本和原因记录
 
-### 3.5 TokenTR 实验脚手架
+### 3.5 实验安全门控 / Experiment Safety Gates
 
-本 fork 当前包含一个研究方向：
+本 fork 增强了 experiment workflow 的安全约束，适用于后续任何研究方向：
 
-**TokenTR — token-level internal hidden-state transition residuals for hallucination detection**
+- 禁止 weak label / sample-level label 被误用为 token-level evidence
+- 要求数据 schema validation
+- 要求 sample-grouped split，避免 token-level random split 泄露
+- 要求 validation set 选择 threshold，禁止 test-set threshold leakage
+- baseline 未完整实现时不得输出 formal claim
+- synthetic / smoke test 只能用于 pipeline sanity，不能作为正式实验结论
+- experiment artifact 必须记录数据来源、label mode、split mode、模型路由和 code review 状态
 
-当前已加入的实验相关文件：
+这些规则是通用实验安全原则，可用于后续任何研究方向，不绑定任何特定实验。
 
-- `experiments/TokenTR/DATA_REQUIREMENTS.md`
-- `experiments/TokenTR/DATASET_AUDIT.md`
-- `experiments/TokenTR/m0_hidden_extraction.py`
-- `experiments/TokenTR/m1_tokentr_pilot.py`
-- `experiments/TokenTR/validate_tokentr_data.py`
-- `experiments/TokenTR/fixtures/tokentr_sanity.jsonl`
-
-实验安全机制包括：
-
-- 禁止把 sample-level `is_hallucinated` 伪装成 token-level labels
-- 支持 token / span / sentence / claim label mode 的边界检查
-- 支持 RAGTruth_Xtended char-offset span annotation 映射
-- 使用 sample-grouped split，避免 token random split 泄露
-- 禁止用 test set 选择 F1 threshold
-- baseline 未完整实现时阻止 formal M1
-- synthetic fixture 只能用于 pipeline sanity，不能作为正式实验结论
-
-## 4. 当前 TokenTR 状态
-
-TokenTR 目前仍处于实验验证阶段。
-
-当前状态：
-
-- RAGTruth_Xtended 已被选为主要 formal 数据源候选
-- RAGTruth adapter 已经过 Codex review 并修复关键映射问题
-- Qwen2.5-0.5B-Instruct 仅作为 pipeline smoke model
-- formal M1 仍需在真实 hidden-state extraction 和完整 baseline gate 通过后才能继续
-
-本 fork 不声称 TokenTR 已经完成正式实验验证，也不声称当前结果可以直接作为论文结论。
-
-## 5. 本 fork 不声明的内容
+## 4. 本 fork 不声明的内容
 
 本 fork 不声明：
 
 - 自己是 ARIS 官方版本
 - 替代上游 ARIS 项目
-- TokenTR 已经是成熟论文结果
-- synthetic / weak-label smoke test 是正式 hallucination detection evidence
+- synthetic / weak-label smoke test 是正式实验结论
 - 当前实验脚手架已经支持正式论文投稿结论
 
-## 6. 推荐使用方式
+## 5. 推荐使用方式
 
 如果你想使用原版通用 ARIS，请优先参考上游项目。
 
@@ -153,8 +128,7 @@ TokenTR 目前仍处于实验验证阶段。
 - `docs/MODEL_ROUTING_OVERVIEW.md`
 - `docs/FORK_CHANGES.md`
 - `docs/FORK_MAINTENANCE.md`
-- `experiments/TokenTR/`
 - `.env.example`
 - `tools/model_route.py`
 
-本 fork 更偏向"严格审计 + 模型路由治理 + TokenTR 实验验证"的个人研究版本。
+本 fork 更偏向"严格审计 + 模型路由治理 + 通用实验安全门控"的个人研究版本。

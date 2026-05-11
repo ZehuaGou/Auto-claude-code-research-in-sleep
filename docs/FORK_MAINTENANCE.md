@@ -10,7 +10,7 @@
 2. 不要把本 fork 的实验数据、runtime、`.env`、模型权重提交到 Git。
 3. 上游 README 主体尽量保持原样，本 fork 只在顶部保留一个短 Fork Notice。
 4. 本 fork 的详细说明放在 `docs/FORK_CHANGES.md`，避免污染上游 README 主体。
-5. 遇到冲突时，优先保留上游通用功能，同时重新应用本 fork 的可靠性、模型路由和 TokenTR 实验相关修改。
+5. 遇到冲突时，优先保留上游通用功能，同时重新应用本 fork 的可靠性和模型路由相关修改。
 
 ## 2. 推荐远端配置
 
@@ -92,7 +92,6 @@ README 是最容易和上游冲突的文件。
 - `skills/idea-bank/SKILL.md`
 - `skills/experiment-bridge/SKILL.md`
 - `skills/status/SKILL.md`
-- `experiments/TokenTR/`
 
 ## 6. 不应提交的内容
 
@@ -101,8 +100,8 @@ README 是最容易和上游冲突的文件。
 - `.env`
 - `.aris/`
 - `external_data/`
-- `experiments/TokenTR/data/`
-- `experiments/TokenTR/reports/`
+- `experiments/*/data/`
+- `experiments/*/reports/`
 - 模型权重：`*.bin`, `*.safetensors`, `*.pt`, `*.pth`, `*.ckpt`
 - 大型缓存文件：`*.arrow`, `*.parquet`
 - 临时调试脚本和运行产物
@@ -133,7 +132,7 @@ README 是最容易和上游冲突的文件。
 3. 不允许 silent fallback。
 4. Critical gate 必须记录 `codex_used`, `fallback_used`, `actual_backend`, `actual_model`。
 
-如果是 TokenTR 相关冲突：
+如果是实验项目相关冲突：
 
 1. 不要把 synthetic / weak-label smoke 当作正式实验结果。
 2. 不要绕过 data validation。
@@ -153,14 +152,6 @@ README 是最容易和上游冲突的文件。
 
 `python tools/model_route.py experiment_code_reviewer`
 
-如果正在做 TokenTR，还应运行：
-
-`python experiments/TokenTR/validate_tokentr_data.py --help`
-
-`python experiments/TokenTR/m0_hidden_extraction.py --help`
-
-`python experiments/TokenTR/m1_tokentr_pilot.py --help`
-
 ## 9. 推荐 commit message
 
 同步上游时建议使用清晰 commit：
@@ -169,7 +160,7 @@ README 是最容易和上游冲突的文件。
 
 修复本 fork 冲突时：
 
-`git commit -m "preserve fork-specific routing and TokenTR safeguards"`
+`git commit -m "preserve fork-specific routing and reliability safeguards"`
 
 不要在 commit message 中加入：
 
