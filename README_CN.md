@@ -1,5 +1,17 @@
 # Auto-claude-code-research-in-sleep (ARIS ⚔️🌙)
 
+<!-- FORK_NOTICE_START -->
+> [!NOTE]
+> **本 Fork 说明**
+>
+> 本仓库是在原作者 **ARIS / Auto-claude-code-research-in-sleep** 项目基础上的个人研究改造版本，**不是原项目官方版本**。
+>
+> - 上游项目：`wanshuiyin/Auto-claude-code-research-in-sleep`
+> - 本 fork 保留原版 ARIS 的工作流结构，并额外加入可靠性、模型路由、产物校验和 TokenTR 实验脚手架等个人改造。
+> - 本 fork 具体修改见：[`docs/FORK_CHANGES.md`](docs/FORK_CHANGES.md)
+> - 后续同步上游 / 合并冲突指南见：[`docs/FORK_MAINTENANCE.md`](docs/FORK_MAINTENANCE.md)
+<!-- FORK_NOTICE_END -->
+
 ![ARIS Logo](docs/aris_logo.svg)
 
 ![Hero](docs/hero_combined.svg)
