@@ -202,6 +202,14 @@ Display:
 - 失败调用（只显示当前 workflow 相关的）
 - 下一步建议（基于 resume_stage_state.py）
 
+## Global Trusted Role Execution
+
+All `/status` displays rely on the global ARIS trusted role execution protocol.
+See `skills/shared-references/trusted-role-execution.md` for the binding rules that
+govern all ROLE_* tasks — model_route.py is a declaration only, trusted execution
+must go through `tools/trusted_role_runner.py`, and external agents cannot masquerade
+as internal model execution.
+
 ## Failure Example
 
 如果 `idea-stage/AGENTIC/` 不存在：

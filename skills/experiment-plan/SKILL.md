@@ -218,6 +218,13 @@ Plan file: refine-logs/EXPERIMENT_PLAN.md
 Tracker file: refine-logs/EXPERIMENT_TRACKER.md
 ```
 
+## Global Trusted Role Execution
+
+This skill orchestrates experiment planning but does NOT directly perform ROLE_* cognitive tasks.
+All experiment_auditor, result_judge, contract_reviewer, or idea_reviewer calls must go through
+`tools/trusted_role_runner.py` per `shared-references/trusted-role-execution.md`.
+External agents cannot masquerade as internal model execution.
+
 ## Output Protocols
 
 > Follow these shared protocols for all output files:

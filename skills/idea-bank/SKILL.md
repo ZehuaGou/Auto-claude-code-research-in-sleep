@@ -9,7 +9,7 @@ description: Inspect, deduplicate, manage canonical idea candidates, and perform
 
 View the global idea bank, trigger re-dedup across runs, inspect a specific candidate's full review trail, or perform final selection.
 
-**Critical gate**: `final-select` defaults to Codex. If Codex is unavailable, a marked fallback to DeepSeek V4 Pro is permitted (explicit `llm_fallback_gate` with downgraded confidence). Manual override is available as `manual-select` but produces `PASS_WITH_WARNINGS` max and is not a valid gate.
+**Critical gate**: `final-select` defaults to Codex. If Codex is unavailable, a marked fallback to DeepSeek V4 Pro is permitted (explicit `llm_fallback_gate` with downgraded confidence). Manual override is available as `manual-select` but produces `PASS_WITH_WARNINGS` max and is not a valid gate. All final_selector calls must follow the global trusted role execution protocol (`shared-references/trusted-role-execution.md`).
 
 ## When to Use
 

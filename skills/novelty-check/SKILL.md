@@ -48,7 +48,7 @@ isolation_mode: codex_thread|manual_subsession|protocol_only
 
 ## Constants
 
-- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP for novelty judgments. See `shared-references/model-routing.md` for fallback model configuration.
+- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP for novelty judgments. See `shared-references/model-routing.md` for fallback model configuration. All novelty_checker calls must follow the global trusted role execution protocol (`shared-references/trusted-role-execution.md`).
 
 ## Evidence vs. Contamination
 

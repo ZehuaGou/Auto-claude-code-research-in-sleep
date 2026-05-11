@@ -12,7 +12,7 @@ Research topic: $ARGUMENTS
 ## Constants
 
 
-- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP (xhigh). Override with `— reviewer: oracle-pro` for GPT-5.4 Pro via Oracle MCP. See `shared-references/reviewer-routing.md`.
+- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP (xhigh). Override with `— reviewer: oracle-pro` for GPT-5.4 Pro via Oracle MCP. See `shared-references/reviewer-routing.md`. All evidence_integrity_auditor calls must follow the global trusted role execution protocol (`shared-references/trusted-role-execution.md`).
 - **PAPER_LIBRARY** — Local directory containing user's paper collection (PDFs). Check these paths in order:
   1. `papers/` in the current project directory
   2. `literature/` in the current project directory

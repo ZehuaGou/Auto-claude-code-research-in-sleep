@@ -156,6 +156,8 @@ For **Codex MCP**:
 
 `model_route.py` is a **pure configuration resolver**. It only declares *which backend a role should use* — it does **not** make any real model calls.
 
+**The actual model invocation must go through `tools/trusted_role_runner.py`** — the single trusted entry point for all ROLE_* tasks. This runner calls the backend, records to the ledger, and produces verified artifacts with provenance headers.
+
 ### Two Execution Sources
 
 | Source | Meaning | Trust |

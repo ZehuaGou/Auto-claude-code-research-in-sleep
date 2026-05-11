@@ -43,7 +43,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__llm-chat__cha
 5. 尝试规划复现命令，不要盲跑长任务。
 6. 如果已有结果，整理成 `research/BASELINE_REPRODUCTION_REPORT.md`。
 7. 如果没有结果，写明 not-run，并给出具体运行命令。
-8. 调用 baseline_reviewer 审查复现可信度（使用 `LLM_BASELINE_REVIEWER_MODEL`）。
+8. 调用 baseline_reviewer 审查复现可信度（使用 `LLM_BASELINE_REVIEWER_MODEL`）。All baseline_reviewer calls must follow the global trusted role execution protocol (`shared-references/trusted-role-execution.md`).
 9. 输出是否允许进入新方法实验。
 
 ## Hard Rules

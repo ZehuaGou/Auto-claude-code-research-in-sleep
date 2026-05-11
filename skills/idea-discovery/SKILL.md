@@ -35,6 +35,7 @@ Orchestrate a complete idea discovery workflow for: **$ARGUMENTS**
 - `deepseek_only`: DeepSeek V4 Pro directly; mark codex_used=false
 
 See `shared-references/model-routing.md` for details.
+See `shared-references/trusted-role-execution.md` for global trusted role execution rules.
 
 This pipeline does NOT default to pilot experiments, experiment plans, or paper writing. Those are optional user-driven next steps: `/experiment-bridge`, `/research-contract`, `/baseline-repro`, or `/research-pipeline`.
 

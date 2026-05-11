@@ -438,10 +438,11 @@ allowed_next_stage: true | false
 ```
 
 Key rules:
-- `model_route.py` only resolves routing config — it does NOT call any model.
+- `model_route.py` only resolves routing config — it does NOT call any model. When we say "model_route.py only" we mean it only declares routes, not executes them.
 - Only ledger entries with `verification_status=verified_routed_call` count as real internal model execution.
 - external_agent_direct must NOT be claimed as DeepSeek/Codex implementation.
 - Codex calls without codex_thread_id are unverified.
+- All experiment_implementer and experiment_code_reviewer calls must go through `tools/trusted_role_runner.py` (see `shared-references/trusted-role-execution.md`).
 
 ### Pre-Implementation Code Scan
 实现代码前，优先扫描现有代码和 base repo（如果 `BASE_REPO` 设置了），标识可复用的部分。

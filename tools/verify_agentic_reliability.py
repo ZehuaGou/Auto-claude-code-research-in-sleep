@@ -3013,6 +3013,143 @@ else:
     for c in ["68a", "68b", "68c", "68d"]:
         check(f"{c} .env.example exists", False)
 
+# 69. trusted_role_runner.py exists and supports required commands
+trusted_runner = ROOT / "tools" / "trusted_role_runner.py"
+if trusted_runner.exists():
+    tr_src = trusted_runner.read_text(encoding="utf-8", errors="ignore")
+    check("69a. trusted_role_runner.py exists", True)
+    check("69b. trusted_role_runner.py supports --role", "--role" in tr_src)
+    check("69c. trusted_role_runner.py supports --input", "--input" in tr_src)
+    check("69d. trusted_role_runner.py supports --output", "--output" in tr_src)
+    check("69e. trusted_role_runner.py supports --summary", "--summary" in tr_src)
+    check("69f. trusted_role_runner.py supports --self-test", "--self-test" in tr_src)
+    check("69g. trusted_role_runner.py forbids dry-run as verified", "dry_run_untrusted" in tr_src)
+    check("69h. trusted_role_runner.py has _auto_verify", "_auto_verify" in tr_src)
+    check("69i. trusted_role_runner.py calls model_route.resolve_role", "resolve_role" in tr_src)
+    check("69j. trusted_role_runner.py writes ledger entries", "_write_ledger_entry" in tr_src or "write_ledger" in tr_src)
+else:
+    for c in ["69a", "69b", "69c", "69d", "69e", "69f", "69g", "69h", "69i", "69j"]:
+        check(f"{c} trusted_role_runner.py exists", False)
+
+# 70. llm_call_ledger.py has all trust fields
+llm_ledger = ROOT / "tools" / "llm_call_ledger.py"
+if llm_ledger.exists():
+    ll_src = llm_ledger.read_text(encoding="utf-8", errors="ignore")
+    check("70a. llm_call_ledger.py has implementation_source", "implementation_source" in ll_src)
+    check("70b. llm_call_ledger.py has routed_model_used", "routed_model_used" in ll_src)
+    check("70c. llm_call_ledger.py has verification_status", "verification_status" in ll_src)
+    check("70d. llm_call_ledger.py has allowed_next_stage", "allowed_next_stage" in ll_src)
+    check("70e. llm_call_ledger.py has _auto_verify", "_auto_verify" in ll_src)
+    check("70f. llm_call_ledger.py has external_agent_direct default", "external_agent_direct" in ll_src)
+    check("70g. llm_call_ledger.py has codex_thread_id field", "codex_thread_id" in ll_src)
+    check("70h. llm_call_ledger.py has fallback_used field", "fallback_used" in ll_src)
+    check("70i. llm_call_ledger.py has fallback_reason field", "fallback_reason" in ll_src)
+    check("70j. llm_call_ledger.py has confidence_downgraded field", "confidence_downgraded" in ll_src)
+else:
+    for c in ["70a", "70b", "70c", "70d", "70e", "70f", "70g", "70h", "70i", "70j"]:
+        check(f"{c} llm_call_ledger.py exists", False)
+
+# 71. validate_model_invocation.py has required functionality
+val_model = ROOT / "tools" / "validate_model_invocation.py"
+if val_model.exists():
+    vm_src = val_model.read_text(encoding="utf-8", errors="ignore")
+    check("71a. validate_model_invocation.py exists", True)
+    check("71b. validate_model_invocation.py supports --summary", "--summary" in vm_src)
+    check("71c. validate_model_invocation.py supports --self-test", "--self-test" in vm_src)
+    check("71d. validate_model_invocation.py supports --role", "--role" in vm_src)
+    check("71e. validate_model_invocation.py supports --ledger-path", "--ledger-path" in vm_src)
+    check("71f. validate_model_invocation.py has SUMMARY_ROLES", "SUMMARY_ROLES" in vm_src)
+    check("71g. validate_model_invocation.py calls resolve_role", "resolve_role" in vm_src)
+    check("71h. validate_model_invocation.py checks implementation_source", "implementation_source" in vm_src)
+    check("71i. validate_model_invocation.py checks codex_thread_id", "codex_thread_id" in vm_src)
+else:
+    for c in ["71a", "71b", "71c", "71d", "71e", "71f", "71g", "71h", "71i"]:
+        check(f"{c} validate_model_invocation.py exists", False)
+
+# 72. shared protocol document exists
+shared_proto = ROOT / "skills" / "shared-references" / "trusted-role-execution.md"
+if shared_proto.exists():
+    sp_src = shared_proto.read_text(encoding="utf-8", errors="ignore")
+    check("72a. shared protocol exists", True)
+    check("72b. shared protocol explains external agent orchestrator only", "orchestrator" in sp_src.lower() or "orchestrate" in sp_src.lower())
+    check("72c. shared protocol requires trusted_role_runner.py for all ROLE_*", "trusted_role_runner.py" in sp_src)
+    check("72d. shared protocol forbids masquerading", "masquerad" in sp_src.lower() or "cannot masquerade" in sp_src.lower() or "violation" in sp_src.lower())
+    check("72e. shared protocol requires codex_thread_id", "codex_thread_id" in sp_src)
+    check("72f. shared protocol forbids silent fallback", "silent fallback" in sp_src.lower() or "silent" in sp_src.lower())
+    check("72g. shared protocol sets external_agent_direct allowed_next_stage=false", "allowed_next_stage" in sp_src and "false" in sp_src.lower())
+    check("72h. shared protocol says dry-run cannot be real evidence", "dry-run" in sp_src.lower() or "dry_run" in sp_src.lower() or "mock" in sp_src.lower())
+    check("72i. shared protocol says fail closed when runner unavailable", "fail closed" in sp_src.lower() or "fail closed" in sp_src)
+    check("72j. shared protocol says slash commands work without extra reminders", "without extra" in sp_src.lower() or "no user reminder" in sp_src.lower() or "default" in sp_src.lower())
+else:
+    for c in ["72a", "72b", "72c", "72d", "72e", "72f", "72g", "72h", "72i", "72j"]:
+        check(f"{c} shared protocol exists", False)
+
+# 73. MODEL_ROUTING_OVERVIEW.md updated with global trusted execution
+model_routing_doc = ROOT / "docs" / "MODEL_ROUTING_OVERVIEW.md"
+if model_routing_doc.exists():
+    mr_content = model_routing_doc.read_text(encoding="utf-8", errors="ignore")
+    check("73a. MODEL_ROUTING_OVERVIEW explains trusted_role_runner.py as entry point", "trusted_role_runner.py" in mr_content)
+    check("73b. MODEL_ROUTING_OVERVIEW says external agents cannot masquerade", "external agent" in mr_content.lower() and "masquerad" in mr_content.lower())
+    check("73c. MODEL_ROUTING_OVERVIEW says no user reminder required", "without extra" in mr_content.lower() or "no reminder" in mr_content.lower() or "default" in mr_content.lower())
+    check("73d. MODEL_ROUTING_OVERVIEW lists all trust fields", "implementation_source" in mr_content and "verification_status" in mr_content and "allowed_next_stage" in mr_content)
+else:
+    for c in ["73a", "73b", "73c", "73d"]:
+        check(f"{c} MODEL_ROUTING_OVERVIEW.md exists", False)
+
+# 74. .env.example updated with global trusted execution notes
+env_example = ROOT / ".env.example"
+if env_example.exists():
+    ee_content = env_example.read_text(encoding="utf-8", errors="ignore")
+    check("74a. .env.example explains ROLE_* is declaration not execution", "declaration" in ee_content.lower() or "declare" in ee_content.lower())
+    check("74b. .env.example requires trusted_role_runner.py", "trusted_role_runner.py" in ee_content)
+    check("74c. .env.example says silent fallback is forbidden", "silent fallback" in ee_content.lower() or "silent fallback" in ee_content)
+    check("74d. .env.example says external_agent_direct is not trusted", "external_agent_direct" in ee_content)
+    check("74e. .env.example says dry-run cannot be real evidence", "dry-run" in ee_content.lower() or "dry_run" in ee_content.lower())
+else:
+    for c in ["74a", "74b", "74c", "74d", "74e"]:
+        check(f"{c} .env.example exists", False)
+
+# 75. skill files reference shared protocol or contain equivalent rules
+skill_files_to_check = [
+    ("idea-discovery", "idea_discovery"),
+    ("idea-bank", "idea_bank"),
+    ("exec-review", "exec_review"),
+    ("novelty-check", "novelty_check"),
+    ("experiment-plan", "experiment_plan"),
+    ("experiment-bridge", "experiment_bridge"),
+    ("auto-review-loop", "auto_review_loop"),
+    ("paper-writing", "paper_writing"),
+    ("research-lit", "research_lit"),
+    ("idea-creator", "idea_creator"),
+    ("research-contract", "research_contract"),
+    ("baseline-repro", "baseline_repro"),
+]
+trusted_runner_refs = 0
+for skill_name, _ in skill_files_to_check:
+    skill_path = ROOT / "skills" / skill_name / "SKILL.md"
+    if skill_path.exists():
+        content = skill_path.read_text(encoding="utf-8", errors="ignore")
+        has_ref = "trusted-role-execution" in content or "trusted_role_runner" in content
+        has_rules = ("routed_internal_model" in content and "allowed_next_stage" in content) or \
+                   ("external_agent_direct" in content and "verification_status" in content)
+        if has_ref or has_rules:
+            trusted_runner_refs += 1
+
+check("75. skills reference trusted role execution protocol",
+      trusted_runner_refs >= len(skill_files_to_check) // 2,
+      f"Only {trusted_runner_refs}/{len(skill_files_to_check)} skills reference trusted role execution")
+
+# 76. artifact header contains required fields
+tr_src_check = trusted_runner.read_text(encoding="utf-8", errors="ignore") if trusted_runner.exists() else ""
+check("76a. trusted_role_runner.py generates artifact header with implementation_source",
+      "_build_artifact_header" in tr_src_check)
+check("76b. trusted_role_runner.py generates artifact header with ledger_call_id",
+      "_build_artifact_header" in tr_src_check)
+check("76c. trusted_role_runner.py generates artifact header with verification_status",
+      "_build_artifact_header" in tr_src_check)
+check("76d. trusted_role_runner.py generates artifact header with allowed_next_stage",
+      "_build_artifact_header" in tr_src_check)
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

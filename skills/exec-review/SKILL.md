@@ -109,6 +109,11 @@ One CAND at a time. Codex thread. Auto artifact header + ledger.
    - `codex_required`: Codex only; fail if unavailable
    - `codex_preferred`: Codex first; fallback to DeepSeek V4 Pro with warning
    - `deepseek_only`: DeepSeek V4 Pro directly; mark codex_used=false
+
+   All reviewer roles must follow the global trusted role execution protocol
+   (`skills/shared-references/trusted-role-execution.md`). The reviewer role
+   must be executed via `tools/trusted_role_runner.py`, not by the external
+   agent directly.
 5. **Agent 调用前**写 `current_call.json`（通过 llm_call_ledger start）。
 6. **Agent 执行** 根据 route 决定 Codex 或 LLM Chat 调用。
 7. 如果 Codex 失败且 route 允许 fallback，Agent 切换到对应 LLM fallback。

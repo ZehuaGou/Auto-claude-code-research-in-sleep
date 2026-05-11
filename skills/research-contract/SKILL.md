@@ -54,6 +54,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__codex__codex,
    - primary: Codex
    - fallback: `LLM_CONTRACT_REVIEWER_FALLBACK_MODEL`
    - 写 `current_call.json` 和 `llm_calls.jsonl`
+   - All contract_reviewer calls must follow the global trusted role execution protocol (`shared-references/trusted-role-execution.md`).
 6. 如果 reviewer 要求 revise，则修改 contract。
 7. 如果 Codex 不可用，标记 `REVIEWER_DOWNGRADED_FROM_CODEX_TO_LLM_FALLBACK`。
 8. 生成 `docs/research_contract.lock.json`。

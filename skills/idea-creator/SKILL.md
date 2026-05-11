@@ -49,7 +49,7 @@ idea bank, and produce canonical candidates.
 
 - **IDEA_GENERATOR_MODEL** — Set by `LLM_IDEA_GENERATOR_MODEL` env var (default: DeepSeek V4 Pro). Used for divergent idea generation.
 - **IDEA_DEDUPLICATOR_MODEL** — Set by `LLM_IDEA_DEDUPLICATOR_MODEL` env var (default: DeepSeek V4 Pro). Used for mechanistic dedup.
-- **SHORTLIST_AUDITOR_BACKEND = `codex`** — Codex MCP for the idea_shortlist_auditor gate. This is the ONLY Codex gate in idea-creator. Codex is NOT used for divergent generation.
+- **SHORTLIST_AUDITOR_BACKEND = `codex`** — Codex MCP for the idea_shortlist_auditor gate. This is the ONLY Codex gate in idea-creator. Codex is NOT used for generation. All idea_shortlist_auditor calls must follow the global trusted role execution protocol (`shared-references/trusted-role-execution.md`).
 - **OUTPUT_DIR = `idea-stage/`** — All idea-stage outputs. Create if absent.
 
 ## Workflow
