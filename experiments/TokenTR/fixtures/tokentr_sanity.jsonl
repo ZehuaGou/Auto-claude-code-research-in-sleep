@@ -1,5 +1,0 @@
-{"sample_id": "sanity_000", "prompt": "Tell me about Albert Einstein.", "response": "Albert Einstein was a German-born physicist who developed the theory of relativity.", "is_hallucinated": 0}
-{"sample_id": "sanity_001", "prompt": "Tell me about Nikola Tesla.", "response": "Nikola Tesla was an American inventor who invented the AC motor.", "is_hallucinated": 0}
-{"sample_id": "sanity_002", "prompt": "Tell me about a fictional person.", "response": "John Smith was a famous medieval king who ruled all of Europe.", "is_hallucinated": 1}
-{"sample_id": "sanity_003", "prompt": "Tell me about the capital of France.", "response": "The capital of France is London.", "is_hallucinated": 1}
-{"sample_id": "sanity_004", "prompt": "Tell me about gravity.", "response": "Gravity is a force that pushes objects apart.", "is_hallucinated": 1}
