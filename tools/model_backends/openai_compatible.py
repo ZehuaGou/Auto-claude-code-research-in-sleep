@@ -3,11 +3,19 @@
 
 from __future__ import annotations
 
+import json
 import os
+import sys
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import httpx
 
+TOOLS_DIR = Path(__file__).resolve().parents[1]
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+from env_loader import load_env
 from model_backends.base import BackendResult, make_backend_result
 
 
@@ -20,6 +28,20 @@ def _build_endpoint(base_url: str) -> str:
     if url.endswith("/v1"):
         return f"{url}/chat/completions"
     return f"{url}/v1/chat/completions"
+
+
+def resolve_api_key(api_key_env: str, env_vars: Optional[Dict[str, Any]] = None) -> str:
+    key_name = str(api_key_env or "").strip()
+    if not key_name:
+        return ""
+    vars_dict = env_vars
+    if vars_dict is None:
+        env_info = load_env()
+        vars_dict = env_info.get("vars", {}) if isinstance(env_info, dict) else {}
+    api_key = str(vars_dict.get(key_name, "") or "").strip()
+    if api_key:
+        return api_key
+    return os.environ.get(key_name, "").strip()
 
 
 def call_openai_compatible(
@@ -49,7 +71,9 @@ def call_openai_compatible(
             },
         )
 
-    api_key = os.environ.get(api_key_env, "").strip() if api_key_env else ""
+    env_info = load_env()
+    env_vars = env_info.get("vars", {}) if isinstance(env_info, dict) else {}
+    api_key = resolve_api_key(api_key_env, env_vars=env_vars)
     if not provider or not model or not base_url or not api_key_env or not api_key:
         return make_backend_result(
             ok=False,
@@ -127,3 +151,55 @@ def call_openai_compatible(
             error="api_call_failed",
             raw_metadata={"exception": str(exc)},
         )
+
+
+def cmd_self_test() -> bool:
+    env_info = load_env()
+    env_vars = env_info.get("vars", {}) if isinstance(env_info, dict) else {}
+
+    results = []
+
+    llm_visible = bool(resolve_api_key("LLM_API_KEY", env_vars=env_vars))
+    results.append({
+        "case": "LLM_API_KEY via env_loader vars",
+        "api_key_present": llm_visible,
+    })
+
+    minimax_visible = bool(resolve_api_key("MINIMAX_API_KEY", env_vars=env_vars))
+    results.append({
+        "case": "MINIMAX_API_KEY via env_loader vars",
+        "api_key_present": minimax_visible,
+    })
+
+    missing_result = call_openai_compatible(
+        {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "base_url": "https://api.deepseek.com",
+            "api_key_env": "",
+        },
+        "self-test",
+    )
+    results.append({
+        "case": "missing api_key_env",
+        "error": missing_result.error,
+        "api_key_present": bool(missing_result.raw_metadata.get("api_key_present", False)),
+    })
+
+    assert results[0]["api_key_present"] is True, "Expected LLM_API_KEY to be visible via env_loader vars"
+    assert missing_result.error == "config_missing", "Expected missing api_key_env to return config_missing"
+
+    print(json.dumps(results, ensure_ascii=False, indent=2))
+    print("All self-tests passed!")
+    return True
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    if "--self-test" in args:
+        sys.exit(0 if cmd_self_test() else 1)
+    print(__doc__)
+
+
+if __name__ == "__main__":
+    main()
