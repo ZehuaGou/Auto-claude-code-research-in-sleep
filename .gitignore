@@ -138,3 +138,49 @@ venv/
 
 # Local MCP config - may contain API keys
 .mcp.json
+
+# === ARIS local runtime / ledger / temporary state ===
+.aris/
+tmp/
+runtime/
+external_data/
+
+# === Local environment / secrets ===
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.token
+*.secret
+
+# === Logs ===
+*.log
+log_ad/
+log_das/
+log_das_v2/
+
+# === Experiment outputs / generated artifacts ===
+*_output/
+probes/*_output/
+experiments/TokenTR/
+
+# === Paper build artifacts ===
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.synctex.gz
+
+# === Local agent configs / caches ===
+.agents/
+.codex/
+CLAUDE.md
+
+# === Local audit reports ===
+UNTRACKED_WORKSPACE_AUDIT.md
+review-stage/UNTRACKED_WORKSPACE_AUDIT.md
