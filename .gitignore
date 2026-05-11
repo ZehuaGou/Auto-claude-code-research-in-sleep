@@ -75,8 +75,8 @@ experiments/*/data/
 experiments/*/reports/
 
 # ===== Datasets / experiment outputs =====
-data/
-datasets/
+/data/
+/datasets/
 outputs/
 results/
 checkpoints/
@@ -160,10 +160,28 @@ log_ad/
 log_das/
 log_das_v2/
 
-# === Experiment outputs / generated artifacts ===
-*_output/
-probes/*_output/
-experiments/TokenTR/
+# === Detection runtime / generated artifacts ===
+detection/output/
+detection/outputs/
+detection/checkpoints/
+detection/logs/
+detection/runs/
+detection/results/
+detection/cache/
+detection/.cache/
+detection/data/raw/
+detection/data/processed/
+detection/data/cache/
+detection/data/downloads/
+detection/**/*.pt
+detection/**/*.pth
+detection/**/*.ckpt
+detection/**/*.npy
+detection/**/*.npz
+detection/**/*.pkl
+detection/**/*.csv
+detection/**/*.parquet
+detection/**/__pycache__/
 
 # === Paper build artifacts ===
 paper/*.aux
