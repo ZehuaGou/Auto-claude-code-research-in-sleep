@@ -230,6 +230,7 @@ def validate_role(
         elif status == "PASS":
             status = "PASS_WITH_WARNINGS"
             reasons.append("pending_external_mcp")
+        reasons.append("pending_external_mcp is not a completed trusted role")
 
     if routing_source == "trusted_role_runner_external_mcp":
         if not response_file:

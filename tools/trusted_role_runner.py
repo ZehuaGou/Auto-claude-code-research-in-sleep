@@ -370,7 +370,18 @@ def _prepare_external_mcp(
 
     prompt_file = _get_calls_dir(ledger_path) / f"{entry['call_id']}_prompt.md"
     prompt_text = _build_codex_prompt(role, input_text, route_config, entry["call_id"])
-    prompt_file.write_text(prompt_text, encoding="utf-8")
+    try:
+        prompt_file.write_text(prompt_text, encoding="utf-8")
+    except OSError as exc:
+        return {
+            "status": "failed",
+            "verification_status": "call_failed",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "error": f"failed to write prompt_file: {exc}",
+            "error_code": "call_failed",
+            "exit_code": 1,
+        }
     entry["prompt_file"] = str(prompt_file)
     entry["raw_metadata"] = {
         "prepare_external_mcp": True,
@@ -395,7 +406,7 @@ def _prepare_external_mcp(
         "verification_status": "pending_external_mcp",
         "allowed_next_stage": False,
         "finish_command": finish_command,
-        "exit_code": 1,
+        "exit_code": 0,
     }
     return result
 
@@ -708,6 +719,7 @@ def cmd_self_test() -> bool:
             assert prepare_codex["status"] == "NEEDS_EXTERNAL_MCP_CALL"
             assert prepare_codex["verification_status"] == "pending_external_mcp"
             assert prepare_codex["allowed_next_stage"] is False
+            assert prepare_codex["exit_code"] == 0
             assert Path(prepare_codex["prompt_file"]).exists()
 
             missing_thread = _complete_external_mcp(

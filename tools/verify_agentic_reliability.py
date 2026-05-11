@@ -3223,7 +3223,9 @@ check("78b. trusted_role_runner.py supports --complete-external-mcp",
 check("78c. trusted_role_runner.py implements pending_external_mcp",
       "pending_external_mcp" in trusted_runner_src)
 check("78d. pending_external_mcp cannot enter next stage",
-      "pending_external_mcp" in trusted_runner_src and "False" in trusted_runner_src)
+      "pending_external_mcp" in trusted_runner_src and "allowed_next_stage" in trusted_runner_src and "False" in trusted_runner_src)
+check("78da. prepare external MCP success exits 0",
+      '"status": "NEEDS_EXTERNAL_MCP_CALL"' in trusted_runner_src and '"exit_code": 0' in trusted_runner_src)
 check("78e. complete external MCP requires codex_thread_id",
       "_complete_external_mcp" in trusted_runner_src and "codex_missing_thread_id" in trusted_runner_src)
 check("78f. complete external MCP requires response_file",
