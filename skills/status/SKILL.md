@@ -150,6 +150,38 @@ python3 tools/resume_stage_state.py novelty-check CAND_002
 - `.aris/calls/llm_calls.jsonl` — 模型调用日志
 - `.aris/sessions/SESSION_REGISTRY.json` — session 注册
 - `.aris/sessions/ACTIVE_TASKS.json` — 活跃任务
+- `tools/validate_model_invocation.py` — 模型调用可信验证
+
+## Model Invocation Trust Status
+
+**Required**: `/status` must show model invocation trust status.
+
+Run:
+```
+python tools/validate_model_invocation.py --summary
+```
+
+Display a table of key roles with their invocation status:
+
+| Role | Expected Backend | Actual Backend | Source | Verified | Allowed Next |
+|------|-----------------|----------------|--------|----------|--------------|
+| idea_reviewer | codex | codex | routed_internal_model | ✅ | YES |
+| experiment_implementer | llm-chat | - | no_ledger | ❌ | NO |
+| ... | ... | ... | ... | ... | ... |
+
+**Trust status rules:**
+- `implementation_source=external_agent_direct` → show "⚠️ external" badge
+- `verification_status=verified_routed_call` → show "✅ verified"
+- `verification_status=codex_missing_thread_id` → show "❌ codex thread missing"
+- `verification_status=unverified_external_execution` → show "❌ unverified"
+- `allowed_next_stage=false` → show "🚫 blocked"
+- `confidence_downgraded=true` → show "⚠️ confidence_downgraded"
+
+**If `validate_model_invocation.py` is missing or fails:**
+Display:
+```
+⚠️  model invocation trust cannot be verified
+```
 
 ## Example Invocation
 

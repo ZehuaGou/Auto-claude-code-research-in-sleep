@@ -152,6 +152,54 @@ For **Codex MCP**:
 - `xhigh` — highest reasoning effort (default)
 - Set via `MODEL_CODEX_EFFORT=xhigh`
 
+## Trusted Invocation — Declaration vs Actual Call
+
+`model_route.py` is a **pure configuration resolver**. It only declares *which backend a role should use* — it does **not** make any real model calls.
+
+### Two Execution Sources
+
+| Source | Meaning | Trust |
+|--------|---------|-------|
+| `routed_internal_model` | Code/output produced by a **real internal model call** recorded in the ledger | ✅ Verified |
+| `external_agent_direct` | Code written directly by an external agent without any internal model invocation | ⚠️ Unverified |
+
+### What `model_route.py` Cannot Do
+
+- It cannot verify a model was actually called
+- It cannot generate a `codex_thread_id` (only Codex MCP can)
+- It cannot write to the ledger — that is the caller's responsibility
+
+### Ledger Entry Requirements
+
+When a real model call is made, the ledger entry (`.aris/calls/llm_calls.jsonl`) must contain:
+
+```json
+{
+  "implementation_source": "routed_internal_model",
+  "routed_model_used": true,
+  "actual_backend": "codex",
+  "actual_model": "auto",
+  "codex_thread_id": "thread_abc123",
+  "verification_status": "verified_routed_call",
+  "allowed_next_stage": true,
+  "confidence_downgraded": false
+}
+```
+
+For Codex calls, `codex_thread_id` is **required** for verification. Without it, the entry is marked `codex_missing_thread_id`.
+
+### No Masquerading
+
+It is a violation to claim `implementation_source=routed_internal_model` when the code was produced by `external_agent_direct`. The ledger is the source of truth.
+
+### No Silent Fallback
+
+When a fallback occurs, it must always be recorded in the ledger with `fallback_used: true` and an explicit `fallback_reason`. A silent fallback — where the system falls back to a different backend without recording it — violates trust requirements.
+
+### Ledger Call ID
+
+Each real model invocation should reference a `ledger_call_id` from `.aris/calls/llm_calls.jsonl` in its artifact provenance, enabling audit trail verification.
+
 ## Fallback Behavior
 
 When Codex MCP is unavailable for a Codex-assigned role, the system falls back to the API backend configured in your `ROLE_<ROLE>` alias. Set a fallback alias explicitly:
@@ -160,6 +208,11 @@ When Codex MCP is unavailable for a Codex-assigned role, the system falls back t
 ROLE_IDEA_REVIEWER=CODEX      # Primary: Codex MCP
 # If Codex unavailable, caller should handle fallback per ARIS_CODEX_GATE_MODE
 ```
+
+When a fallback occurs, the ledger entry must record:
+- `fallback_used: true`
+- `fallback_reason: "codex unavailable"` (or similar)
+- `actual_backend` and `actual_model` of the fallback
 
 ## Legacy LLM_* Variables
 

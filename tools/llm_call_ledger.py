@@ -5,9 +5,21 @@ ARIS Model Call Ledger — Track Codex / LLM Chat / reviewer calls.
 Directory: .aris/calls/
 Files:
   - current_call.json  — single current/last active call
-  - llm_calls.jsonl    — append-only call history
+  - llm_calls.jsonl  — append-only call history
 
 Commands: start, finish, fail, fallback, status, summary
+
+Trust Tracking Fields:
+  implementation_source: external_agent_direct | routed_internal_model
+  routed_model_used: true | false
+  route_role, route_expected_backend, route_expected_model
+  external_agent_name
+  verification_status: started_unverified | unverified_external_execution |
+    verified_routed_call | verified_with_fallback |
+    missing_actual_backend | codex_missing_thread_id |
+    fallback_unverified | completed_with_warnings
+  allowed_next_stage: true | false
+  confidence_downgraded: true | false
 """
 from __future__ import annotations
 
@@ -43,8 +55,17 @@ def create_call_entry(
     primary_model: str = "",
     input_files: Optional[List[str]] = None,
     output_files: Optional[List[str]] = None,
+    # New trust fields
+    implementation_source: str = "external_agent_direct",
+    routed_model_used: bool = False,
+    route_role: str = "",
+    route_expected_backend: str = "",
+    route_expected_model: str = "",
+    external_agent_name: Optional[str] = None,
+    global_codex_gate_mode: Optional[str] = None,
+    routing_source: str = "env",
 ) -> Dict[str, Any]:
-    return {
+    entry = {
         "call_id": generate_call_id(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "completed_at": None,
@@ -61,23 +82,68 @@ def create_call_entry(
         "input_files": input_files or [],
         "output_files": output_files or [],
         "env_source": ".env",
-        "routing_source": "env",
-        "global_codex_gate_mode": None,
+        "routing_source": routing_source,
+        "global_codex_gate_mode": global_codex_gate_mode,
         "thinking": None,
         "reasoning_effort": None,
         "cache_hit_tokens": None,
         "cache_miss_tokens": None,
         "error": None,
+        # Trust fields
+        "implementation_source": implementation_source,
+        "routed_model_used": routed_model_used,
+        "route_role": route_role or role,
+        "route_expected_backend": route_expected_backend or primary_backend,
+        "route_expected_model": route_expected_model or primary_model,
+        "external_agent_name": external_agent_name,
+        "verification_status": "started_unverified",
+        "allowed_next_stage": False,
+        "confidence_downgraded": True,
+        # Legacy-compatible fields
+        "codex_used": None,
+        "codex_thread_id": None,
     }
+    return entry
 
 
 def cmd_start(args: List[str]):
-    """Start a new call."""
+    """Start a new call.
+
+    Positional: skill role backend model
+    Named: --implementation-source --routed-model-used --route-role
+           --route-expected-backend --route-expected-model --external-agent-name
+           --global-codex-gate-mode --routing-source
+    """
+    kwargs = _parse_kwargs(args)
+    pos = [a for a in args if not a.startswith("--")]
+    skill = pos[0] if len(pos) > 0 else ""
+    role = pos[1] if len(pos) > 1 else ""
+    primary_backend = pos[2] if len(pos) > 2 else "llm-chat"
+    primary_model = pos[3] if len(pos) > 3 else ""
+
+    impl_source = kwargs.get("implementation_source", "external_agent_direct")
+    routed_used_str = kwargs.get("routed_model_used", "false")
+    routed_used = routed_used_str.lower() in ("true", "1", "yes")
+    route_role = kwargs.get("route_role", "")
+    route_backend = kwargs.get("route_expected_backend", "")
+    route_model = kwargs.get("route_expected_model", "")
+    ext_agent = kwargs.get("external_agent_name")
+    gate_mode = kwargs.get("global_codex_gate_mode")
+    routing_src = kwargs.get("routing_source", "env")
+
     entry = create_call_entry(
-        skill=args[0] if len(args) > 0 else "",
-        role=args[1] if len(args) > 1 else "",
-        primary_backend=args[2] if len(args) > 2 else "llm-chat",
-        primary_model=args[3] if len(args) > 3 else "",
+        skill=skill,
+        role=role,
+        primary_backend=primary_backend,
+        primary_model=primary_model,
+        implementation_source=impl_source,
+        routed_model_used=routed_used,
+        route_role=route_role or role,
+        route_expected_backend=route_backend or primary_backend,
+        route_expected_model=route_model or primary_model,
+        external_agent_name=ext_agent,
+        global_codex_gate_mode=gate_mode,
+        routing_source=routing_src,
     )
     call_id = entry["call_id"]
     calls_dir = get_calls_dir()
@@ -89,7 +155,7 @@ def cmd_start(args: List[str]):
 
 
 def _parse_kwargs(args: List[str]) -> dict:
-    """Extract --key value pairs from args list. Returns dict of parsed kwargs."""
+    """Extract --key value pairs from args list."""
     kwargs = {}
     i = 0
     while i < len(args):
@@ -124,6 +190,14 @@ def cmd_finish(args: List[str]):
       --confidence-downgraded <true|false>
       --routing-source <env|manual>
       --global-codex-gate-mode <codex_required|codex_preferred|deepseek_only>
+      --implementation-source <external_agent_direct|routed_internal_model>
+      --routed-model-used <true|false>
+      --verification-status <status>
+      --allowed-next-stage <true|false>
+      --external-agent-name <name>
+      --route-role <role>
+      --route-expected-backend <backend>
+      --route-expected-model <model>
     """
     kwargs = _parse_kwargs(args)
     calls_dir = get_calls_dir()
@@ -142,9 +216,8 @@ def cmd_finish(args: List[str]):
     start = datetime.fromisoformat(entry.get("timestamp", now.isoformat()))
     entry["completed_at"] = now.isoformat()
     entry["duration_sec"] = int((now - start).total_seconds())
-    entry["status"] = "completed"
 
-    # Apply optional overrides — these may come from CLI or be preserved from current_call.json
+    # Apply optional overrides
     codex_thread_id = kwargs.get("codex_thread_id") or entry.get("codex_thread_id")
     isolation_mode = kwargs.get("isolation_mode") or entry.get("isolation_mode")
     actual_backend = kwargs.get("actual_backend") or entry.get("actual_backend")
@@ -155,6 +228,16 @@ def cmd_finish(args: List[str]):
     confidence_downgraded = kwargs.get("confidence_downgraded") or entry.get("confidence_downgraded")
     routing_source = kwargs.get("routing_source") or entry.get("routing_source", "env")
     global_codex_gate_mode = kwargs.get("global_codex_gate_mode") or entry.get("global_codex_gate_mode")
+    impl_source = kwargs.get("implementation_source") or entry.get("implementation_source", "external_agent_direct")
+    routed_used_str = kwargs.get("routed_model_used")
+    if routed_used_str is not None:
+        entry["routed_model_used"] = routed_used_str.lower() in ("true", "1", "yes")
+    verif_status = kwargs.get("verification_status")
+    allowed_next = kwargs.get("allowed_next_stage")
+    ext_agent = kwargs.get("external_agent_name")
+    route_role = kwargs.get("route_role")
+    route_backend = kwargs.get("route_expected_backend")
+    route_model = kwargs.get("route_expected_model")
 
     if codex_thread_id:
         entry["codex_thread_id"] = codex_thread_id
@@ -176,31 +259,98 @@ def cmd_finish(args: List[str]):
         entry["routing_source"] = routing_source
     if global_codex_gate_mode:
         entry["global_codex_gate_mode"] = global_codex_gate_mode
+    if impl_source:
+        entry["implementation_source"] = impl_source
+    if verif_status:
+        entry["verification_status"] = verif_status
+    if allowed_next is not None:
+        entry["allowed_next_stage"] = allowed_next.lower() in ("true", "1", "yes")
+    if ext_agent:
+        entry["external_agent_name"] = ext_agent
+    if route_role:
+        entry["route_role"] = route_role
+    if route_backend:
+        entry["route_expected_backend"] = route_backend
+    if route_model:
+        entry["route_expected_model"] = route_model
 
-    # Enforce: if actual_backend=codex, codex_thread_id must be non-empty
-    effective_backend = entry.get("actual_backend", "")
-    if effective_backend == "codex":
-        tid = entry.get("codex_thread_id", "").strip()
-        if not tid or tid in ("none", ""):
-            entry["status"] = "completed_with_warnings"
-        elif not entry.get("isolation_mode"):
-            entry["isolation_mode"] = "codex_thread"
+    # Auto-verification: determine verification_status and allowed_next_stage
+    _auto_verify(entry)
 
-    # Enforce: if codex_used is explicitly false, demote to completed_with_warnings
-    if entry.get("codex_used") is not None:
+    # Legacy: keep actual_backend in sync for backward compat
+    eff_backend = entry.get("actual_backend", "")
+    if eff_backend == "codex" and not entry.get("codex_thread_id"):
+        entry["status"] = "completed_with_warnings"
+    elif entry.get("codex_used") is not None:
         cu = str(entry.get("codex_used")).lower().strip()
         if cu in ("false", "0", "no"):
             entry["status"] = "completed_with_warnings"
+    else:
+        entry["status"] = "completed"
 
     # Append to JSONL
     jsonl_file = calls_dir / "llm_calls.jsonl"
     with open(jsonl_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-    # Clear current
     current_file.write_text("{}", encoding="utf-8")
     print(f"Call {entry['call_id']} completed.")
     return entry["call_id"]
+
+
+def _auto_verify(entry: Dict[str, Any]):
+    """Auto-determine verification_status and allowed_next_stage based on trust fields."""
+    impl_source = entry.get("implementation_source", "external_agent_direct")
+    routed_used = entry.get("routed_model_used", False)
+    actual_backend = entry.get("actual_backend", "")
+    actual_model = entry.get("actual_model", "")
+    fallback_used = entry.get("fallback_used", False)
+    fallback_reason = entry.get("fallback_reason")
+    codex_thread_id = entry.get("codex_thread_id", "")
+    verif_status = entry.get("verification_status", "")
+
+    # Skip if caller already set a specific verification_status
+    if verif_status and verif_status not in ("started_unverified", ""):
+        return
+
+    if impl_source == "external_agent_direct":
+        entry["verification_status"] = "unverified_external_execution"
+        entry["confidence_downgraded"] = True
+        entry["allowed_next_stage"] = False
+        return
+
+    if routed_used and not actual_backend:
+        entry["verification_status"] = "missing_actual_backend"
+        entry["allowed_next_stage"] = False
+        entry["confidence_downgraded"] = True
+        return
+
+    if impl_source == "routed_internal_model" and actual_backend:
+        if actual_backend == "codex":
+            if not codex_thread_id or codex_thread_id.strip() in ("none", ""):
+                entry["verification_status"] = "codex_missing_thread_id"
+                entry["status"] = "completed_with_warnings"
+                entry["allowed_next_stage"] = False
+                entry["confidence_downgraded"] = True
+            else:
+                entry["verification_status"] = "verified_routed_call"
+                entry["allowed_next_stage"] = True
+                entry["confidence_downgraded"] = False
+        elif fallback_used:
+            if actual_backend and actual_model and fallback_reason:
+                entry["verification_status"] = "verified_with_fallback"
+                entry["confidence_downgraded"] = True
+                # allowed_next_stage is caller-decided; keep False unless explicitly set
+                if entry.get("allowed_next_stage") is None:
+                    entry["allowed_next_stage"] = False
+            else:
+                entry["verification_status"] = "fallback_unverified"
+                entry["allowed_next_stage"] = False
+                entry["confidence_downgraded"] = True
+        else:
+            entry["verification_status"] = "verified_routed_call"
+            entry["allowed_next_stage"] = True
+            entry["confidence_downgraded"] = False
 
 
 def cmd_fail(args: List[str]):
@@ -224,6 +374,8 @@ def cmd_fail(args: List[str]):
     entry["duration_sec"] = int((now - start).total_seconds())
     entry["status"] = "failed"
     entry["error"] = error
+    entry["verification_status"] = "call_failed"
+    entry["allowed_next_stage"] = False
 
     jsonl_file = calls_dir / "llm_calls.jsonl"
     with open(jsonl_file, "a", encoding="utf-8") as f:
@@ -260,30 +412,30 @@ def cmd_fallback(
     entry["fallback_used"] = True
     entry["fallback_reason"] = reason
 
-    # Distinguish final_selector fallback from generic fallback
     role = entry.get("role", "")
     if role == "final_selector":
         entry["status"] = "completed_with_warnings"
     else:
         entry["status"] = "completed_with_fallback"
 
-    # Preserve existing codex_thread_id unless caller provides an override
     if codex_thread_id:
         entry["codex_thread_id"] = codex_thread_id
-    # On fallback, isolation is protocol_only
     entry["isolation_mode"] = "protocol_only"
 
-    # Optional final-select-specific fields
     if selection_mode:
         entry["selection_mode"] = selection_mode
     if codex_used:
         entry["codex_used"] = codex_used
     if confidence_downgraded:
         entry["confidence_downgraded"] = confidence_downgraded
+    else:
+        entry["confidence_downgraded"] = True
     if routing_source:
         entry["routing_source"] = routing_source
     if global_codex_gate_mode:
         entry["global_codex_gate_mode"] = global_codex_gate_mode
+
+    _auto_verify(entry)
 
     now = datetime.now(timezone.utc)
     start = datetime.fromisoformat(entry.get("timestamp", now.isoformat()))
@@ -342,7 +494,6 @@ def cmd_summary(args: List[str]):
                 except json.JSONDecodeError:
                     continue
 
-    # Statistics
     total = len(calls)
     by_status: Dict[str, int] = {}
     by_backend: Dict[str, int] = {}
@@ -371,11 +522,11 @@ def cmd_summary(args: List[str]):
         "by_skill": by_skill,
     }
 
-    # Recent calls
     recent = calls[-limit:] if limit > 0 else calls
     result["recent_calls"] = [
         {
             "timestamp": c.get("timestamp", ""),
+            "call_id": c.get("call_id", ""),
             "skill": c.get("skill", ""),
             "role": c.get("role", ""),
             "primary_backend": c.get("primary_backend", ""),
@@ -383,12 +534,22 @@ def cmd_summary(args: List[str]):
             "actual_model": c.get("actual_model", ""),
             "status": c.get("status", ""),
             "fallback_used": c.get("fallback_used", False),
+            "fallback_reason": c.get("fallback_reason"),
             "codex_used": c.get("codex_used", None),
+            "codex_thread_id": c.get("codex_thread_id", None),
             "confidence_downgraded": c.get("confidence_downgraded", None),
             "selection_mode": c.get("selection_mode", None),
             "error": c.get("error", None),
+            # Trust fields
+            "implementation_source": c.get("implementation_source", ""),
+            "routed_model_used": c.get("routed_model_used", False),
+            "route_role": c.get("route_role", ""),
+            "route_expected_backend": c.get("route_expected_backend", ""),
+            "route_expected_model": c.get("route_expected_model", ""),
+            "verification_status": c.get("verification_status", ""),
+            "allowed_next_stage": c.get("allowed_next_stage", None),
         }
-        for c in recent[-20:]  # last 20
+        for c in recent[-20:]
     ]
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -409,7 +570,6 @@ def main():
     elif cmd == "fail":
         cmd_fail(args)
     elif cmd == "fallback":
-        # Extract --named params from positional args
         fallback_model = args[0] if args and not args[0].startswith("--") else "deepseek-v4-flash"
         reason = args[1] if len(args) > 1 and not args[1].startswith("--") else "codex unavailable"
         backend = args[2] if len(args) > 2 and not args[2].startswith("--") else "llm-chat"

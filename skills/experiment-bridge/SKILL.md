@@ -74,6 +74,48 @@ Proceeding to implementation.
 
 ### Phase 2: Implement Experiment Code
 
+**⚠️ Trust Tracking — READ BEFORE WRITING CODE**
+
+`tools/model_route.py` only **declares** the routing configuration — it does NOT actually call any model. Declaring a route is not the same as executing it. The artifact header must reflect the **actual** execution source.
+
+**Two execution sources:**
+
+1. **`external_agent_direct`** (default — conservative):
+   - The code was written by an external agent / human without a real internal model call.
+   - Must be marked as:
+     ```
+     implementation_source=external_agent_direct
+     routed_model_used=false
+     actual_backend=external_agent
+     actual_model=unknown
+     verification_status=unverified_external_execution
+     allowed_next_stage=false
+     confidence_downgraded=true
+     ```
+   - **Do NOT claim the code was "implemented by DeepSeek Pro" if no internal model was called.**
+
+2. **`routed_internal_model`**:
+   - The code was written by a real internal model call through `mcp__llm-chat__chat` (or equivalent API).
+   - Must have ledger entries:
+     ```
+     python tools/llm_call_ledger.py start experiment-bridge experiment_implementer llm-chat <model> \
+       --implementation-source routed_internal_model \
+       --routed-model-used true \
+       --route-role experiment_implementer \
+       --route-expected-backend llm-chat \
+       --route-expected-model <model>
+     ```
+   - After the call completes:
+     ```
+     python tools/llm_call_ledger.py finish \
+       --implementation-source routed_internal_model \
+       --routed-model-used true \
+       --actual-backend llm-chat \
+       --actual-model <model> \
+       --verification-status verified_routed_call \
+       --allowed-next-stage true
+     ```
+
 **Routing**: Before starting implementation, resolve the experiment_implementer model:
 ```bash
 python tools/model_route.py experiment_implementer
@@ -110,6 +152,10 @@ For each milestone (in order), write the experiment scripts:
 
 ### Phase 2.5: Cross-Model Code Review (when CODE_REVIEW = true)
 
+**⚠️ Codex Thread ID Requirement — CRITICAL**
+
+Codex review **MUST** have a `codex_thread_id`. Without it, the review cannot be verified and `allowed_next_stage` must be `false`. Do NOT write "Codex review completed" without a thread ID.
+
 **Routing**: Before reviewing, resolve the experiment_code_reviewer model:
 ```bash
 python tools/model_route.py experiment_code_reviewer
@@ -126,7 +172,11 @@ Send the experiment code for review following the route resolved above:
 
 ```
 # Example: Codex route
-python tools/llm_call_ledger.py start experiment-bridge experiment_code_reviewer codex
+python tools/llm_call_ledger.py start experiment-bridge experiment_code_reviewer codex \
+  --implementation-source routed_internal_model \
+  --routed-model-used true \
+  --route-role experiment_code_reviewer \
+  --route-expected-backend codex
 mcp__codex__codex:
   config: {"model_reasoning_effort": "xhigh"}
   prompt: |
@@ -134,15 +184,26 @@ mcp__codex__codex:
     ...
     For each issue found, specify: CRITICAL / MAJOR / MINOR and the exact fix.
 python tools/llm_call_ledger.py finish \
+  --implementation-source routed_internal_model \
+  --routed-model-used true \
   --actual-backend codex --codex-thread-id <id> \
-  --isolation-mode codex_thread
+  --isolation-mode codex_thread \
+  --verification-status verified_routed_call \
+  --allowed-next-stage true
 
 # Example: LLM fallback route
-python tools/llm_call_ledger.py start experiment-bridge experiment_code_reviewer llm-chat <model>
+python tools/llm_call_ledger.py start experiment-bridge experiment_code_reviewer llm-chat <model> \
+  --implementation-source routed_internal_model \
+  --routed-model-used true \
+  --route-role experiment_code_reviewer \
+  --route-expected-backend llm-chat \
+  --route-expected-model <model>
 mcp__llm-chat__chat:
   model: <model>
   ...
 python tools/llm_call_ledger.py finish \
+  --implementation-source routed_internal_model \
+  --routed-model-used true \
   --actual-backend llm-chat --actual-model <model>
 ```
 
@@ -151,6 +212,7 @@ python tools/llm_call_ledger.py finish \
 - **CRITICAL issues found** → fix them, then re-submit for review (max 2 rounds)
 - **Codex unavailable AND codex_required** → FAIL: do NOT proceed. Report: "Codex review required by ARIS_CODEX_GATE_MODE but Codex is unavailable."
 - **Codex unavailable AND codex_preferred** → fallback to LLM with WARNING logged via `llm_call_ledger.py fallback`. Proceed only after fallback review passes.
+- **Codex review without codex_thread_id** → `verification_status=codex_missing_thread_id`, `allowed_next_stage=false`. Do NOT claim the review was verified.
 
 ### Phase 3: Sanity Check (if SANITY_FIRST = true)
 
@@ -351,6 +413,35 @@ Ready for Workflow 2:
 - 如果 Codex review 不可用且配置为 codex_preferred：fallback 到 LLM，记录 WARNING。
 - 如果 CODE_REVIEW=false：打印 WARNING 后继续。
 - review 结果写入 artifact header（routing_source, global_codex_gate_mode, actual_backend, actual_model, fallback_used, codex_used）。
+- **Codex review 必须有 codex_thread_id**，否则 verification_status=codex_missing_thread_id，allowed_next_stage=false。
+
+### Model Invocation Trust Header
+
+All experiment artifacts (EXPERIMENT_PLAN.md, experiment code, review reports) must include a trust tracking header:
+
+```
+implementation_source: external_agent_direct | routed_internal_model
+routed_model_used: true | false
+route_role: <role>
+route_expected_backend: <backend>
+route_expected_model: <model>
+actual_backend: <backend>
+actual_model: <model>
+ledger_call_id: <id>
+codex_used: true | false
+codex_thread_id: <id or missing>
+fallback_used: true | false
+fallback_reason: <reason or missing>
+confidence_downgraded: true | false
+verification_status: verified_routed_call | verified_with_fallback | unverified_external_execution | codex_missing_thread_id | ...
+allowed_next_stage: true | false
+```
+
+Key rules:
+- `model_route.py` only resolves routing config — it does NOT call any model.
+- Only ledger entries with `verification_status=verified_routed_call` count as real internal model execution.
+- external_agent_direct must NOT be claimed as DeepSeek/Codex implementation.
+- Codex calls without codex_thread_id are unverified.
 
 ### Pre-Implementation Code Scan
 实现代码前，优先扫描现有代码和 base repo（如果 `BASE_REPO` 设置了），标识可复用的部分。

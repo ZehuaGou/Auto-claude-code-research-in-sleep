@@ -2931,6 +2931,88 @@ else:
     for c in ["62va", "62vb", "62vc", "62vd"]:
         check(f"{c} experiment-bridge SKILL.md exists", False)
 
+# 63. Trust tracking fields in llm_call_ledger.py
+ledger_tool = ROOT / "tools" / "llm_call_ledger.py"
+if ledger_tool.exists():
+    lc_content = ledger_tool.read_text(encoding="utf-8", errors="ignore")
+    check("63a. llm_call_ledger.py has implementation_source field", '"implementation_source"' in lc_content)
+    check("63b. llm_call_ledger.py has routed_model_used field", '"routed_model_used"' in lc_content)
+    check("63c. llm_call_ledger.py has verification_status field", '"verification_status"' in lc_content)
+    check("63d. llm_call_ledger.py has allowed_next_stage field", '"allowed_next_stage"' in lc_content)
+    check("63e. llm_call_ledger.py has _auto_verify function", "_auto_verify" in lc_content)
+    check("63f. llm_call_ledger.py has external_agent_direct in defaults", "external_agent_direct" in lc_content)
+else:
+    for c in ["63a", "63b", "63c", "63d", "63e", "63f"]:
+        check(f"{c} llm_call_ledger.py exists", False)
+
+# 64. validate_model_invocation.py exists and supports required commands
+validate_tool = ROOT / "tools" / "validate_model_invocation.py"
+validate_exists = validate_tool.exists()
+check("64a. validate_model_invocation.py exists", validate_exists)
+if validate_exists:
+    vc_content = validate_tool.read_text(encoding="utf-8", errors="ignore")
+    check("64b. validate_model_invocation.py supports --summary", '"--summary"' in vc_content or "--summary" in vc_content)
+    check("64c. validate_model_invocation.py supports --self-test", '"--self-test"' in vc_content or "--self-test" in vc_content)
+    check("64d. validate_model_invocation.py supports --role", '"--role"' in vc_content or "--role" in vc_content)
+    check("64e. validate_model_invocation.py supports --ledger-path", '"--ledger-path"' in vc_content or "--ledger-path" in vc_content)
+    check("64f. validate_model_invocation.py supports --require-codex-thread", '"--require-codex-thread"' in vc_content or "--require-codex-thread" in vc_content)
+    check("64g. validate_model_invocation.py has cmd_self_test", "cmd_self_test" in vc_content)
+    check("64h. validate_model_invocation.py has SUMMARY_ROLES list", "SUMMARY_ROLES" in vc_content)
+else:
+    for c in ["64b", "64c", "64d", "64e", "64f", "64g", "64h"]:
+        check(f"{c} validate_model_invocation.py content", False)
+
+# 65. experiment-bridge SKILL.md trust tracking requirements
+exp_bridge_skill = ROOT / "skills" / "experiment-bridge" / "SKILL.md"
+if exp_bridge_skill.exists():
+    eb_src = exp_bridge_skill.read_text(encoding="utf-8", errors="ignore")
+    check("65a. experiment-bridge explains model_route.py only resolves config", "model_route.py only" in eb_src or "model_route.py" in eb_src and "only declares" in eb_src)
+    check("65b. experiment-bridge defines external_agent_direct", "external_agent_direct" in eb_src)
+    check("65c. experiment-bridge requires routed_internal_model ledger", "routed_internal_model" in eb_src and "ledger" in eb_src.lower())
+    check("65d. experiment-bridge requires codex_thread_id for Codex review", "codex_thread_id" in eb_src and "review" in eb_src.lower())
+    check("65e. experiment-bridge has trust tracking header section", "implementation_source" in eb_src and "allowed_next_stage" in eb_src)
+    check("65f. experiment-bridge forbids claiming DeepSeek without call", "DeepSeek" in eb_src and "without" in eb_src and "call" in eb_src)
+else:
+    for c in ["65a", "65b", "65c", "65d", "65e", "65f"]:
+        check(f"{c} experiment-bridge SKILL.md trust content", False)
+
+# 66. status SKILL.md calls validate_model_invocation.py --summary
+status_skill = ROOT / "skills" / "status" / "SKILL.md"
+if status_skill.exists():
+    ss_content = status_skill.read_text(encoding="utf-8", errors="ignore")
+    check("66a. status SKILL.md mentions validate_model_invocation.py", "validate_model_invocation.py" in ss_content)
+    check("66b. status SKILL.md calls --summary", "--summary" in ss_content)
+    check("66c. status SKILL.md shows model invocation trust", "trust" in ss_content.lower() or "Trust" in ss_content)
+    check("66d. status SKILL.md handles missing tool gracefully", "cannot be verified" in ss_content or "WARNING" in ss_content)
+else:
+    for c in ["66a", "66b", "66c", "66d"]:
+        check(f"{c} status SKILL.md exists", False)
+
+# 67. MODEL_ROUTING_OVERVIEW.md explains routing declaration vs actual invocation
+model_routing_doc = ROOT / "docs" / "MODEL_ROUTING_OVERVIEW.md"
+if model_routing_doc.exists():
+    mr_content = model_routing_doc.read_text(encoding="utf-8", errors="ignore")
+    check("67a. MODEL_ROUTING_OVERVIEW explains routing declaration vs actual call", "declaration" in mr_content.lower() or "does NOT call" in mr_content)
+    check("67b. MODEL_ROUTING_OVERVIEW explains external_agent_direct", "external_agent_direct" in mr_content)
+    check("67c. MODEL_ROUTING_OVERVIEW forbids silent fallback", "silent fallback" in mr_content.lower() or "silent" in mr_content)
+    check("67d. MODEL_ROUTING_OVERVIEW requires codex_thread_id", "codex_thread_id" in mr_content)
+    check("67e. MODEL_ROUTING_OVERVIEW requires ledger_call_id", "ledger_call_id" in mr_content)
+else:
+    for c in ["67a", "67b", "67c", "67d", "67e"]:
+        check(f"{c} MODEL_ROUTING_OVERVIEW.md exists", False)
+
+# 68. .env.example comments explain ROLE_* is declaration only
+env_example = ROOT / ".env.example"
+if env_example.exists():
+    ee_content = env_example.read_text(encoding="utf-8", errors="ignore")
+    check("68a. .env.example comments explain ROLE_* is declaration", "ROLE_" in ee_content and "declaration" in ee_content.lower() or "declare" in ee_content.lower())
+    check("68b. .env.example mentions ledger requirement", "ledger" in ee_content.lower())
+    check("68c. .env.example mentions codex_thread_id for Codex", "codex_thread_id" in ee_content)
+    check("68d. .env.example warns against external_agent_direct masquerading", "external_agent_direct" in ee_content or "mascquerad" in ee_content.lower())
+else:
+    for c in ["68a", "68b", "68c", "68d"]:
+        check(f"{c} .env.example exists", False)
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
