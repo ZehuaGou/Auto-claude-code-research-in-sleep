@@ -156,18 +156,22 @@ def call_openai_compatible(
 def cmd_self_test() -> bool:
     env_info = load_env()
     env_vars = env_info.get("vars", {}) if isinstance(env_info, dict) else {}
+    fixture_env_vars = {
+        "LLM_API_KEY": "fixture-llm-key",
+        "MINIMAX_API_KEY": "fixture-minimax-key",
+    }
 
     results = []
 
-    llm_visible = bool(resolve_api_key("LLM_API_KEY", env_vars=env_vars))
+    llm_visible = bool(resolve_api_key("LLM_API_KEY", env_vars=fixture_env_vars))
     results.append({
-        "case": "LLM_API_KEY via env_loader vars",
+        "case": "LLM_API_KEY via fixture env_vars",
         "api_key_present": llm_visible,
     })
 
-    minimax_visible = bool(resolve_api_key("MINIMAX_API_KEY", env_vars=env_vars))
+    minimax_visible = bool(resolve_api_key("MINIMAX_API_KEY", env_vars=fixture_env_vars))
     results.append({
-        "case": "MINIMAX_API_KEY via env_loader vars",
+        "case": "MINIMAX_API_KEY via fixture env_vars",
         "api_key_present": minimax_visible,
     })
 
@@ -186,7 +190,16 @@ def cmd_self_test() -> bool:
         "api_key_present": bool(missing_result.raw_metadata.get("api_key_present", False)),
     })
 
-    assert results[0]["api_key_present"] is True, "Expected LLM_API_KEY to be visible via env_loader vars"
+    results.append({
+        "case": "local key visibility diagnostic",
+        "LLM_API_KEY_visible_from_env_loader": bool(env_vars.get("LLM_API_KEY")),
+        "MINIMAX_API_KEY_visible_from_env_loader": bool(env_vars.get("MINIMAX_API_KEY")),
+        "LLM_API_KEY_visible_from_os_environ": bool(os.environ.get("LLM_API_KEY")),
+        "MINIMAX_API_KEY_visible_from_os_environ": bool(os.environ.get("MINIMAX_API_KEY")),
+    })
+
+    assert results[0]["api_key_present"] is True, "Expected LLM_API_KEY fixture to resolve"
+    assert results[1]["api_key_present"] is True, "Expected MINIMAX_API_KEY fixture to resolve"
     assert missing_result.error == "config_missing", "Expected missing api_key_env to return config_missing"
 
     print(json.dumps(results, ensure_ascii=False, indent=2))
