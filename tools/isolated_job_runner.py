@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional
 TOOLS_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(TOOLS_DIR))
 
-from env_loader import find_project_root, load_env, mask_secret
+from env_loader import find_project_root, load_env, mask_secret, resolve_role_config
 
 
 # ---------------------------------------------------------------------------
@@ -99,10 +99,11 @@ def _get_role_prefix(model_env: str) -> str:
     return ""
 
 
-def _get_role_thinking_effort(model_env: str, env_vars: Dict[str, str]) -> tuple[str, str, int]:
+def _get_role_thinking_effort_legacy(model_env: str, env_vars: Dict[str, str]) -> tuple[str, str, int]:
     """Read role-specific THINKING, REASONING_EFFORT, MAX_TOKENS from env.
 
     Falls back to global LLM_THINKING / LLM_REASONING_EFFORT / LLM_MAX_TOKENS.
+    Legacy path for old LLM_* vars.
     """
     prefix = _get_role_prefix(model_env)
     thinking = env_vars.get(f"{prefix}THINKING", "") or env_vars.get("LLM_THINKING", "")
@@ -113,6 +114,124 @@ def _get_role_thinking_effort(model_env: str, env_vars: Dict[str, str]) -> tuple
     except (ValueError, TypeError):
         max_tokens = 4096
     return thinking, effort, max_tokens
+
+
+def _resolve_job_model_config(job: Dict[str, Any], env_vars: Dict[str, str]) -> Dict[str, Any]:
+    """Resolve model config for a job using new ROLE_/MODEL_ system.
+
+    Returns dict with keys:
+        model_alias, provider, backend_type, model, thinking, reasoning_effort,
+        requires_api_key, api_key_env, base_url, mcp_server,
+        fallback_used, fallback_reason, config_error,
+        api_key, endpoint, ledger_overrides
+    """
+    role = job.get("role", "")
+    model_env_key = job.get("model_env", "")
+
+    # Try new ROLE_/MODEL_ system if role is available
+    if role:
+        config = resolve_role_config(role, env_vars)
+    else:
+        config = {"config_error": "no role in job"}
+
+    # If new system worked without error, use it
+    if not config.get("config_error") and config.get("model"):
+        api_key = ""
+        endpoint = ""
+        if config["backend_type"] == "openai_compatible_api":
+            api_key = env_vars.get(config["api_key_env"], "")
+            endpoint = _get_llm_endpoint(config["base_url"])
+
+        ledger = {
+            "model_alias": config.get("model_alias", ""),
+            "provider": config.get("provider", ""),
+            "backend_type": config.get("backend_type", ""),
+            "actual_backend": config.get("backend_type", ""),
+            "actual_model": config.get("model", ""),
+            "configured_model": config.get("model", ""),
+            "thinking": config.get("thinking", ""),
+            "reasoning_effort": config.get("reasoning_effort", ""),
+            "fallback_used": config.get("fallback_used", False),
+            "fallback_reason": config.get("fallback_reason", ""),
+        }
+        return {
+            **config,
+            "api_key": api_key,
+            "endpoint": endpoint,
+            "ledger_overrides": ledger,
+        }
+
+    # Fallback to legacy model_env resolution
+    model = _get_model_from_env(model_env_key, env_vars)
+    thinking, reasoning_effort, max_tokens = _get_role_thinking_effort_legacy(model_env_key, env_vars)
+    thinking = job.get("thinking", "") or thinking
+    reasoning_effort = job.get("reasoning_effort", "") or reasoning_effort
+    max_tokens = job.get("max_tokens", 0) or max_tokens
+
+    if model == "codex":
+        return {
+            "model_alias": "CODEX",
+            "provider": "codex",
+            "backend_type": "mcp",
+            "model": "auto",
+            "thinking": "",
+            "reasoning_effort": "",
+            "requires_api_key": False,
+            "api_key_env": "",
+            "base_url": "",
+            "mcp_server": "codex",
+            "fallback_used": False,
+            "fallback_reason": "using legacy model_env codex",
+            "config_error": "codex in legacy model — use ROLE_/MODEL_ system",
+            "api_key": "",
+            "endpoint": "",
+            "max_tokens": max_tokens,
+            "ledger_overrides": {
+                "model_alias": "CODEX",
+                "provider": "codex",
+                "backend_type": "mcp",
+                "actual_backend": "mcp",
+                "actual_model": "auto",
+                "configured_model": "auto",
+                "thinking": "",
+                "reasoning_effort": "",
+                "fallback_used": False,
+                "fallback_reason": "",
+            },
+        }
+
+    api_key = env_vars.get("LLM_API_KEY", "")
+    endpoint = _get_llm_endpoint(env_vars.get("LLM_BASE_URL", "https://api.deepseek.com"))
+    return {
+        "model_alias": "",
+        "provider": "deepseek",
+        "backend_type": "openai_compatible_api",
+        "model": model,
+        "thinking": thinking,
+        "reasoning_effort": reasoning_effort,
+        "requires_api_key": bool(api_key),
+        "api_key_env": "LLM_API_KEY",
+        "base_url": env_vars.get("LLM_BASE_URL", "https://api.deepseek.com"),
+        "mcp_server": "",
+        "fallback_used": True,
+        "fallback_reason": "new ROLE_/MODEL_ system not configured; using legacy LLM_* vars",
+        "config_error": "",
+        "api_key": api_key,
+        "endpoint": endpoint,
+        "max_tokens": max_tokens,
+        "ledger_overrides": {
+            "model_alias": "",
+            "provider": "deepseek",
+            "backend_type": "openai_compatible_api",
+            "actual_backend": "api",
+            "actual_model": model,
+            "configured_model": model,
+            "thinking": thinking,
+            "reasoning_effort": reasoning_effort,
+            "fallback_used": True,
+            "fallback_reason": "new ROLE_/MODEL_ system not configured; using legacy LLM_* vars",
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -490,35 +609,41 @@ def _backend_api(
     }
     start = time.time()
 
-    api_key = env_vars.get("LLM_API_KEY", "")
-    if not api_key:
-        result["error"] = "LLM_API_KEY not set in .env"
-        return result
+    # Determine model and role-specific params using new system
+    model_config = _resolve_job_model_config(job, env_vars)
+    model = model_config.get("model", "")
+    thinking = model_config.get("thinking", "")
+    reasoning_effort = model_config.get("reasoning_effort", "")
+    max_tokens = model_config.get("max_tokens", 4096)
+    api_key = model_config.get("api_key", "")
+    endpoint = model_config.get("endpoint", "")
+    ledger_overrides = model_config.get("ledger_overrides", {})
 
-    base_url = env_vars.get("LLM_BASE_URL", "https://api.deepseek.com")
-    endpoint = _get_llm_endpoint(base_url)
-
-    # Determine model and role-specific params
-    model_env_key = job.get("model_env", "")
-    model = _get_model_from_env(model_env_key, env_vars)
-    result["model_used"] = model
-
-    # Reject model="codex" — codex is not an API-callable model
-    if model == "codex":
-        result["error"] = (
-            f"model='codex' is not valid for api backend. "
-            f"Use codex_optional backend if Codex fallback is intended. "
-            f"(model_env={model_env_key}, resolved={model})"
-        )
-        return result
-
-    thinking, reasoning_effort, max_tokens = _get_role_thinking_effort(
-        model_env_key, env_vars
-    )
     # Allow job-level overrides
     thinking = job.get("thinking", "") or thinking
     reasoning_effort = job.get("reasoning_effort", "") or reasoning_effort
     max_tokens = job.get("max_tokens", 0) or max_tokens
+
+    # Reject model="codex" — codex is not an API-callable model
+    if model == "codex" or model_config.get("backend_type") == "mcp":
+        result["error"] = (
+            f"Role '{job.get('role', '')}' resolves to Codex MCP backend. "
+            f"isolated_job_runner cannot call Codex MCP. "
+            f"Outer Agent must invoke mcp__codex__codex directly."
+        )
+        return result
+
+    if not api_key:
+        result["error"] = f"{model_config.get('api_key_env', 'API key')} not configured for {model_config.get('provider', 'unknown')} backend"
+        return result
+
+    if not endpoint:
+        result["error"] = f"base_url not configured for {model_config.get('provider', 'unknown')} backend"
+        return result
+
+    result["model_used"] = model
+    result["model_alias"] = model_config.get("model_alias", "")
+    result["backend_type"] = model_config.get("backend_type", "")
 
     # Read prompt file or construct from job description
     prompt_file = job.get("prompt_file", "")
