@@ -3212,6 +3212,37 @@ check("77q. validate_model_invocation.py fails codex_missing_thread_id",
 check("77r. trusted_role_runner.py uses tools/model_backends",
       "call_codex_mcp" in trusted_runner_src and "call_openai_compatible" in trusted_runner_src)
 
+# 78. external MCP handoff support
+print("\n=== 78. external MCP handoff support ===")
+docs_proto = shared_proto.read_text(encoding="utf-8", errors="ignore") if shared_proto.exists() else ""
+docs_routing = model_routing_doc.read_text(encoding="utf-8", errors="ignore") if model_routing_doc.exists() else ""
+check("78a. trusted_role_runner.py supports --prepare-external-mcp",
+      "--prepare-external-mcp" in trusted_runner_src)
+check("78b. trusted_role_runner.py supports --complete-external-mcp",
+      "--complete-external-mcp" in trusted_runner_src)
+check("78c. trusted_role_runner.py implements pending_external_mcp",
+      "pending_external_mcp" in trusted_runner_src)
+check("78d. pending_external_mcp cannot enter next stage",
+      "pending_external_mcp" in trusted_runner_src and "False" in trusted_runner_src)
+check("78e. complete external MCP requires codex_thread_id",
+      "_complete_external_mcp" in trusted_runner_src and "codex_missing_thread_id" in trusted_runner_src)
+check("78f. complete external MCP requires response_file",
+      "_complete_external_mcp" in trusted_runner_src and "response_file" in trusted_runner_src)
+check("78g. external MCP completion uses dedicated routing_source",
+      "trusted_role_runner_external_mcp" in trusted_runner_src)
+check("78h. validate_model_invocation.py understands pending_external_mcp",
+      "pending_external_mcp" in validate_src)
+check("78i. validate_model_invocation.py checks response_file for external MCP",
+      "response_file" in validate_src and "trusted_role_runner_external_mcp" in validate_src)
+check("78j. docs explain outer Agent Codex MCP handoff",
+      "prepare-external-mcp" in docs_proto and "complete-external-mcp" in docs_proto and "outer Agent" in docs_proto)
+check("78k. routing docs explain API direct path remains supported",
+      "openai_compatible" in docs_routing and "prepare-external-mcp" in docs_routing)
+check("78l. routing docs say ROLE_* switch does not require skill edits",
+      "do not need to modify skill" in docs_routing.lower() or "no need to modify skill" in docs_routing.lower() or "without modifying skill" in docs_routing.lower())
+check("78m. DeepSeek/API path does not require codex_thread_id",
+      "non-Codex role should not record codex_thread_id" in validate_src or "DeepSeek/API role" in docs_proto)
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

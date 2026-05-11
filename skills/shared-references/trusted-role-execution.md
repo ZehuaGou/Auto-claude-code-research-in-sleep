@@ -15,6 +15,11 @@ which records to the ledger and can be verified by `tools/validate_model_invocat
 `tools/model_backends/`. It must not directly depend on ad hoc imports such as
 `mcp_codex_client` or `llm_chat_client`.
 
+Codex MCP is available to the **outer Agent tool environment**. A plain Python
+script cannot directly invoke the outer Agent's `mcp__codex__codex` tool, so
+Codex routes may require an external MCP handoff prepared and completed through
+`trusted_role_runner.py`.
+
 ---
 
 ## Rule 1: External Agents Are Orchestrators Only
@@ -45,12 +50,24 @@ For Codex-assigned roles (idea_reviewer, novelty_checker, etc.), add `--require-
 
 The runner will:
 1. Create a ledger entry with `implementation_source=routed_internal_model`
-2. Call the actual backend (Codex MCP or API)
+2. Call the actual backend (Codex MCP or API), or prepare/complete an external
+   Codex MCP handoff when Python cannot directly access the Codex tool
 3. Record `codex_thread_id` (for Codex) or `actual_backend`/`actual_model` (for API)
 4. Write a provenance header in the output artifact
 
 If the current Python runtime has no explicit Codex MCP adapter, the runner must
 return `unsupported_runtime_backend` and fail closed.
+
+For Codex external handoff, use:
+
+```bash
+python tools/trusted_role_runner.py --role <role> --input <context> --output <artifact> --prepare-external-mcp --require-codex-thread
+python tools/trusted_role_runner.py --complete-external-mcp --call-id <call_id> --codex-thread-id <real_thread_id> --response-file <response_file> --output <artifact>
+```
+
+The outer Agent performs the real `mcp__codex__codex` call between those two
+steps. DeepSeek/OpenAI-compatible API roles do **not** use this handoff and
+must execute directly through `tools/model_backends/openai_compatible.py`.
 
 ---
 
@@ -110,6 +127,10 @@ Do not fabricate `codex_thread_id` from normal CLI output, commit hashes,
 human-written strings, or model self-description. Only real Codex tool/session
 metadata is acceptable.
 
+`pending_external_mcp` is not a completed Codex call. It must keep
+`allowed_next_stage=false` until `complete-external-mcp` verifies the real
+thread id and response artifact.
+
 ---
 
 ## Rule 5: API Backend Requires actual_backend / actual_model
@@ -122,6 +143,9 @@ For non-Codex backends (DeepSeek, Kimi, etc.), the ledger must contain:
 Missing either → `verification_status` → `missing_actual_backend`.
 If the backend is configured but missing API key, `base_url`, or model, the
 runner must mark the call as `call_failed` and fail closed.
+
+DeepSeek/OpenAI-compatible API roles do not require `codex_thread_id` and must
+not be forced through Codex handoff mode.
 
 ---
 

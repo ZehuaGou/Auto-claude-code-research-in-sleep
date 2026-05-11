@@ -181,6 +181,8 @@ def validate_role(
     verification_status = latest.get("verification_status", "")
     allowed_next_stage = latest.get("allowed_next_stage", False)
     confidence_downgraded = latest.get("confidence_downgraded", True)
+    routing_source = latest.get("routing_source", "")
+    response_file = latest.get("response_file", "")
 
     # Determine pass/fail
     status = "PASS"
@@ -190,7 +192,7 @@ def validate_role(
         status = "FAIL"
         reasons.append("implementation_source=external_agent_direct (no real model call)")
 
-    if routed_used and not actual_backend:
+    if routed_used and not actual_backend and verification_status != "pending_external_mcp":
         status = "FAIL"
         reasons.append("routed_model_used=true but actual_backend is empty")
 
@@ -199,6 +201,9 @@ def validate_role(
         if not codex_thread_id or codex_thread_id.strip() in ("none", ""):
             status = "FAIL"
             reasons.append("codex_thread_id required but missing")
+    if exp_backend != "mcp" and require_codex_thread:
+        status = "FAIL"
+        reasons.append("require_codex_thread used for non-Codex role")
 
     if actual_backend == "codex" and not codex_thread_id:
         status = "FAIL"
@@ -218,6 +223,32 @@ def validate_role(
         if not allowed_next_stage:
             reasons.append("fallback cannot enter next stage by default")
 
+    if verification_status == "pending_external_mcp":
+        if allowed_next_stage:
+            status = "FAIL"
+            reasons.append("pending_external_mcp cannot allow next stage")
+        elif status == "PASS":
+            status = "PASS_WITH_WARNINGS"
+            reasons.append("pending_external_mcp")
+
+    if routing_source == "trusted_role_runner_external_mcp":
+        if not response_file:
+            status = "FAIL"
+            reasons.append("external MCP completion missing response_file")
+        else:
+            response_path = Path(response_file)
+            if not response_path.exists() or not response_path.is_file():
+                status = "FAIL"
+                reasons.append("external MCP response_file missing")
+            else:
+                try:
+                    if not response_path.read_text(encoding="utf-8", errors="ignore").strip():
+                        status = "FAIL"
+                        reasons.append("external MCP response_file empty")
+                except Exception:
+                    status = "FAIL"
+                    reasons.append("external MCP response_file unreadable")
+
     if verification_status in (
         "unverified_external_execution",
         "missing_actual_backend",
@@ -233,6 +264,10 @@ def validate_role(
     if verification_status == "verified_routed_call" and actual_backend != "codex" and not actual_model:
         status = "FAIL"
         reasons.append("verified_routed_call requires non-empty actual_model for API backends")
+
+    if exp_backend != "mcp" and codex_thread_id:
+        status = "FAIL"
+        reasons.append("non-Codex role should not record codex_thread_id")
 
     if not allowed_next_stage and status == "PASS":
         status = "PASS_WITH_WARNINGS"
@@ -256,6 +291,8 @@ def validate_role(
         "verification_status": verification_status,
         "allowed_next_stage": allowed_next_stage,
         "confidence_downgraded": confidence_downgraded,
+        "routing_source": routing_source,
+        "response_file": response_file or None,
         "reason": "; ".join(reasons) if reasons else "all checks passed",
     }
 
@@ -299,6 +336,7 @@ def cmd_summary(ledger_path: Optional[Path] = None) -> Dict[str, Any]:
 
 def cmd_self_test():
     """Run self-test using a temporary ledger. Does NOT read real .aris/calls/."""
+    import shutil
     import tempfile, os
 
     # Create temp ledger
@@ -377,17 +415,34 @@ def cmd_self_test():
             "confidence_downgraded": True,
             "status": "completed_with_fallback",
         }
+        # Case 6: external MCP pending
+        entry6 = {
+            "call_id": "call_test_006",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "adversarial_reviewer",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "",
+            "actual_model": "",
+            "verification_status": "pending_external_mcp",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "status": "pending_external_mcp",
+            "routing_source": "trusted_role_runner_external_mcp_prepare",
+        }
         f.write(json.dumps(entry1) + "\n")
         f.write(json.dumps(entry2) + "\n")
         f.write(json.dumps(entry3) + "\n")
         f.write(json.dumps(entry4) + "\n")
         f.write(json.dumps(entry5) + "\n")
+        f.write(json.dumps(entry6) + "\n")
         temp_path = f.name
 
     # Create a second temp ledger for the "no ledger" test
     with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f2:
         empty_temp_path = f2.name
 
+    response_dir: Optional[Path] = None
     try:
         test_results: Dict[str, Dict] = {}
 
@@ -423,9 +478,15 @@ def cmd_self_test():
         test_results["fallback_explicit"] = r
         assert r["status"] == "PASS_WITH_WARNINGS", f"Expected PASS_WITH_WARNINGS for fallback_explicit, got {r['status']}"
 
+        # Test case 5b: pending_external_mcp -> PASS_WITH_WARNINGS and not allowed
+        r = validate_role("adversarial_reviewer", Path(temp_path), max_age_hours=24)
+        test_results["pending_external_mcp"] = r
+        assert r["status"] == "PASS_WITH_WARNINGS", f"Expected PASS_WITH_WARNINGS for pending_external_mcp, got {r['status']}"
+        assert r["allowed_next_stage"] is False
+
         # Test case 6: fallback without fallback_reason → FAIL
-        entry6 = {
-            "call_id": "call_test_006",
+        entry7 = {
+            "call_id": "call_test_007",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "paper_writer",
             "implementation_source": "routed_internal_model",
@@ -439,15 +500,15 @@ def cmd_self_test():
             "confidence_downgraded": True,
             "status": "completed_with_fallback",
         }
-        with open(temp_path, "a") as f:
-            f.write(json.dumps(entry6) + "\n")
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry7) + "\n")
         r = validate_role("paper_writer", Path(temp_path), max_age_hours=24)
         test_results["fallback_no_reason"] = r
         assert r["status"] == "FAIL", f"Expected FAIL for fallback_no_reason, got {r['status']}"
 
         # Test case 7: routed_model_used=true but missing actual_backend → FAIL
-        entry7 = {
-            "call_id": "call_test_007",
+        entry8 = {
+            "call_id": "call_test_008",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "result_judge",
             "implementation_source": "routed_internal_model",
@@ -459,15 +520,15 @@ def cmd_self_test():
             "confidence_downgraded": True,
             "status": "completed",
         }
-        with open(temp_path, "a") as f:
-            f.write(json.dumps(entry7) + "\n")
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry8) + "\n")
         r = validate_role("result_judge", Path(temp_path), max_age_hours=24)
         test_results["missing_actual_backend"] = r
         assert r["status"] == "FAIL", f"Expected FAIL for missing_actual_backend, got {r['status']}"
 
         # Test case 8: verified_routed_call but missing actual_model → FAIL
-        entry8 = {
-            "call_id": "call_test_008",
+        entry9 = {
+            "call_id": "call_test_009",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "claims_drafter",
             "implementation_source": "routed_internal_model",
@@ -479,16 +540,16 @@ def cmd_self_test():
             "confidence_downgraded": True,
             "status": "completed",
         }
-        with open(temp_path, "a") as f:
-            f.write(json.dumps(entry8) + "\n")
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry9) + "\n")
         r = validate_role("claims_drafter", Path(temp_path), max_age_hours=24)
         test_results["verified_call_missing_model"] = r
         # verified_routed_call with no actual_model is suspicious; should be FAIL or at least not PASS
         assert r["status"] != "PASS", f"Did not expect PASS for verified_call_missing_model, got {r['status']}"
 
         # Test case 9: dry_run_untrusted cannot be accepted as real trusted output
-        entry9 = {
-            "call_id": "call_test_009",
+        entry10 = {
+            "call_id": "call_test_010",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "gap_extractor",
             "implementation_source": "routed_internal_model",
@@ -500,8 +561,8 @@ def cmd_self_test():
             "confidence_downgraded": True,
             "status": "completed_dry_run",
         }
-        with open(temp_path, "a") as f:
-            f.write(json.dumps(entry9) + "\n")
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry10) + "\n")
         r = validate_role("gap_extractor", Path(temp_path), max_age_hours=24)
         test_results["dry_run_untrusted"] = r
         assert r["status"] == "FAIL", f"Expected FAIL for dry_run_untrusted, got {r['status']}"
@@ -513,8 +574,8 @@ def cmd_self_test():
         assert r["status"] == "PASS", f"Expected PASS for codex_thread_fixture, got {r['status']}"
 
         # Test case 11: unsupported_runtime_backend → FAIL
-        entry10 = {
-            "call_id": "call_test_010",
+        entry11 = {
+            "call_id": "call_test_011",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "experiment_code_reviewer",
             "implementation_source": "routed_internal_model",
@@ -527,14 +588,14 @@ def cmd_self_test():
             "status": "failed",
         }
         with open(temp_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry10) + "\n")
+            f.write(json.dumps(entry11) + "\n")
         r = validate_role("experiment_code_reviewer", Path(temp_path), max_age_hours=24)
         test_results["unsupported_runtime_backend"] = r
         assert r["status"] == "FAIL", f"Expected FAIL for unsupported_runtime_backend, got {r['status']}"
 
         # Test case 12: call_failed → FAIL
-        entry11 = {
-            "call_id": "call_test_011",
+        entry12 = {
+            "call_id": "call_test_012",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "paper_summarizer",
             "implementation_source": "routed_internal_model",
@@ -547,10 +608,80 @@ def cmd_self_test():
             "status": "failed",
         }
         with open(temp_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry11) + "\n")
+            f.write(json.dumps(entry12) + "\n")
         r = validate_role("paper_summarizer", Path(temp_path), max_age_hours=24)
         test_results["call_failed"] = r
         assert r["status"] == "FAIL", f"Expected FAIL for call_failed, got {r['status']}"
+
+        # Test case 13: external MCP completed with response file -> PASS
+        response_dir = Path(tempfile.mkdtemp())
+        response_file = response_dir / "codex_response.md"
+        response_file.write_text("trusted external codex response", encoding="utf-8")
+        entry13 = {
+            "call_id": "call_test_013",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "idea_reviewer",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "codex",
+            "actual_model": "auto",
+            "codex_thread_id": "thread_external_ok",
+            "verification_status": "verified_routed_call",
+            "allowed_next_stage": True,
+            "confidence_downgraded": False,
+            "status": "completed",
+            "routing_source": "trusted_role_runner_external_mcp",
+            "response_file": str(response_file),
+        }
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry13) + "\n")
+        r = validate_role("idea_reviewer", Path(temp_path), max_age_hours=24)
+        test_results["external_mcp_completed"] = r
+        assert r["status"] == "PASS", f"Expected PASS for external_mcp_completed, got {r['status']}"
+
+        # Test case 14: external MCP completed but response artifact missing -> FAIL
+        entry14 = {
+            "call_id": "call_test_014",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "contract_reviewer",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "codex",
+            "actual_model": "auto",
+            "codex_thread_id": "thread_external_missing_response",
+            "verification_status": "verified_routed_call",
+            "allowed_next_stage": True,
+            "confidence_downgraded": False,
+            "status": "completed",
+            "routing_source": "trusted_role_runner_external_mcp",
+            "response_file": str(response_dir / "missing.md"),
+        }
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry14) + "\n")
+        r = validate_role("contract_reviewer", Path(temp_path), max_age_hours=24)
+        test_results["external_mcp_missing_response"] = r
+        assert r["status"] == "FAIL", f"Expected FAIL for external_mcp_missing_response, got {r['status']}"
+
+        # Test case 15: API role with codex_thread_id should fail
+        entry15 = {
+            "call_id": "call_test_015",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "idea_generator",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "deepseek",
+            "actual_model": "deepseek-v4-pro",
+            "codex_thread_id": "should_not_exist",
+            "verification_status": "verified_routed_call",
+            "allowed_next_stage": True,
+            "confidence_downgraded": False,
+            "status": "completed",
+        }
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry15) + "\n")
+        r = validate_role("idea_generator", Path(temp_path), max_age_hours=24)
+        test_results["api_role_with_codex_thread"] = r
+        assert r["status"] == "FAIL", f"Expected FAIL for api_role_with_codex_thread, got {r['status']}"
 
         print("SELF-TEST RESULTS:")
         print(json.dumps(test_results, ensure_ascii=False, indent=2))
@@ -573,6 +704,8 @@ def cmd_self_test():
     finally:
         os.unlink(temp_path)
         os.unlink(empty_temp_path)
+        if response_dir is not None:
+            shutil.rmtree(response_dir, ignore_errors=True)
 
 
 def main():

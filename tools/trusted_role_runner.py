@@ -4,8 +4,10 @@ ARIS Trusted Role Runner - Single trusted entry point for ROLE_* execution.
 
 Rules:
 - model_route.py declares routing only; it does not call any backend.
-- Real ROLE_* trust requires a backend call through tools/model_backends/.
-- Codex trust requires a real codex_thread_id from backend metadata.
+- Real ROLE_* trust requires a backend call through tools/model_backends/ or a
+  verified external Codex MCP handoff completed by the outer Agent.
+- Codex trust requires a real codex_thread_id from backend metadata or external
+  MCP session metadata.
 - Dry-run/mock are self-test helpers only and can never enter the next stage.
 - If the runner cannot verify the backend call, it fails closed.
 """
@@ -34,6 +36,13 @@ def _get_ledger_path() -> Path:
         return Path(env_path)
     root = find_project_root()
     return root / ".aris" / "calls" / "llm_calls.jsonl"
+
+
+def _get_calls_dir(ledger_path: Optional[Path] = None) -> Path:
+    path = ledger_path or _get_ledger_path()
+    calls_dir = path.parent
+    calls_dir.mkdir(parents=True, exist_ok=True)
+    return calls_dir
 
 
 def _read_ledger(ledger_path: Optional[Path] = None) -> list[Dict[str, Any]]:
@@ -91,6 +100,26 @@ def _load_input_spec(input_spec: str) -> str:
     return input_spec
 
 
+def _find_latest_call(call_id: str, ledger_path: Optional[Path]) -> Optional[Dict[str, Any]]:
+    for entry in reversed(_read_ledger(ledger_path)):
+        if entry.get("call_id") == call_id:
+            return dict(entry)
+    return None
+
+
+def _extract_error_code(error: str) -> str:
+    if error in (
+        "unsupported_runtime_backend",
+        "codex_missing_thread_id",
+        "pending_external_mcp",
+        "call_failed",
+    ):
+        return error
+    if error in ("config_missing", "api_call_failed"):
+        return "call_failed"
+    return "call_failed"
+
+
 def _build_started_entry(role: str, resolved: Dict[str, Any]) -> Dict[str, Any]:
     call_id = f"call_{uuid.uuid4().hex[:12]}"
     return {
@@ -119,6 +148,10 @@ def _build_started_entry(role: str, resolved: Dict[str, Any]) -> Dict[str, Any]:
         "error_code": None,
         "raw_metadata": {},
         "allow_fallback_next_stage": False,
+        "prompt_file": "",
+        "response_file": "",
+        "output_path": "",
+        "response_file_required": False,
     }
 
 
@@ -136,6 +169,9 @@ def _auto_verify(entry: Dict[str, Any]) -> tuple[str, bool, bool]:
 
     if dry_run:
         return ("dry_run_untrusted", False, True)
+
+    if status == "pending_external_mcp":
+        return ("pending_external_mcp", False, True)
 
     if status == "failed":
         if error_code == "unsupported_runtime_backend":
@@ -182,6 +218,9 @@ def _finalize_entry(
     error_code: Optional[str] = None,
     raw_metadata: Optional[Dict[str, Any]] = None,
     allow_fallback_next_stage: bool = False,
+    routing_source: Optional[str] = None,
+    response_file: Optional[str] = None,
+    prompt_file: Optional[str] = None,
 ) -> Dict[str, Any]:
     finished = dict(entry)
     finished["status"] = status
@@ -196,6 +235,12 @@ def _finalize_entry(
     finished["error_code"] = error_code
     finished["raw_metadata"] = raw_metadata or {}
     finished["allow_fallback_next_stage"] = allow_fallback_next_stage
+    if routing_source:
+        finished["routing_source"] = routing_source
+    if response_file is not None:
+        finished["response_file"] = response_file
+    if prompt_file is not None:
+        finished["prompt_file"] = prompt_file
 
     verification_status, allowed_next_stage, confidence_downgraded = _auto_verify(finished)
     finished["verification_status"] = verification_status
@@ -226,6 +271,9 @@ def _build_artifact_header(entry: Dict[str, Any]) -> str:
         f"verification_status: {entry.get('verification_status', 'unknown')}",
         f"allowed_next_stage: {entry.get('allowed_next_stage', False)}",
         f"status: {entry.get('status', '')}",
+        f"routing_source: {entry.get('routing_source', '')}",
+        f"prompt_file: {entry.get('prompt_file', '')}",
+        f"response_file: {entry.get('response_file', '')}",
         f"error_code: {entry.get('error_code', '') or ''}",
         f"error: {entry.get('error', '') or ''}",
         "---",
@@ -240,6 +288,23 @@ def _write_artifact(output_path: Optional[str], entry: Dict[str, Any], body: str
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as handle:
         handle.write(f"{header}\n\n{body}".rstrip() + "\n")
+
+
+def _build_codex_prompt(role: str, input_text: str, route_config: Dict[str, Any], call_id: str) -> str:
+    return "\n".join(
+        [
+            f"# ARIS Trusted Role Task: {role}",
+            "",
+            f"- call_id: {call_id}",
+            f"- expected_backend: codex",
+            f"- expected_model: {route_config.get('model', 'auto') or 'auto'}",
+            "- source: trusted_role_runner external MCP handoff",
+            "- requirement: return the role output only; thread metadata is recorded separately by the outer Agent.",
+            "",
+            "## Input",
+            input_text,
+        ]
+    )
 
 
 def _call_backend(route_config: Dict[str, Any], prompt: str) -> BackendResult:
@@ -265,6 +330,193 @@ def _resolve_explicit_fallback_route(route_config: Dict[str, Any]) -> Optional[D
     return None
 
 
+def _prepare_external_mcp(
+    *,
+    role: str,
+    input_spec: str,
+    output_path: Optional[str],
+    ledger_path: Optional[Path],
+    require_codex_thread: bool,
+    resolved_override: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    resolved = resolved_override or _resolve_role(role)
+    route_config = dict(resolved.get("route_config", {}))
+    expected_backend = resolved.get("expected_backend", "")
+    if expected_backend != "mcp":
+        return {
+            "status": "failed",
+            "verification_status": "call_failed",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "error": (
+                f"role '{role}' resolves to backend '{expected_backend or 'unknown'}'; "
+                "prepare-external-mcp is only valid for Codex/MCP routes and API roles should run via openai_compatible."
+            ),
+            "error_code": "call_failed",
+            "exit_code": 1,
+        }
+
+    input_text = _load_input_spec(input_spec)
+    entry = _build_started_entry(role, resolved)
+    entry["status"] = "pending_external_mcp"
+    entry["verification_status"] = "pending_external_mcp"
+    entry["allowed_next_stage"] = False
+    entry["confidence_downgraded"] = True
+    entry["routing_source"] = "trusted_role_runner_external_mcp_prepare"
+    entry["output_path"] = output_path or ""
+    entry["response_file_required"] = True
+    if require_codex_thread:
+        entry["route_requires_codex_thread"] = True
+
+    prompt_file = _get_calls_dir(ledger_path) / f"{entry['call_id']}_prompt.md"
+    prompt_text = _build_codex_prompt(role, input_text, route_config, entry["call_id"])
+    prompt_file.write_text(prompt_text, encoding="utf-8")
+    entry["prompt_file"] = str(prompt_file)
+    entry["raw_metadata"] = {
+        "prepare_external_mcp": True,
+        "prompt_file": str(prompt_file),
+        "output_path": output_path or "",
+    }
+    _write_ledger_entry(entry, ledger_path)
+
+    finish_command = (
+        f'python tools/trusted_role_runner.py --complete-external-mcp --call-id {entry["call_id"]} '
+        f'--codex-thread-id <REAL_CODEX_THREAD_ID> --response-file <CODEX_RESPONSE_FILE> '
+        f'--output "{output_path or ""}"'
+    ).strip()
+    result = {
+        "status": "NEEDS_EXTERNAL_MCP_CALL",
+        "call_id": entry["call_id"],
+        "role": role,
+        "prompt_file": str(prompt_file),
+        "expected_backend": expected_backend,
+        "expected_model": resolved.get("expected_model", ""),
+        "output_path": output_path or "",
+        "verification_status": "pending_external_mcp",
+        "allowed_next_stage": False,
+        "finish_command": finish_command,
+        "exit_code": 1,
+    }
+    return result
+
+
+def _complete_external_mcp(
+    *,
+    call_id: str,
+    codex_thread_id: str,
+    response_file: str,
+    output_path: Optional[str],
+    ledger_path: Optional[Path],
+) -> Dict[str, Any]:
+    entry = _find_latest_call(call_id, ledger_path)
+    if not entry:
+        return {
+            "status": "failed",
+            "verification_status": "call_failed",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "error": f"call_id not found: {call_id}",
+            "error_code": "call_failed",
+            "exit_code": 1,
+        }
+
+    if entry.get("status") != "pending_external_mcp" or entry.get("verification_status") != "pending_external_mcp":
+        return {
+            "status": "failed",
+            "verification_status": "call_failed",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "error": f"call_id {call_id} is not pending_external_mcp",
+            "error_code": "call_failed",
+            "exit_code": 1,
+        }
+
+    if entry.get("route_expected_backend") != "mcp":
+        return {
+            "status": "failed",
+            "verification_status": "call_failed",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "error": f"call_id {call_id} does not resolve to Codex/MCP",
+            "error_code": "call_failed",
+            "exit_code": 1,
+        }
+
+    if not codex_thread_id.strip():
+        finished = _finalize_entry(
+            entry,
+            ledger_path=ledger_path,
+            status="failed",
+            output_text="",
+            actual_backend="codex",
+            actual_model=str(entry.get("route_expected_model", "") or "auto"),
+            error="codex_missing_thread_id",
+            error_code="codex_missing_thread_id",
+            routing_source="trusted_role_runner_external_mcp",
+        )
+        finished["exit_code"] = 1
+        return finished
+
+    response_path = Path(response_file)
+    if not response_path.exists() or not response_path.is_file():
+        finished = _finalize_entry(
+            entry,
+            ledger_path=ledger_path,
+            status="failed",
+            output_text="",
+            actual_backend="codex",
+            actual_model=str(entry.get("route_expected_model", "") or "auto"),
+            codex_thread_id=codex_thread_id.strip(),
+            error="response_file_missing",
+            error_code="call_failed",
+            raw_metadata={"response_file": response_file},
+            routing_source="trusted_role_runner_external_mcp",
+            response_file=response_file,
+        )
+        finished["exit_code"] = 1
+        return finished
+
+    response_text = response_path.read_text(encoding="utf-8", errors="ignore").strip()
+    if not response_text:
+        finished = _finalize_entry(
+            entry,
+            ledger_path=ledger_path,
+            status="failed",
+            output_text="",
+            actual_backend="codex",
+            actual_model=str(entry.get("route_expected_model", "") or "auto"),
+            codex_thread_id=codex_thread_id.strip(),
+            error="response_file_empty",
+            error_code="call_failed",
+            raw_metadata={"response_file": response_file},
+            routing_source="trusted_role_runner_external_mcp",
+            response_file=response_file,
+        )
+        finished["exit_code"] = 1
+        return finished
+
+    final_output_path = output_path or str(entry.get("output_path", "") or "")
+    finished = _finalize_entry(
+        entry,
+        ledger_path=ledger_path,
+        status="completed",
+        output_text=response_text,
+        actual_backend="codex",
+        actual_model=str(entry.get("route_expected_model", "") or "auto"),
+        codex_thread_id=codex_thread_id.strip(),
+        raw_metadata={
+            "external_mcp_handoff": True,
+            "response_file": response_file,
+        },
+        routing_source="trusted_role_runner_external_mcp",
+        response_file=response_file,
+    )
+    _write_artifact(final_output_path, finished, response_text)
+    finished["output_path"] = final_output_path
+    finished["exit_code"] = 0 if finished.get("allowed_next_stage") else 1
+    return finished
+
+
 def run_trusted(
     role: str,
     input_spec: str,
@@ -287,6 +539,7 @@ def run_trusted(
     entry = _build_started_entry(role, resolved)
     entry["route_expected_backend"] = resolved.get("expected_backend", "")
     entry["route_expected_model"] = resolved.get("expected_model", "")
+    entry["output_path"] = output_path or ""
     if require_codex_thread:
         entry["route_requires_codex_thread"] = True
     _write_ledger_entry(entry, ledger_path)
@@ -325,7 +578,7 @@ def run_trusted(
     if fallback_route is not None:
         fallback_reason = (
             "primary backend failed"
-            if primary_result.error in ("call_failed", "api_call_failed")
+            if primary_result.error in ("call_failed", "api_call_failed", "config_missing")
             else f"primary backend unavailable: {primary_result.error or 'unknown'}"
         )
         fallback_result = _forced_fallback_result or _call_backend(fallback_route, input_text)
@@ -363,12 +616,7 @@ def run_trusted(
             },
         )
 
-    error_code = primary_result.error or "call_failed"
-    if error_code == "config_missing":
-        error_code = "call_failed"
-    if error_code not in ("unsupported_runtime_backend", "codex_missing_thread_id", "call_failed"):
-        error_code = "call_failed"
-
+    error_code = _extract_error_code(primary_result.error or "call_failed")
     error_body = json.dumps(primary_result.raw_metadata, ensure_ascii=False, indent=2)
     finished = _finalize_entry(
         entry,
@@ -427,6 +675,7 @@ def cmd_self_test() -> bool:
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         artifact_path = str(Path(tmp_dir) / "trusted_output.md")
+        response_path = Path(tmp_dir) / "codex_response.md"
         try:
             dry_run_result = run_trusted(
                 role="idea_generator",
@@ -439,11 +688,13 @@ def cmd_self_test() -> bool:
             assert dry_run_result["allowed_next_stage"] is False
             assert dry_run_result["exit_code"] == 1
 
-            unsupported_result = run_trusted(
-                role="idea_reviewer",
-                input_spec="codex task",
+            prepare_codex = _prepare_external_mcp(
+                role="novelty_checker",
+                input_spec="codex prepare input",
+                output_path=artifact_path,
                 ledger_path=ledger_path,
-                _resolved_override={
+                require_codex_thread=True,
+                resolved_override={
                     "expected_backend": "mcp",
                     "expected_model": "auto",
                     "expected_provider": "codex",
@@ -454,8 +705,129 @@ def cmd_self_test() -> bool:
                     },
                 },
             )
-            assert unsupported_result["verification_status"] == "unsupported_runtime_backend"
-            assert unsupported_result["exit_code"] == 1
+            assert prepare_codex["status"] == "NEEDS_EXTERNAL_MCP_CALL"
+            assert prepare_codex["verification_status"] == "pending_external_mcp"
+            assert prepare_codex["allowed_next_stage"] is False
+            assert Path(prepare_codex["prompt_file"]).exists()
+
+            missing_thread = _complete_external_mcp(
+                call_id=prepare_codex["call_id"],
+                codex_thread_id="",
+                response_file=str(response_path),
+                output_path=artifact_path,
+                ledger_path=ledger_path,
+            )
+            assert missing_thread["verification_status"] == "codex_missing_thread_id"
+            assert missing_thread["exit_code"] == 1
+
+            prepare_missing_response = _prepare_external_mcp(
+                role="novelty_checker",
+                input_spec="codex prepare missing response",
+                output_path=artifact_path,
+                ledger_path=ledger_path,
+                require_codex_thread=True,
+                resolved_override={
+                    "expected_backend": "mcp",
+                    "expected_model": "auto",
+                    "expected_provider": "codex",
+                    "route_config": {
+                        "backend_type": "mcp",
+                        "provider": "codex",
+                        "model": "auto",
+                    },
+                },
+            )
+            missing_response = _complete_external_mcp(
+                call_id=prepare_missing_response["call_id"],
+                codex_thread_id="fixture-thread-missing-response",
+                response_file=str(response_path),
+                output_path=artifact_path,
+                ledger_path=ledger_path,
+            )
+            assert missing_response["verification_status"] == "call_failed"
+            assert missing_response["exit_code"] == 1
+
+            response_path.write_text("fixture codex response", encoding="utf-8")
+            prepare_complete = _prepare_external_mcp(
+                role="novelty_checker",
+                input_spec="codex prepare complete",
+                output_path=artifact_path,
+                ledger_path=ledger_path,
+                require_codex_thread=True,
+                resolved_override={
+                    "expected_backend": "mcp",
+                    "expected_model": "auto",
+                    "expected_provider": "codex",
+                    "route_config": {
+                        "backend_type": "mcp",
+                        "provider": "codex",
+                        "model": "auto",
+                    },
+                },
+            )
+            complete_success = _complete_external_mcp(
+                call_id=prepare_complete["call_id"],
+                codex_thread_id="fixture-thread-001",
+                response_file=str(response_path),
+                output_path=artifact_path,
+                ledger_path=ledger_path,
+            )
+            assert complete_success["verification_status"] == "verified_routed_call"
+            assert complete_success["allowed_next_stage"] is True
+            assert complete_success["exit_code"] == 0
+            artifact_text = Path(artifact_path).read_text(encoding="utf-8")
+            assert "routing_source: trusted_role_runner_external_mcp" in artifact_text
+            assert "response_file:" in artifact_text
+
+            non_codex_prepare = _prepare_external_mcp(
+                role="paper_writer",
+                input_spec="api prepare denied",
+                output_path=artifact_path,
+                ledger_path=ledger_path,
+                require_codex_thread=False,
+                resolved_override={
+                    "expected_backend": "openai_compatible_api",
+                    "expected_model": "deepseek-v4-pro",
+                    "expected_provider": "deepseek",
+                    "route_config": {
+                        "backend_type": "openai_compatible_api",
+                        "provider": "deepseek",
+                        "model": "deepseek-v4-pro",
+                        "api_key_env": "DEEPSEEK_API_KEY",
+                        "base_url": "https://api.deepseek.com",
+                    },
+                },
+            )
+            assert non_codex_prepare["verification_status"] == "call_failed"
+            assert non_codex_prepare["exit_code"] == 1
+
+            api_success = run_trusted(
+                role="novelty_checker",
+                input_spec="api success fixture",
+                ledger_path=ledger_path,
+                _resolved_override={
+                    "expected_backend": "openai_compatible_api",
+                    "expected_model": "deepseek-v4-pro",
+                    "expected_provider": "deepseek",
+                    "route_config": {
+                        "backend_type": "openai_compatible_api",
+                        "provider": "deepseek",
+                        "model": "deepseek-v4-pro",
+                        "api_key_env": "DEEPSEEK_API_KEY",
+                        "base_url": "https://api.deepseek.com",
+                    },
+                },
+                _forced_primary_result=BackendResult(
+                    ok=True,
+                    actual_backend="deepseek",
+                    actual_model="deepseek-v4-pro",
+                    output_text="api success",
+                    raw_metadata={"self_test": True},
+                ),
+            )
+            assert api_success["verification_status"] == "verified_routed_call"
+            assert api_success["allowed_next_stage"] is True
+            assert api_success["exit_code"] == 0
 
             config_missing_result = run_trusted(
                 role="paper_writer",
@@ -477,40 +849,9 @@ def cmd_self_test() -> bool:
             assert config_missing_result["verification_status"] == "call_failed"
             assert config_missing_result["exit_code"] == 1
 
-            codex_success = run_trusted(
-                role="novelty_checker",
-                input_spec="codex fixture",
-                output_path=artifact_path,
-                ledger_path=ledger_path,
-                _resolved_override={
-                    "expected_backend": "mcp",
-                    "expected_model": "auto",
-                    "expected_provider": "codex",
-                    "route_config": {
-                        "backend_type": "mcp",
-                        "provider": "codex",
-                        "model": "auto",
-                    },
-                },
-                _forced_primary_result=BackendResult(
-                    ok=True,
-                    actual_backend="codex",
-                    actual_model="auto",
-                    output_text="codex success",
-                    codex_thread_id="fixture-thread-001",
-                    raw_metadata={"threadId": "fixture-thread-001"},
-                ),
-            )
-            assert codex_success["verification_status"] == "verified_routed_call"
-            assert codex_success["allowed_next_stage"] is True
-            assert codex_success["exit_code"] == 0
-            artifact_text = Path(artifact_path).read_text(encoding="utf-8")
-            assert "ledger_call_id:" in artifact_text
-            assert "verification_status: verified_routed_call" in artifact_text
-
-            missing_thread = run_trusted(
+            unsupported_result = run_trusted(
                 role="idea_reviewer",
-                input_spec="codex missing thread",
+                input_spec="codex task",
                 ledger_path=ledger_path,
                 _resolved_override={
                     "expected_backend": "mcp",
@@ -522,18 +863,9 @@ def cmd_self_test() -> bool:
                         "model": "auto",
                     },
                 },
-                _forced_primary_result=BackendResult(
-                    ok=False,
-                    actual_backend="codex",
-                    actual_model="auto",
-                    output_text="",
-                    codex_thread_id=None,
-                    error="codex_missing_thread_id",
-                    raw_metadata={"metadata": {"threadId": ""}},
-                ),
             )
-            assert missing_thread["verification_status"] == "codex_missing_thread_id"
-            assert missing_thread["exit_code"] == 1
+            assert unsupported_result["verification_status"] == "unsupported_runtime_backend"
+            assert unsupported_result["exit_code"] == 1
 
             fallback_blocked = run_trusted(
                 role="final_selector",
@@ -618,17 +950,28 @@ def cmd_self_test() -> bool:
             assert fallback_allowed["allowed_next_stage"] is True
             assert fallback_allowed["exit_code"] == 0
 
+            import model_route as mr
+
+            code_route = mr.resolve_role("novelty_checker")
+            api_route = mr.resolve_role("idea_generator")
+            assert code_route.get("backend_type") == "mcp"
+            assert api_route.get("backend_type") == "openai_compatible_api"
+
             summary = cmd_summary(ledger_path)
-            assert summary["total_calls"] >= 6
+            assert summary["total_calls"] >= 8
 
             print("SELF-TEST RESULTS:")
-            print(f"  dry-run: verification_status={dry_run_result['verification_status']} exit={dry_run_result['exit_code']} [OK]")
-            print(f"  unsupported runtime: verification_status={unsupported_result['verification_status']} exit={unsupported_result['exit_code']} [OK]")
-            print(f"  config missing: verification_status={config_missing_result['verification_status']} exit={config_missing_result['exit_code']} [OK]")
-            print(f"  codex fixture success: verification_status={codex_success['verification_status']} exit={codex_success['exit_code']} [OK]")
-            print(f"  codex missing thread: verification_status={missing_thread['verification_status']} exit={missing_thread['exit_code']} [OK]")
+            print(f"  prepare external MCP: verification_status={prepare_codex['verification_status']} exit={prepare_codex['exit_code']} [OK]")
+            print(f"  complete missing thread: verification_status={missing_thread['verification_status']} exit={missing_thread['exit_code']} [OK]")
+            print(f"  complete missing response: verification_status={missing_response['verification_status']} exit={missing_response['exit_code']} [OK]")
+            print(f"  complete fixture success: verification_status={complete_success['verification_status']} exit={complete_success['exit_code']} [OK]")
+            print(f"  non-codex prepare denied: verification_status={non_codex_prepare['verification_status']} exit={non_codex_prepare['exit_code']} [OK]")
+            print(f"  API direct success: verification_status={api_success['verification_status']} exit={api_success['exit_code']} [OK]")
+            print(f"  API config missing: verification_status={config_missing_result['verification_status']} exit={config_missing_result['exit_code']} [OK]")
+            print(f"  direct Codex unsupported without handoff: verification_status={unsupported_result['verification_status']} exit={unsupported_result['exit_code']} [OK]")
             print(f"  fallback blocked by default: allowed_next_stage={fallback_blocked['allowed_next_stage']} exit={fallback_blocked['exit_code']} [OK]")
             print(f"  fallback allowed only with flag: allowed_next_stage={fallback_allowed['allowed_next_stage']} exit={fallback_allowed['exit_code']} [OK]")
+            print(f"  route switch check: novelty_checker={code_route.get('backend_type')} idea_generator={api_route.get('backend_type')} [OK]")
             print(f"  summary total_calls={summary['total_calls']} [OK]")
 
             try:
@@ -673,6 +1016,11 @@ def main() -> None:
     summary_mode = False
     self_test_mode = False
     allow_fallback_next_stage = False
+    prepare_external_mcp = False
+    complete_external_mcp = False
+    call_id = ""
+    codex_thread_id = ""
+    response_file = ""
 
     i = 0
     while i < len(args):
@@ -707,6 +1055,21 @@ def main() -> None:
         elif arg == "--allow-fallback-next-stage":
             allow_fallback_next_stage = True
             i += 1
+        elif arg == "--prepare-external-mcp":
+            prepare_external_mcp = True
+            i += 1
+        elif arg == "--complete-external-mcp":
+            complete_external_mcp = True
+            i += 1
+        elif arg == "--call-id" and i + 1 < len(args):
+            call_id = args[i + 1]
+            i += 2
+        elif arg == "--codex-thread-id" and i + 1 < len(args):
+            codex_thread_id = args[i + 1]
+            i += 2
+        elif arg == "--response-file" and i + 1 < len(args):
+            response_file = args[i + 1]
+            i += 2
         else:
             i += 1
 
@@ -716,6 +1079,41 @@ def main() -> None:
     if summary_mode:
         print(json.dumps(cmd_summary(ledger_path), ensure_ascii=False, indent=2))
         return
+
+    if prepare_external_mcp and complete_external_mcp:
+        print("Error: choose only one of --prepare-external-mcp or --complete-external-mcp", file=sys.stderr)
+        sys.exit(1)
+
+    if prepare_external_mcp:
+        if not role:
+            print("Error: --role <role> is required for --prepare-external-mcp", file=sys.stderr)
+            sys.exit(1)
+        if not input_spec:
+            print("Error: --input <file_or_text> is required for --prepare-external-mcp", file=sys.stderr)
+            sys.exit(1)
+        result = _prepare_external_mcp(
+            role=role,
+            input_spec=input_spec,
+            output_path=output_path,
+            ledger_path=ledger_path,
+            require_codex_thread=require_codex_thread,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        sys.exit(int(result.get("exit_code", 1)))
+
+    if complete_external_mcp:
+        if not call_id:
+            print("Error: --call-id is required for --complete-external-mcp", file=sys.stderr)
+            sys.exit(1)
+        result = _complete_external_mcp(
+            call_id=call_id,
+            codex_thread_id=codex_thread_id,
+            response_file=response_file,
+            output_path=output_path,
+            ledger_path=ledger_path,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        sys.exit(int(result.get("exit_code", 1)))
 
     if not role:
         print("Error: --role <role> is required", file=sys.stderr)

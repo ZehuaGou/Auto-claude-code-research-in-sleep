@@ -185,6 +185,11 @@ For **Codex MCP**:
 
 **The actual model invocation must go through `tools/trusted_role_runner.py`** — the single trusted entry point for all ROLE_* tasks. This runner calls the backend via `tools/model_backends/`, records to the ledger, and produces verified artifacts with provenance headers.
 
+This means `ROLE_*` changes in `.env` are enough to switch between Codex and
+DeepSeek/API routes. Skill documents should keep calling
+`trusted_role_runner.py`; they do not need to modify skill text when
+`ROLE_* = CODEX` changes to `ROLE_* = DS_PRO_HIGH` or vice versa.
+
 ### Two Execution Sources
 
 | Source | Meaning | Trust |
@@ -242,6 +247,43 @@ the declared backend:
 - Codex result without real `codex_thread_id` metadata → `codex_missing_thread_id`
 
 These are verification failures, not soft warnings.
+
+### External Codex MCP Handoff
+
+The outer Agent environment can call `mcp__codex__codex` directly. A normal
+Python script cannot directly call that outer-Agent MCP tool, so Codex routes
+support a two-step bridge:
+
+1. `--prepare-external-mcp`
+2. outer Agent performs the real `mcp__codex__codex` call
+3. `--complete-external-mcp`
+
+Example:
+
+```bash
+python tools/trusted_role_runner.py \
+  --role novelty_checker \
+  --input review_context.md \
+  --output review_output.md \
+  --prepare-external-mcp \
+  --require-codex-thread
+
+python tools/trusted_role_runner.py \
+  --complete-external-mcp \
+  --call-id <call_id> \
+  --codex-thread-id <real_codex_thread_id> \
+  --response-file <saved_codex_response.md> \
+  --output review_output.md
+```
+
+`prepare-external-mcp` creates a pending ledger entry and must keep
+`allowed_next_stage=false`. Only `complete-external-mcp` with a real
+`codex_thread_id` and non-empty response artifact may produce
+`verified_routed_call`.
+
+DeepSeek/OpenAI-compatible API roles do **not** use Codex handoff. They execute
+directly via `tools/model_backends/openai_compatible.py` and do not require
+`codex_thread_id`.
 
 ### Ledger Call ID
 
