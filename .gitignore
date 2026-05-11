@@ -83,6 +83,8 @@ wandb/
 logs/
 *.pt
 *.pth
+*.bin
+*.safetensors
 *.ckpt
 *.onnx
 *.npy
