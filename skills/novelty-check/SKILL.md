@@ -2,7 +2,7 @@
 name: novelty-check
 description: Verify research idea novelty against recent literature. Use when user says "查新", "novelty check", or wants to verify a research idea is novel.
 argument-hint: [CAND_XXX or free-text idea description]
-allowed-tools: Bash(*), Read, WebSearch, WebFetch, Grep, Glob, Skill
+allowed-tools: Bash(*), Read, Grep, Glob
 ---
 
 # /novelty-check
@@ -29,9 +29,15 @@ It maps to the `novelty_check` workflow stage and delegates everything to the AR
 2. Skill maps to the `novelty_check` workflow stage
 3. Skill calls `tools/research_workflow.py prepare novelty_check`
 4. `context_isolation_check.py` scans inputs — FAIL stops execution
-5. `trusted_role_runner.py` executes `novelty_checker` role (Codex MCP)
-6. `validate_model_invocation.py --role novelty_checker` — PASS means the novelty verdict is verified
-7. If `allowed_next_stage=false`, the skill stops
+5. **Evidence precheck**: run `python tools/validate_literature_evidence.py --file literature/search_runs/current/top_k.md`
+   - If `template_only` or `insufficient_evidence`: novelty_check may not output `confirmed_novel`
+   - If `valid_with_gaps`: novelty_check may only output `insufficient_evidence` or `likely_incremental`, unless manual confirmation is obtained
+   - If `valid`: normal novelty_check proceeds
+6. `trusted_role_runner.py` executes `novelty_checker` role (Codex MCP)
+7. `validate_model_invocation.py --role novelty_checker` — PASS means the novelty verdict is verified
+8. If `allowed_next_stage=false`, the skill stops
+
+`validate_literature_evidence.py` is an evidence format and quality pre-check only. It does not produce a novelty verdict and does not replace the `novelty_checker` role.
 
 ## Verdict types
 
@@ -49,6 +55,10 @@ The `novelty_checker` role produces one of:
 - Does NOT produce a trusted verdict on its own
 - Does NOT bypass `validate_model_invocation.py`
 - Does NOT treat `insufficient_evidence` as `confirmed_novel`
+- Does NOT directly perform WebSearch or WebFetch
+- Does NOT create literature evidence directly
+- Does NOT treat `template_only` `top_k.md` as evidence
+- Does NOT treat `valid_with_gaps` as automatically sufficient for `confirmed_novel`
 
 ## Workflow stage
 
@@ -66,3 +76,7 @@ Only the ledger entry produced by `trusted_role_runner.py` + `validate_model_inv
 - `allowed_next_stage=false` = stop immediately
 - `already_done` = stop, do not proceed to experiment
 - Do not produce a verdict without going through the workflow stack
+- `template_only` literature evidence = no `confirmed_novel`
+- `insufficient_evidence` literature evidence = no `confirmed_novel`
+- `valid_with_gaps` requires explicit caution or manual confirmation before `confirmed_novel`
+- Search results must flow through `literature_search`, not through `novelty_check`
