@@ -222,6 +222,23 @@ def validate_role(
     status = "PASS"
     reasons: List[str] = []
 
+    # Historical route resolution: prefer recorded route from ledger over current .env
+    recorded_route_backend = latest.get("route_expected_backend", "")
+    recorded_route_model = latest.get("route_expected_model", "")
+    current_expected_backend = expected.get("expected_backend", "")
+    current_expected_model = expected.get("expected_model", "")
+
+    # Effective backend/model for Codex/MCP checks
+    exp_backend = recorded_route_backend or current_expected_backend
+    exp_model = recorded_route_model or current_expected_model
+
+    # Warn if route config changed since the call was made
+    route_changed_warning = ""
+    if recorded_route_backend and recorded_route_backend != current_expected_backend:
+        route_changed_warning = f"route config changed since call: recorded={recorded_route_backend}/{recorded_route_model} current={current_expected_backend}/{current_expected_model}"
+    elif recorded_route_model and recorded_route_model != current_expected_model:
+        route_changed_warning = f"route config changed since call: recorded={recorded_route_backend}/{recorded_route_model} current={current_expected_backend}/{current_expected_model}"
+
     if impl_source == "external_agent_direct":
         status = "FAIL"
         reasons.append("implementation_source=external_agent_direct (no real model call)")
@@ -230,7 +247,6 @@ def validate_role(
         status = "FAIL"
         reasons.append("routed_model_used=true but actual_backend is empty")
 
-    exp_backend = expected.get("expected_backend", "")
     if exp_backend == "mcp" and require_codex_thread:
         if not codex_thread_id or codex_thread_id.strip() in ("none", ""):
             status = "FAIL"
@@ -313,9 +329,22 @@ def validate_role(
         status = "FAIL"
         reasons.append("verified_routed_call requires non-empty actual_model for API backends")
 
+    # Codex thread id check: use effective backend (recorded or current)
     if exp_backend != "mcp" and codex_thread_id:
-        status = "FAIL"
-        reasons.append("non-Codex role should not record codex_thread_id")
+        if route_changed_warning:
+            # Historical artifact: route changed, downgrade to warning
+            if status == "PASS":
+                status = "PASS_WITH_WARNINGS"
+            reasons.append(route_changed_warning)
+        else:
+            status = "FAIL"
+            reasons.append("non-Codex role should not record codex_thread_id")
+
+    # Route config changed warning (always applied when route differs)
+    if route_changed_warning and route_changed_warning not in reasons:
+        if status == "PASS":
+            status = "PASS_WITH_WARNINGS"
+        reasons.append(route_changed_warning)
 
     if verification_status in ("verified_routed_call", "verified_with_fallback", "pending_external_mcp"):
         missing_context_fields = [
@@ -351,7 +380,7 @@ def validate_role(
         "status": status,
         "role": role,
         "expected_backend": exp_backend,
-        "expected_model": expected.get("expected_model", ""),
+        "expected_model": exp_model,
         "expected_provider": expected.get("expected_provider", ""),
         "latest_call_id": latest.get("call_id", ""),
         "timestamp": latest.get("timestamp", ""),
@@ -371,6 +400,12 @@ def validate_role(
         "context_hash": context_hash,
         "forbidden_context_checked": forbidden_context_checked,
         "contamination_scan_status": contamination_scan_status,
+        "current_expected_backend": current_expected_backend,
+        "current_expected_model": current_expected_model,
+        "recorded_route_backend": recorded_route_backend,
+        "recorded_route_model": recorded_route_model,
+        "validation_expected_backend": exp_backend,
+        "validation_expected_model": exp_model,
         "reason": "; ".join(reasons) if reasons else "all checks passed",
     }
 
@@ -751,6 +786,8 @@ def cmd_self_test():
             "call_id": "call_test_014",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "contract_reviewer",
+            "route_expected_backend": "mcp",
+            "route_expected_model": "auto",
             "implementation_source": "routed_internal_model",
             "routed_model_used": True,
             "actual_backend": "codex",
@@ -774,6 +811,8 @@ def cmd_self_test():
             "call_id": "call_test_014b",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "contract_reviewer",
+            "route_expected_backend": "mcp",
+            "route_expected_model": "auto",
             "implementation_source": "routed_internal_model",
             "routed_model_used": True,
             "actual_backend": "codex",
@@ -799,6 +838,8 @@ def cmd_self_test():
             "call_id": "call_test_014c",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": "contract_reviewer",
+            "route_expected_backend": "mcp",
+            "route_expected_model": "auto",
             "implementation_source": "routed_internal_model",
             "routed_model_used": True,
             "actual_backend": "codex",
@@ -838,6 +879,34 @@ def cmd_self_test():
         r = validate_role("idea_generator", Path(temp_path), max_age_hours=24)
         test_results["api_role_with_codex_thread"] = r
         assert r["status"] == "FAIL", f"Expected FAIL for api_role_with_codex_thread, got {r['status']}"
+
+        # Test case 16: historical Codex artifact remains valid after route config changes
+        # Simulates: contract_reviewer was Codex when the call was made, but .env now says DS_PRO_HIGH
+        entry16 = with_context({
+            "call_id": "call_test_016",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "contract_reviewer",
+            "route_expected_backend": "mcp",
+            "route_expected_model": "auto",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "codex",
+            "actual_model": "auto",
+            "codex_thread_id": "thread_historical_codex",
+            "verification_status": "verified_routed_call",
+            "allowed_next_stage": True,
+            "confidence_downgraded": False,
+            "status": "completed",
+            "routing_source": "trusted_role_runner_external_mcp",
+            "response_file": str(response_dir / "historical_missing.md") if response_dir else "tmp/historical_missing.md",
+            "output_text": "# Research Contract\n\nHistorical Codex output retained in ledger.",
+        }, manifest="manifest_contract_reviewer_historical.json", checked=True, scan_status="passed", prompt_file="historical_prompt.md", response_file=str(response_dir / "historical_missing.md") if response_dir else "tmp/historical_missing.md")
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry16) + "\n")
+        r = validate_role("contract_reviewer", Path(temp_path), max_age_hours=24)
+        test_results["historical_codex_artifact"] = r
+        assert r["status"] in ("PASS", "PASS_WITH_WARNINGS"), f"Expected PASS or PASS_WITH_WARNINGS for historical_codex_artifact, got {r['status']}"
+        assert r["allowed_next_stage"] is True, f"Expected allowed_next_stage=True for historical_codex_artifact, got {r['allowed_next_stage']}"
 
         print("SELF-TEST RESULTS:")
         print(json.dumps(test_results, ensure_ascii=False, indent=2))
