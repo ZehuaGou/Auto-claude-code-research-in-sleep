@@ -104,4 +104,5 @@ Papers that could not be obtained, especially if they may be closest prior work.
 - All literature evidence must record source URL, title, authors, year, source
 - Evidence that could not be verified must be flagged in Evidence Gaps
 - Do not produce a verdict — novelty_check role does that
-- `literature/search_runs/current/top_k.md` with `status: template_only` is **not** real evidence — it must not be used as novelty evidence until real search results are written
+- `python tools/validate_literature_evidence.py` must be run to check `top_k.md` status before using it as novelty evidence
+- `status: template_only` in `top_k.md` means the file is a skeleton — it is **not** valid evidence
