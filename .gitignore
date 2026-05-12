@@ -202,6 +202,9 @@ CLAUDE.md
 # === Unsafe local MCP shims ===
 mcp-servers/codex-shim/
 
+# === Unsafe local model download skills ===
+skills/ollama-model-download/
+
 # === Local / obsolete untracked docs ===
 AGENTS.md
 CLEAN_BRANCH_REPORT.md

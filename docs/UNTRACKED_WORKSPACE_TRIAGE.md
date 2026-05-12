@@ -24,7 +24,7 @@ This document records untracked files in the current Git working tree that may h
 | `paper/` | Possible LaTeX paper source tree. Generated PDFs (`main.pdf`) and build artifacts (`*.aux`, `*.log`, etc.) must never be committed. |
 | `probes/*.py` | Model probing scripts (`layer_sweep.py`, `ollama_diagnostic.py`, etc.). Review each before adding to the trusted workflow. |
 | `probes/trajectory/` | Possible source directory. Inspect contents before committing. |
-| `skills/ollama-model-download/` | Possible skill for downloading models via Ollama. Review `allowed-tools` and safety boundaries before committing. |
+| `skills/ollama-model-download/` | **Moved to should_not_commit** — see that section. |
 | `skills/pdf-reader/` | Reviewed: allowed-tools narrowed, copyright/trusted workflow boundaries added; **moved to reviewed_for_commit**. |
 | `tools/pdf_read.py` | Reviewed: local-only PDF text extraction, no network/model/file-write; **moved to reviewed_for_commit**. |
 
@@ -46,6 +46,7 @@ This document records untracked files in the current Git working tree that may h
 | `AGENTS.md` | Reviewed 2026-05-12. Codex-specific instruction file overlaps/conflicts with the current project rules (`CLAUDE.md`) and contains local Windows/Ollama assumptions. Do not commit unless rewritten and reconciled with the main project guidance. |
 | `CLEAN_BRANCH_REPORT.md` | Reviewed 2026-05-12. Historical cleanup/security incident report describing API key exposure context. Do not commit to the public repository; keep only in private/internal archive if needed. |
 | `docs/research_contract_review.md` | Reviewed 2026-05-12. TokenTR legacy review artifact without trusted artifact header, ledger, or current workflow status. Do not mix into current trusted workflow docs. |
+| `skills/ollama-model-download/` | Reviewed 2026-05-12. Current skill uses broad `Bash(*)`, can trigger large local model downloads, contains local Windows/Ollama assumptions, and encourages Ollama model calls outside `trusted_role_runner.py`, ledger, and `verification_status`. Do not commit unless rewritten as a strictly bounded local utility with explicit user confirmation and trusted workflow boundary. |
 
 ---
 
@@ -58,6 +59,7 @@ This document records untracked files in the current Git working tree that may h
 - Local MCP shims that bypass `trusted_role_runner.py` or lack `verification_status` must not be committed.
 - Local instruction files that conflict with current trusted workflow guidance must not be committed without rewrite.
 - Security incident reports must not be committed to the public repository.
+- Local model download / inference skills that use broad Bash permissions or bypass trusted model routing must not be committed.
 - Experiment code must not bring `results/`, `data/`, or `checkpoints/` into Git.
 - Paper files must not include generated PDFs or LaTeX build outputs.
 - Any sensitive or credential-like content must be excluded.
@@ -94,5 +96,6 @@ Suggested order for future review sessions:
 |------|--------|
 | 2026-05-12 | Document created; records current untracked items from `git status --short`. |
 | 2026-05-12 | `AGENTS.md`, `CLEAN_BRANCH_REPORT.md`, and `docs/research_contract_review.md` reviewed and marked should_not_commit; ignored to prevent accidental commit. |
+| 2026-05-12 | `skills/ollama-model-download/` reviewed and marked should_not_commit; ignored to prevent accidental commit. |
 | 2026-05-12 | `mcp-servers/codex-shim/` reviewed and marked should_not_commit; ignored to prevent accidental commit. |
 | 2026-05-12 | PDF reader reviewed and accepted for commit: `tools/pdf_read.py` and `skills/pdf-reader/` moved to reviewed_for_commit. |
