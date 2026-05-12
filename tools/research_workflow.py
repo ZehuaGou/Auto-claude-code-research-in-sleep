@@ -63,6 +63,10 @@ def plan_stage(stage_name: str, config_path: Path) -> None:
     print(f"Role:           {role}")
     print(f"Output:         {stage.get('output_file', '(none)')}")
     print(f"Require validate: {stage.get('require_validate', False)}")
+    contract = stage.get("stage_output_contract", "")
+    print(f"Output contract: {'YES' if contract else '(none)'}")
+    if contract:
+        print(f"  Contract lines: {len(contract.splitlines())}")
     print()
     print(f"Provider:       {route.get('provider','')}")
     print(f"Backend:        {route.get('backend_type','')}")
@@ -204,6 +208,7 @@ def prepare_stage(stage_name: str, config_path: Path) -> None:
     allowed_inputs = stage.get("allowed_input_files", [])
     forbidden_context = stage.get("forbidden_context", [])
     require_validate = stage.get("require_validate", False)
+    stage_output_contract = stage.get("stage_output_contract", "")
 
     # Run stage-specific prechecks (e.g. literature evidence precheck for novelty_check)
     _run_stage_prechecks(stage_name, config_path)
@@ -217,11 +222,12 @@ def prepare_stage(stage_name: str, config_path: Path) -> None:
     print(f"backend: {backend}")
     print(f"model: {route.get('model','')}")
     print(f"require_validate: {require_validate}")
+    print(f"stage_output_contract: {'YES' if stage_output_contract else '(none)'}")
     print(f"output: {output_file}")
     print()
 
     # Build context manifest
-    input_content = ""
+    input_content = stage_output_contract  # include contract in hash
     for f in allowed_inputs:
         p = Path(ROOT) / f
         if p.exists():
@@ -249,6 +255,10 @@ def prepare_stage(stage_name: str, config_path: Path) -> None:
     # Build input.md from allowed inputs
     input_path = Path(ROOT) / "tmp" / f"wf_{stage_name}_input.md"
     input_lines = []
+    if stage_output_contract:
+        input_lines.append("# Stage Output Contract\n")
+        input_lines.append(stage_output_contract)
+        input_lines.append("\n---\n")
     for f in allowed_inputs:
         p = Path(ROOT) / f
         if p.exists():

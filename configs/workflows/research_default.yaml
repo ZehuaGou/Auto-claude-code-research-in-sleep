@@ -55,6 +55,25 @@ stages:
       - paywalled_content_illegally_obtained
     output_file: research/current/trusted_outputs/literature_search.md
     require_validate: true
+    stage_output_contract: |
+      ROLE BOUNDARY — literature_search OUTPUT CONTRACT
+      You are literature_scout. Your task is to gather, normalize, and summarize literature evidence.
+      You MUST NOT perform novelty checking, novelty judgment, or claim whether the idea is novel.
+
+      HARD CONSTRAINTS (violation = artifact rejected):
+      1. Document title MUST be "Literature Search Evidence Summary" (not "Novelty Check Report" or similar).
+      2. Do NOT use novelty judgment terms: "novel", "confirmed_novel", "potentially novel", "likely_incremental",
+         "already_done", "no prior work", "this is novel", "novelty judgment", "novel framing".
+      3. Do NOT use overlap-denial phrases: "Direct overlap: None", "absent from literature",
+         "no existing work", "not found in literature" as conclusions.
+      4. Allowed sections: Search Strategy, Evidence Table, Coverage Assessment, Open Questions, Limitations.
+      5. You MUST NOT include sections: Novelty Conclusion, Novelty Verdict, Recommendation, Final Judgment.
+      6. End the document with a boundary statement:
+         "This artifact is literature evidence only. Novelty determination is performed by the novelty_checker stage."
+      7. Preserve uncertainty: use "no evidence found in searched sources" instead of "does not exist".
+      8. Do NOT include "Role: novelty_check" or any role marker for a different stage.
+      9. Do NOT claim the idea is novel, incremental, or already done — that is novelty_checker's job.
+      10. If coverage is insufficient, state what is missing; do NOT fill gaps with assumptions about novelty.
 
   novelty_check:
     role: novelty_checker

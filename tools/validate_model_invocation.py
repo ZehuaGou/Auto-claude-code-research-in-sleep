@@ -86,6 +86,23 @@ REQUIRED_CONTEXT_FIELDS = [
     "contamination_scan_status",
 ]
 
+# Boundary enforcement: forbidden phrases for literature_scout output
+# These phrases indicate the literature_search artifact crossed into novelty_check territory
+LITERATURE_SCOUT_FORBIDDEN_PHRASES = [
+    "novelty check report",
+    "role: novelty_check",
+    "confirmed_novel",
+    "already_done",
+    "likely_incremental",
+    "potentially novel",
+    "no prior work",
+    "direct overlap: none",
+    "absent from literature",
+    "this is novel",
+    "novelty judgment",
+    "novel framing",
+]
+
 
 def _get_ledger_path() -> Path:
     """Resolve ledger path from env var or default location."""
@@ -371,6 +388,28 @@ def validate_role(
         if context_manifest in (None, ""):
             status = "FAIL"
             reasons.append("context_manifest missing")
+
+    # Literature scout boundary enforcement: check output for forbidden phrases
+    if role == "literature_scout":
+        output_text_to_check = ""
+        if response_file:
+            try:
+                rp = Path(response_file)
+                if rp.exists() and rp.is_file():
+                    output_text_to_check = rp.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                pass
+        if not output_text_to_check and ledger_output_text:
+            output_text_to_check = ledger_output_text
+        if output_text_to_check:
+            lower_text = output_text_to_check.lower()
+            hits = [p for p in LITERATURE_SCOUT_FORBIDDEN_PHRASES if p in lower_text]
+            if hits:
+                status = "FAIL"
+                reasons.append(
+                    f"literature_search output crossed into novelty_check boundary: "
+                    f"forbidden phrases found: {hits}"
+                )
 
     if not allowed_next_stage and status == "PASS":
         status = "PASS_WITH_WARNINGS"
@@ -907,6 +946,73 @@ def cmd_self_test():
         test_results["historical_codex_artifact"] = r
         assert r["status"] in ("PASS", "PASS_WITH_WARNINGS"), f"Expected PASS or PASS_WITH_WARNINGS for historical_codex_artifact, got {r['status']}"
         assert r["allowed_next_stage"] is True, f"Expected allowed_next_stage=True for historical_codex_artifact, got {r['allowed_next_stage']}"
+
+        # Test case 17: literature_scout with "Novelty Check Report" in output → FAIL (boundary violation)
+        response_boundary1 = response_dir / "boundary_violation1.md"
+        response_boundary1.write_text("# Novelty Check Report\n\nThe idea is confirmed_novel.", encoding="utf-8")
+        entry17 = with_context({
+            "call_id": "call_test_017",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "literature_scout",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "deepseek",
+            "actual_model": "deepseek-v4-flash",
+            "verification_status": "verified_routed_call",
+            "allowed_next_stage": True,
+            "confidence_downgraded": False,
+            "status": "completed",
+            "response_file": str(response_boundary1),
+        }, manifest="manifest_literature_scout_boundary1.json", checked=True, scan_status="passed", response_file=str(response_boundary1))
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry17) + "\n")
+        r = validate_role("literature_scout", Path(temp_path), max_age_hours=24)
+        test_results["literature_scout_boundary_novelty_report"] = r
+        assert r["status"] == "FAIL", f"Expected FAIL for literature_scout with 'Novelty Check Report', got {r['status']}"
+        assert "boundary" in r["reason"].lower(), f"Expected boundary in reason, got {r['reason']}"
+
+        # Test case 18: literature_scout with "potentially novel" in output_text → FAIL
+        entry18 = with_context({
+            "call_id": "call_test_018",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "literature_scout",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "deepseek",
+            "actual_model": "deepseek-v4-flash",
+            "verification_status": "verified_routed_call",
+            "allowed_next_stage": True,
+            "confidence_downgraded": False,
+            "status": "completed",
+            "output_text": "# Literature Search\n\nThe approach is potentially novel based on available evidence.",
+        }, manifest="manifest_literature_scout_boundary2.json", checked=True, scan_status="passed")
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry18) + "\n")
+        r = validate_role("literature_scout", Path(temp_path), max_age_hours=24)
+        test_results["literature_scout_boundary_potentially_novel"] = r
+        assert r["status"] == "FAIL", f"Expected FAIL for literature_scout with 'potentially novel', got {r['status']}"
+
+        # Test case 19: novelty_checker with novelty words → NOT affected (should PASS)
+        entry19 = with_context({
+            "call_id": "call_test_019",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "novelty_checker",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "codex",
+            "actual_model": "auto",
+            "codex_thread_id": "thread_novelty_boundary_test",
+            "verification_status": "verified_routed_call",
+            "allowed_next_stage": True,
+            "confidence_downgraded": False,
+            "status": "completed",
+            "output_text": "# Novelty Check Report\n\nThe idea is confirmed_novel with no prior work found.",
+        }, manifest="manifest_novelty_checker_boundary.json", checked=True, scan_status="passed", prompt_file="novelty_prompt.md")
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry19) + "\n")
+        r = validate_role("novelty_checker", Path(temp_path), max_age_hours=24)
+        test_results["novelty_checker_boundary_not_affected"] = r
+        assert r["status"] == "PASS", f"Expected PASS for novelty_checker with novelty words (not affected), got {r['status']}"
 
         print("SELF-TEST RESULTS:")
         print(json.dumps(test_results, ensure_ascii=False, indent=2))
