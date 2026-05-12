@@ -43,9 +43,10 @@ This file tracks issues deferred for MVP that must be addressed later. Any "fix 
   - valid_with_gaps manual confirmation policy still pending
 
 ### TD-004 research_status.py header parsing is permissive
-- **Current**: Artifact header parsing uses `text.find("---")`. Plain markdown dividers may be misidentified as trusted headers.
-- **Target**: Only accept a trusted artifact header when the file's first line is `---`.
-- **Next steps**: Change `read_artifact_header()` in `research_status.py` to require first-line `---`.
+- **Status**: Resolved.
+- **Resolved by**: `this commit` — `read_artifact_header()` now only accepts artifact headers when the file's first line is `---`.
+- **Change**: Switched from `text.find("---")` to line-by-line parsing that requires the very first line to be `---`.
+- **Effect**: Plain markdown section dividers in file body are no longer misidentified as trusted artifact headers.
 
 ### TD-005 Literature docs style cleanup
 - **Current**: `literature/README.md` mixes Chinese and English.

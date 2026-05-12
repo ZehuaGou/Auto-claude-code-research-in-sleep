@@ -29,24 +29,34 @@ def load_workflow_config(config_path: Path) -> dict:
 
 
 def read_artifact_header(output_path: Path) -> dict:
-    """Read the YAML-like artifact header from the first --- block."""
+    """Read the YAML-like artifact header from the first --- block.
+
+    Only accepts headers where the very first line of the file is ---.
+    This prevents plain markdown section dividers from being misidentified.
+    """
     if not output_path.exists():
         return {}
 
     try:
-        text = output_path.read_text(encoding="utf-8", errors="ignore")
+        lines = output_path.read_text(encoding="utf-8", errors="ignore").splitlines()
     except Exception:
         return {}
 
-    # Find first --- block
-    first = text.find("---")
-    if first == -1:
-        return {}
-    second = text.find("---", first + 3)
-    if second == -1:
+    # First line must be ---
+    if not lines or lines[0].strip() != "---":
         return {}
 
-    header_text = text[first + 3 : second].strip()
+    # Find the closing --- starting from line 2
+    end_idx = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end_idx = i
+            break
+
+    if end_idx is None:
+        return {}
+
+    header_text = "\n".join(lines[1:end_idx]).strip()
     if not header_text:
         return {}
 
