@@ -95,7 +95,7 @@ ROLE_FINAL_SELECTOR=CODEX
 ROLE_EXPERIMENT_CODE_REVIEWER=CODEX
 ROLE_EXPERIMENT_AUDITOR=CODEX
 ROLE_RESULT_JUDGE=CODEX
-ROLE_CONTRACT_REVIEWER=CODEX
+ROLE_CONTRACT_REVIEWER=DS_PRO_HIGH
 ROLE_FINAL_AUDITOR=CODEX
 
 ROLE_EXPERIMENT_IMPLEMENTER=DS_PRO_HIGH
@@ -136,7 +136,7 @@ All available roles:
 | Discovery | novelty_checker | Check novelty of ideas | CODEX |
 | Discovery | adversarial_reviewer | Adversarial critique of ideas | CODEX |
 | Discovery | final_selector | Select final candidate | CODEX |
-| Contract | contract_reviewer | Review research contract | CODEX |
+| Contract | contract_reviewer | Review research contract | DS_PRO_HIGH |
 | Baseline | baseline_reviewer | Verify baseline reproduction | DS_PRO_HIGH |
 | Experiment | experiment_implementer | Implement experiments | DS_PRO_HIGH |
 | Experiment | experiment_code_reviewer | Review experiment code | CODEX |
