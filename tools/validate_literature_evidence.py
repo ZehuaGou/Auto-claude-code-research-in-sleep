@@ -3,7 +3,7 @@
 Literature Evidence Validator.
 
 Reads top_k.md and checks whether its content is suitable for novelty evidence.
-Does NOT call models, does NOT write files, does NOT read .env, does NOT联网.
+Does NOT call models, does NOT write files, does NOT read .env, does NOT access the network.
 
 Usage:
     python tools/validate_literature_evidence.py
@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
-import os
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).parent.resolve()
@@ -30,14 +30,23 @@ TEMPLATE_INDICATORS = [
 ]
 
 # Required fields per candidate paper entry
-REQUIRED_FIELDS = [
+BASE_REQUIRED_FIELDS = [
     "title",
     "authors",
     "year",
     "source",
-    "url",
     "fetched_or_manual",
+    "full_text_available",
+    "evidence_strength",
+    "relevance_to_research_contract",
+    "method_or_finding_relevant_to_claim",
+    "evidence_gap",
 ]
+
+ALLOWED_EVIDENCE_STRENGTH = ("high", "medium", "low")
+
+# HTML comment pattern — content inside these blocks is template, not real data
+HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->", re.MULTILINE)
 
 
 def has_template_indicator(text: str) -> bool:
@@ -47,70 +56,73 @@ def has_template_indicator(text: str) -> bool:
     return False
 
 
-def parse_paper_entries(text: str) -> list[dict]:
-    """Parse paper entries from top_k.md. Looks for bulleted or numbered entries."""
+def remove_html_comments(text: str) -> str:
+    """Strip HTML comments so template content inside them is not parsed as real entries."""
+    return HTML_COMMENT_RE.sub("", text)
+
+
+def parse_paper_blocks(text: str) -> list[dict]:
+    """Parse paper blocks starting with ### Paper N."""
+    # Split on ### Paper headings (at start of line)
+    blocks = re.split(r"(?=^###\s+Paper\s+\d+)", text, flags=re.MULTILINE | re.IGNORECASE)
     entries = []
-    lines = text.split("\n")
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        # Detect a paper entry: starts with - or * and followed by title/author lines
-        if line.startswith("- ") or line.startswith("* "):
-            entry_text = line[2:].strip()
-            entry: dict = {}
-            # If the first line looks like a title field
-            if ":" not in entry_text:
-                entry["title"] = entry_text
-                i += 1
-                # Collect continuation lines until next bullet or empty-then-next-bullet
-                while i < len(lines):
-                    next_line = lines[i].strip()
-                    if not next_line:
-                        break
-                    if next_line.startswith("- ") or next_line.startswith("* "):
-                        break
-                    entry_text += " " + next_line
-                    i += 1
-            else:
-                # Multi-field entry
-                # Collect this bullet and any continuation lines
-                collected = [entry_text]
-                i += 1
-                while i < len(lines):
-                    next_line = lines[i].strip()
-                    if not next_line:
-                        break
-                    if next_line.startswith("- ") or next_line.startswith("* "):
-                        break
-                    collected.append(next_line)
-                    i += 1
-                entry_text = " ".join(collected)
-
-                # Parse key: value pairs
-                for part in entry_text.split(";"):
-                    part = part.strip()
-                    if ":" in part:
-                        key, val = part.split(":", 1)
-                        entry[key.strip().lower().replace(" ", "_")] = val.strip()
-
-            if entry:
-                entries.append(entry)
-        else:
-            i += 1
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        # Check this block starts with ### Paper
+        if not re.match(r"^###\s+Paper\s+\d+", block, re.IGNORECASE):
+            continue
+        # Remove block title line
+        lines = block.split("\n")
+        if lines[0].strip().startswith("###"):
+            lines = lines[1:]
+        entry: dict = {}
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # Skip section headers (## lines) mid-block
+            if line.startswith("##"):
+                continue
+            if ": " in line:
+                key, val = line.split(": ", 1)
+                entry[key.strip().lower().replace(" ", "_")] = val.strip()
+        if entry:
+            entries.append(entry)
     return entries
 
 
-def check_entry_fields(entry: dict) -> list[str]:
-    """Return list of missing required fields."""
+def check_entry_fields(entry: dict) -> tuple[list[str], list[str]]:
+    """Return (missing_base, issues)."""
     missing = []
-    for field in REQUIRED_FIELDS:
+    issues = []
+    for field in BASE_REQUIRED_FIELDS:
         if field not in entry or not entry[field]:
             missing.append(field)
-    return missing
+
+    # url or doi at least one
+    has_url = entry.get("url", "").strip()
+    has_doi = entry.get("doi", "").strip()
+    if not has_url and not has_doi:
+        missing.append("url_or_doi")
+
+    # evidence_strength rules
+    es = entry.get("evidence_strength", "").lower()
+    if es and es not in ALLOWED_EVIDENCE_STRENGTH:
+        issues.append(f"evidence_strength must be high/medium/low, got '{es}'")
+
+    ft = entry.get("full_text_available", "").lower()
+    if ft in ("no", "unknown", "") and es == "high":
+        issues.append("evidence_strength=high but full_text_available is no/unknown")
+
+    if es == "high" and not entry.get("method_or_finding_relevant_to_claim", "").strip():
+        issues.append("evidence_strength=high but method_or_finding_relevant_to_claim is empty")
+
+    return missing, issues
 
 
 def check_full_text_availability(entry: dict) -> bool:
-    """Return True if full_text_available is indicated as yes/true/available."""
     val = entry.get("full_text_available", "").lower()
     return val in ("yes", "true", "available", "yes_available")
 
@@ -131,54 +143,71 @@ def validate_top_k(file_path: Path) -> dict:
             "error": str(e),
         }
 
-    # Check for template indicators
+    # Remove HTML comments before parsing so template content is not treated as entries
+    clean_text = remove_html_comments(text)
+
+    # Check for template indicators (before removing HTML comments so we catch the real file)
     if has_template_indicator(text):
         return {
             "status": "template_only",
             "message": "File contains template markers and cannot be used as novelty evidence.",
-            "indicators": [i for i in TEMPLATE_INDICATORS if i in text],
+            "template_indicators": [i for i in TEMPLATE_INDICATORS if i in text],
         }
 
     # Parse entries
-    entries = parse_paper_entries(text)
+    entries = parse_paper_blocks(clean_text)
 
     if not entries:
         return {
             "status": "insufficient_evidence",
             "message": "No candidate paper entries found.",
+            "entries_found": 0,
+            "entries_status": [],
         }
 
-    # Check each entry for required fields
-    entries_status = []
+    # Check each entry
+    all_entries_status = []
+    all_issues = []
     for idx, entry in enumerate(entries):
-        missing = check_entry_fields(entry)
+        missing, entry_issues = check_entry_fields(entry)
         has_full_text = check_full_text_availability(entry)
-        entries_status.append({
+        all_entries_status.append({
             "index": idx,
             "title": entry.get("title", ""),
             "missing_fields": missing,
+            "issues": entry_issues,
             "full_text_available": has_full_text,
+            "evidence_strength": entry.get("evidence_strength", ""),
         })
+        all_issues.extend(entry_issues)
 
     # Determine overall status
-    all_have_full_text = all(e["full_text_available"] for e in entries_status)
-    any_missing_fields = any(e["missing_fields"] for e in entries_status)
+    any_missing_base = any(e["missing_fields"] for e in all_entries_status)
+    all_no_full_text = all(not e["full_text_available"] for e in all_entries_status)
+    any_critical_issues = any("evidence_strength=high" in i for i in all_issues)
 
-    if all_have_full_text and not any_missing_fields:
-        status = "valid"
-        message = "All entries have required fields and full text availability."
-    elif not any_missing_fields:
-        status = "valid_with_gaps"
-        message = "Entries have required fields but full text is not confirmed for all."
-    else:
+    if all_no_full_text:
         status = "insufficient_evidence"
-        message = "Some entries are missing required fields."
+        message = "All entries have no full text available."
+    elif any_missing_base:
+        status = "insufficient_evidence"
+        message = "Some entries are missing required base fields."
+    elif any_critical_issues:
+        status = "insufficient_evidence"
+        message = "Critical issues found in entries (see issues list)."
+    elif all_issues:
+        status = "valid_with_gaps"
+        message = "Entries have required fields but some gaps or minor issues exist."
+    else:
+        status = "valid"
+        message = "All entries pass validation checks."
 
     return {
         "status": status,
         "message": message,
         "entries_found": len(entries),
-        "entries_status": entries_status,
+        "entries_status": all_entries_status,
+        "issues": all_issues,
     }
 
 
@@ -187,20 +216,27 @@ def format_human(result: dict) -> str:
     message = result["message"]
     lines = [f"Status: {status}", f"Message: {message}"]
 
-    if "entries_status" in result:
+    if "template_indicators" in result:
+        lines.append(f"Template indicators found: {result['template_indicators']}")
+
+    if "entries_status" in result and result["entries_status"]:
         lines.append(f"Entries found: {result['entries_found']}")
         for e in result["entries_status"]:
             missing = e["missing_fields"]
+            issues = e["issues"]
             ft = e["full_text_available"]
+            es = e["evidence_strength"]
             title = e["title"][:60] if e["title"] else "(untitled)"
             lines.append(
                 f"  - {title}: "
                 f"missing={missing if missing else 'none'}, "
-                f"full_text={ft}"
+                f"issues={issues if issues else 'none'}, "
+                f"full_text={ft}, "
+                f"evidence_strength={es}"
             )
 
-    if "indicators" in result:
-        lines.append(f"Template indicators found: {result['indicators']}")
+    if result.get("issues"):
+        lines.append(f"Overall issues: {result['issues']}")
 
     return "\n".join(lines)
 

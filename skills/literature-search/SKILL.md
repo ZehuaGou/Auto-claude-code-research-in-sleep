@@ -106,3 +106,4 @@ Papers that could not be obtained, especially if they may be closest prior work.
 - Do not produce a verdict — novelty_check role does that
 - `python tools/validate_literature_evidence.py` must be run to check `top_k.md` status before using it as novelty evidence
 - `status: template_only` in `top_k.md` means the file is a skeleton — it is **not** valid evidence
+- `validate_literature_evidence.py` is a format and evidence quality pre-check only — it does **not** replace the `novelty_check` role, which makes the actual novelty verdict
