@@ -202,6 +202,11 @@ CLAUDE.md
 # === Unsafe local MCP shims ===
 mcp-servers/codex-shim/
 
+# === Local / obsolete untracked docs ===
+AGENTS.md
+CLEAN_BRANCH_REPORT.md
+docs/research_contract_review.md
+
 # === Local skill lock ===
 skills-lock.json
 

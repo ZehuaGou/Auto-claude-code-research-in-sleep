@@ -8,9 +8,9 @@ This document records untracked files in the current Git working tree that may h
 
 | File | Reason |
 |------|--------|
-| `AGENTS.md` | Possible Codex agent instruction file; review content before committing. |
-| `CLEAN_BRANCH_REPORT.md` | Historical cleanup report; may contain sensitive references (e.g., API key exposure notes); manual review required before commit. |
-| `docs/research_contract_review.md` | Possible TokenTR contract review document; verify relevance and whether it belongs in `docs/` or elsewhere. |
+| `AGENTS.md` | **Moved to should_not_commit** — see that section. |
+| `CLEAN_BRANCH_REPORT.md` | **Moved to should_not_commit** — see that section. |
+| `docs/research_contract_review.md` | **Moved to should_not_commit** — see that section. |
 
 ---
 
@@ -43,6 +43,9 @@ This document records untracked files in the current Git working tree that may h
 | File/Directory | Reason |
 |----------------|--------|
 | `mcp-servers/codex-shim/` | Reviewed 2026-05-12. This local MCP shim mimics Codex tools but bypasses `trusted_role_runner.py`, `validate_model_invocation.py`, ledger recording, and `verification_status`. It can create unverified model outputs that appear like Codex results, so it must not be committed or used in the trusted workflow. Also see `.gitignore: mcp-servers/codex-shim/`. |
+| `AGENTS.md` | Reviewed 2026-05-12. Codex-specific instruction file overlaps/conflicts with the current project rules (`CLAUDE.md`) and contains local Windows/Ollama assumptions. Do not commit unless rewritten and reconciled with the main project guidance. |
+| `CLEAN_BRANCH_REPORT.md` | Reviewed 2026-05-12. Historical cleanup/security incident report describing API key exposure context. Do not commit to the public repository; keep only in private/internal archive if needed. |
+| `docs/research_contract_review.md` | Reviewed 2026-05-12. TokenTR legacy review artifact without trusted artifact header, ledger, or current workflow status. Do not mix into current trusted workflow docs. |
 
 ---
 
@@ -53,6 +56,8 @@ This document records untracked files in the current Git working tree that may h
 - Before committing any item, inspect its contents and remove runtime / data / build artifacts.
 - Skills must be reviewed for `allowed-tools` and whether they bypass the trusted workflow.
 - Local MCP shims that bypass `trusted_role_runner.py` or lack `verification_status` must not be committed.
+- Local instruction files that conflict with current trusted workflow guidance must not be committed without rewrite.
+- Security incident reports must not be committed to the public repository.
 - Experiment code must not bring `results/`, `data/`, or `checkpoints/` into Git.
 - Paper files must not include generated PDFs or LaTeX build outputs.
 - Any sensitive or credential-like content must be excluded.
@@ -88,5 +93,6 @@ Suggested order for future review sessions:
 | Date | Action |
 |------|--------|
 | 2026-05-12 | Document created; records current untracked items from `git status --short`. |
+| 2026-05-12 | `AGENTS.md`, `CLEAN_BRANCH_REPORT.md`, and `docs/research_contract_review.md` reviewed and marked should_not_commit; ignored to prevent accidental commit. |
 | 2026-05-12 | `mcp-servers/codex-shim/` reviewed and marked should_not_commit; ignored to prevent accidental commit. |
 | 2026-05-12 | PDF reader reviewed and accepted for commit: `tools/pdf_read.py` and `skills/pdf-reader/` moved to reviewed_for_commit. |
