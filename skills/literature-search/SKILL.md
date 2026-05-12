@@ -61,9 +61,31 @@ python tools/literature_evidence_landing.py validate-raw \
 # Normalize and dedup into candidates.jsonl
 python tools/literature_evidence_landing.py build-candidates \
   --run-dir literature/search_runs/current
+
+# Build top_k.md from candidates.jsonl (deterministic metadata scoring)
+python tools/literature_evidence_landing.py build-top-k \
+  --run-dir literature/search_runs/current \
+  --k 10
+
+# Validate top_k.md before novelty_check
+python tools/validate_literature_evidence.py \
+  --file literature/search_runs/current/top_k.md
 ```
 
 Note: `raw_results.jsonl` and `candidates.jsonl` are not novelty evidence — they must still go through candidates → top_k → novelty_check.
+
+## Build-Top-K does not make novelty judgments
+
+`build-top-k` generates a structured evidence summary from `candidates.jsonl`. It scores candidates by metadata completeness (stable IDs, abstract, source, etc.) and writes `top_k.md`.
+
+`build-top-k` does NOT:
+- Call model APIs
+- Verify full text availability
+- Set `evidence_strength=high` automatically
+- Make novelty verdicts (`confirmed_novel`, `already_done`, `likely_incremental`)
+- Assess relevance to research contract
+
+`novelty_check` role makes the actual novelty verdict. `top_k.md` must pass `validate_literature_evidence.py` before reaching `novelty_check`.
 
 ## WebSearch / WebFetch usage boundaries
 

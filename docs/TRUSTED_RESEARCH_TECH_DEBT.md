@@ -67,12 +67,13 @@ This file tracks issues deferred for MVP that must be addressed later. Any "fix 
 - **Progress**:
   - `tools/literature_evidence_landing.py` provides `validate-raw`, `append-raw`, `build-candidates`, `validate-candidates`.
   - `literature/README.md` and `skills/literature-search/SKILL.md` updated with tool usage.
-  - `raw_results.jsonl` → `candidates.jsonl` pipeline implemented in this commit (normalize + deterministic dedup).
+  - `raw_results.jsonl` → `candidates.jsonl` pipeline implemented (normalize + deterministic dedup).
+  - `candidates.jsonl` → `top_k.md` evidence summary generation added: this commit.
 - **Remaining**:
-  - `candidates.jsonl` → `top_k.md` pipeline not implemented.
-  - Richer ranking/scoring not implemented.
-  - `manual_acquisition_queue.md` processing not automated.
-  - Optional: WebFetch extraction helper to parse abstract/metadata from fetched HTML.
+  - top_k.md relevance/full-text manual confirmation still needed
+  - richer ranking/scoring not implemented
+  - `manual_acquisition_queue.md` processing not automated
+  - Optional: WebFetch extraction helper to parse abstract/metadata from fetched HTML
 
 ### TD-009 Legacy AGENTIC status migration
 - **Current**: `/status` switched to trusted workflow; `idea-stage/AGENTIC/` is no longer the default main path.
