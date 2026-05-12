@@ -199,6 +199,15 @@ paper/*.synctex.gz
 .codex/
 CLAUDE.md
 
+# === Local skill lock ===
+skills-lock.json
+
+# === Probe experiment outputs ===
+probes/*_output/
+
+# === Experiment results ===
+experiments/results/
+
 # === Local audit reports ===
 UNTRACKED_WORKSPACE_AUDIT.md
 review-stage/UNTRACKED_WORKSPACE_AUDIT.md
