@@ -10,14 +10,22 @@ Usage:
     python tools/literature_evidence_landing.py append-raw --input <path> --run-dir <dir>
     python tools/literature_evidence_landing.py build-candidates --run-dir <dir> [--json]
     python tools/literature_evidence_landing.py validate-candidates --file <path> [--json]
+    python tools/literature_evidence_landing.py validate-search-plan --file <path> [--json]
+    python tools/literature_evidence_landing.py init-run-skeleton --run-dir <dir> --topic <topic> --intent <intent>
+    python tools/literature_evidence_landing.py validate-acquisition-status --file <path> [--json]
+    python tools/literature_evidence_landing.py build-manual-queue --acquisition-status <file> --output <file>
+    python tools/literature_evidence_landing.py summarize-run --run-dir <dir> [--json]
+    python tools/literature_evidence_landing.py --self-test
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 ALLOWED_SOURCES = frozenset([
@@ -25,6 +33,27 @@ ALLOWED_SOURCES = frozenset([
 ])
 ALLOWED_ORIGINS = frozenset([
     "websearch", "webfetch", "manual", "api_export"
+])
+
+VALID_SEARCH_INTENTS = frozenset([
+    "idea_discovery", "novelty_check", "experiment_plan", "related_work"
+])
+
+VALID_PLAN_SOURCES = frozenset([
+    "arxiv", "semantic_scholar", "openalex", "crossref", "unpaywall",
+    "openreview", "conference_site", "author_homepage", "github", "manual"
+])
+
+VALID_FULL_TEXT_STATUSES = frozenset([
+    "available", "metadata_only", "manual_required", "failed"
+])
+
+VALID_PARSE_STATUSES = frozenset([
+    "not_started", "parsed", "failed", "not_applicable"
+])
+
+VALID_PARSE_QUALITIES = frozenset([
+    "high", "medium", "low", "unknown"
 ])
 
 
@@ -671,6 +700,561 @@ def _write_top_k_md(path: Path, top_k_records: list, duplicates: list,
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+# ---- Search plan validation ----
+
+def validate_search_plan(file_path: Path, json_output: bool) -> dict:
+    """Validate a search_plan.yaml-like JSON file. No network calls."""
+    errors = []
+    warnings = []
+
+    if not file_path.exists():
+        result = {"status": "FAIL", "errors": ["file not found"], "warnings": []}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    try:
+        text = file_path.read_text(encoding="utf-8", errors="ignore")
+        plan = json.loads(text)
+    except json.JSONDecodeError as e:
+        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"], "warnings": []}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Required fields
+    for field in ("topic", "search_intent", "must_include", "sources", "time_range", "max_results_per_source"):
+        if field not in plan:
+            errors.append(f"missing required field: {field}")
+
+    # topic must be non-empty string
+    topic = plan.get("topic", "")
+    if isinstance(topic, str) and not topic.strip():
+        errors.append("topic is empty")
+
+    # search_intent must be valid
+    intent = plan.get("search_intent", "")
+    if intent and intent not in VALID_SEARCH_INTENTS:
+        errors.append(f"search_intent '{intent}' not in {sorted(VALID_SEARCH_INTENTS)}")
+
+    # must_include must be non-empty list
+    must_include = plan.get("must_include", [])
+    if not isinstance(must_include, list) or len(must_include) == 0:
+        errors.append("must_include must be a non-empty list")
+
+    # sources must be list with valid entries
+    sources = plan.get("sources", [])
+    if not isinstance(sources, list) or len(sources) == 0:
+        errors.append("sources must be a non-empty list")
+    else:
+        for s in sources:
+            if s not in VALID_PLAN_SOURCES:
+                errors.append(f"unsupported source: '{s}'")
+
+    # time_range must exist with start_year and end_year
+    time_range = plan.get("time_range", {})
+    if not isinstance(time_range, dict):
+        errors.append("time_range must be a dict")
+    else:
+        if "start_year" not in time_range:
+            errors.append("time_range missing start_year")
+        if "end_year" not in time_range:
+            errors.append("time_range missing end_year")
+
+    # max_results_per_source must be positive integer
+    max_results = plan.get("max_results_per_source")
+    if max_results is None:
+        errors.append("max_results_per_source is missing")
+    elif not isinstance(max_results, int) or max_results <= 0:
+        errors.append("max_results_per_source must be a positive integer")
+
+    status = "PASS" if not errors else "FAIL"
+    result = {"status": status, "errors": errors, "warnings": warnings}
+    if json_output:
+        print(json.dumps(result, indent=2))
+    return result
+
+
+# ---- Init run skeleton ----
+
+def init_run_skeleton(run_dir: Path, topic: str, intent: str) -> dict:
+    """Create empty/template skeleton files for a literature search run."""
+    run_dir = Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # search_plan.yaml (as JSON for simplicity; YAML not required for MVP)
+    plan = {
+        "topic": topic,
+        "search_intent": intent,
+        "must_include": [],
+        "sources": [],
+        "time_range": {"start_year": 2020, "end_year": 2026},
+        "max_results_per_source": 50,
+    }
+    (run_dir / "search_plan.yaml").write_text(
+        json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # Empty JSONL files
+    (run_dir / "raw_results.jsonl").write_text("", encoding="utf-8")
+    (run_dir / "candidates.jsonl").write_text("", encoding="utf-8")
+
+    # Template top_k.md
+    (run_dir / "top_k.md").write_text(
+        "# Top-K Literature Evidence\n\nStatus: template_only\n", encoding="utf-8"
+    )
+
+    # Empty acquisition status
+    (run_dir / "acquisition_status.json").write_text(
+        json.dumps({"papers": []}, indent=2), encoding="utf-8"
+    )
+
+    # Empty manual acquisition queue
+    (run_dir / "manual_acquisition_queue.md").write_text(
+        "# Manual Acquisition Queue\n\nNo papers queued.\n", encoding="utf-8"
+    )
+
+    created = [
+        "search_plan.yaml", "raw_results.jsonl", "candidates.jsonl",
+        "top_k.md", "acquisition_status.json", "manual_acquisition_queue.md"
+    ]
+
+    return {"status": "created", "run_dir": str(run_dir), "files": created}
+
+
+# ---- Acquisition status validation ----
+
+def validate_acquisition_status(file_path: Path, json_output: bool) -> dict:
+    """Validate acquisition_status.json schema. No network calls."""
+    errors = []
+
+    if not file_path.exists():
+        result = {"status": "FAIL", "errors": ["file not found"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    try:
+        text = file_path.read_text(encoding="utf-8", errors="ignore")
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    papers = data.get("papers", [])
+    if not isinstance(papers, list):
+        result = {"status": "FAIL", "errors": ["papers must be a list"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    for idx, paper in enumerate(papers):
+        prefix = f"papers[{idx}]"
+
+        if not isinstance(paper, dict):
+            errors.append(f"{prefix}: must be a dict")
+            continue
+
+        if not paper.get("paper_id"):
+            errors.append(f"{prefix}: missing paper_id")
+        if not paper.get("title"):
+            errors.append(f"{prefix}: missing title")
+
+        fts = paper.get("full_text_status", "")
+        if fts and fts not in VALID_FULL_TEXT_STATUSES:
+            errors.append(f"{prefix}: invalid full_text_status '{fts}'")
+
+        ps = paper.get("parse_status", "")
+        if ps and ps not in VALID_PARSE_STATUSES:
+            errors.append(f"{prefix}: invalid parse_status '{ps}'")
+
+        pq = paper.get("parse_quality", "")
+        if pq and pq not in VALID_PARSE_QUALITIES:
+            errors.append(f"{prefix}: invalid parse_quality '{pq}'")
+
+        # If full_text is not available, evidence_gap must be non-empty
+        if fts in ("metadata_only", "manual_required", "failed"):
+            eg = paper.get("evidence_gap", "")
+            if not eg or not str(eg).strip():
+                errors.append(f"{prefix}: full_text_status='{fts}' but evidence_gap is empty")
+
+    status = "PASS" if not errors else "FAIL"
+    result = {"status": status, "errors": errors}
+    if json_output:
+        print(json.dumps(result, indent=2))
+    return result
+
+
+# ---- Build manual queue ----
+
+def build_manual_queue(acquisition_status_path: Path, output_path: Path) -> dict:
+    """Build manual_acquisition_queue.md from acquisition_status.json."""
+    if not acquisition_status_path.exists():
+        return {"status": "FAIL", "message": "acquisition_status.json not found"}
+
+    try:
+        data = json.loads(acquisition_status_path.read_text(encoding="utf-8", errors="ignore"))
+    except json.JSONDecodeError as e:
+        return {"status": "FAIL", "message": f"invalid JSON: {e}"}
+
+    papers = data.get("papers", [])
+    queued = [p for p in papers if p.get("full_text_status") in ("manual_required", "failed")]
+
+    lines = ["# Manual Acquisition Queue", ""]
+    if not queued:
+        lines.append("No papers require manual acquisition.")
+    else:
+        for paper in queued:
+            title = paper.get("title", "(untitled)")
+            doi = paper.get("doi", "")
+            arxiv = paper.get("arxiv_id", "")
+            oa = paper.get("openalex_id", "")
+            gap = paper.get("evidence_gap", "")
+            fts = paper.get("full_text_status", "")
+
+            lines.append(f"## {title}")
+            if doi:
+                lines.append(f"- DOI: {doi}")
+            if arxiv:
+                lines.append(f"- arXiv: {arxiv}")
+            if oa:
+                lines.append(f"- OpenAlex: {oa}")
+            lines.append(f"- Status: {fts}")
+            if gap:
+                lines.append(f"- Why needed: {gap}")
+            lines.append("- Suggested legal actions:")
+            lines.append("  - Check arXiv / OpenReview for open access version")
+            lines.append("  - Check author homepage or GitHub")
+            lines.append("  - Check institutional access")
+            lines.append("  - Manually place PDF under literature/manual_pdf_drop/")
+            lines.append("")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+
+    return {"status": "built", "queued_count": len(queued), "output": str(output_path)}
+
+
+# ---- Summarize run ----
+
+def summarize_run(run_dir: Path, json_output: bool) -> dict:
+    """Summarize a literature search run directory. No network calls."""
+    run_dir = Path(run_dir)
+
+    plan_present = (run_dir / "search_plan.yaml").exists()
+
+    raw_path = run_dir / "raw_results.jsonl"
+    raw_records, _ = _parse_jsonl(raw_path) if raw_path.exists() else ([], [])
+    raw_count = len(raw_records)
+
+    cand_path = run_dir / "candidates.jsonl"
+    cand_records, _ = _parse_jsonl(cand_path) if cand_path.exists() else ([], [])
+    cand_count = len(cand_records)
+
+    top_k_present = (run_dir / "top_k.md").exists()
+    top_k_text = ""
+    if top_k_present:
+        top_k_text = (run_dir / "top_k.md").read_text(encoding="utf-8", errors="ignore")
+    top_k_populated = top_k_present and "template_only" not in top_k_text
+
+    acq_present = (run_dir / "acquisition_status.json").exists()
+    manual_queue_present = (run_dir / "manual_acquisition_queue.md").exists()
+
+    manual_required_count = 0
+    full_text_available_count = 0
+    metadata_only_count = 0
+
+    if acq_present:
+        try:
+            acq_data = json.loads((run_dir / "acquisition_status.json").read_text(encoding="utf-8", errors="ignore"))
+            for p in acq_data.get("papers", []):
+                fts = p.get("full_text_status", "")
+                if fts == "manual_required":
+                    manual_required_count += 1
+                elif fts == "failed":
+                    manual_required_count += 1
+                elif fts == "available":
+                    full_text_available_count += 1
+                elif fts == "metadata_only":
+                    metadata_only_count += 1
+        except Exception:
+            pass
+
+    # Determine status
+    if not plan_present:
+        status = "FAIL"
+    elif raw_count == 0:
+        status = "WARN"
+    elif cand_count == 0:
+        status = "WARN"
+    elif not top_k_populated:
+        status = "WARN"
+    else:
+        status = "PASS"
+
+    result = {
+        "search_plan_present": plan_present,
+        "raw_result_count": raw_count,
+        "candidate_count": cand_count,
+        "top_k_present": top_k_populated,
+        "acquisition_status_present": acq_present,
+        "manual_queue_present": manual_queue_present,
+        "manual_required_count": manual_required_count,
+        "full_text_available_count": full_text_available_count,
+        "metadata_only_count": metadata_only_count,
+        "status": status,
+    }
+
+    if json_output:
+        print(json.dumps(result, indent=2))
+    return result
+
+
+# ---- Self-test ----
+
+def _self_test() -> bool:
+    """Run self-tests. Uses tempfile; no network; no model keys."""
+    import shutil
+
+    passed = 0
+    failed = 0
+
+    def _write_tmp_json(data: dict, suffix: str = ".json") -> Path:
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False, encoding="utf-8")
+        f.write(json.dumps(data, indent=2))
+        f.close()
+        return Path(f.name)
+
+    # Test 1: valid search_plan → PASS
+    try:
+        plan = {
+            "topic": "hallucination detection hidden states",
+            "search_intent": "novelty_check",
+            "must_include": ["hallucination", "hidden states"],
+            "sources": ["arxiv", "semantic_scholar", "openalex"],
+            "time_range": {"start_year": 2020, "end_year": 2026},
+            "max_results_per_source": 50,
+        }
+        p = _write_tmp_json(plan, ".yaml")
+        r = validate_search_plan(p, json_output=False)
+        assert r["status"] == "PASS", f"Test 1: Expected PASS, got {r['status']}: {r['errors']}"
+        print("  [PASS] 1. valid search_plan → PASS")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 1. valid search_plan: {e}")
+        failed += 1
+    finally:
+        p.unlink(missing_ok=True)
+
+    # Test 2: missing topic → FAIL
+    try:
+        plan = {
+            "search_intent": "novelty_check",
+            "must_include": ["test"],
+            "sources": ["arxiv"],
+            "time_range": {"start_year": 2020, "end_year": 2026},
+            "max_results_per_source": 10,
+        }
+        p = _write_tmp_json(plan, ".yaml")
+        r = validate_search_plan(p, json_output=False)
+        assert r["status"] == "FAIL", f"Test 2: Expected FAIL, got {r['status']}"
+        assert any("topic" in e for e in r["errors"]), f"Test 2: Expected topic error, got {r['errors']}"
+        print("  [PASS] 2. missing topic → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 2. missing topic: {e}")
+        failed += 1
+    finally:
+        p.unlink(missing_ok=True)
+
+    # Test 3: unsupported source → FAIL
+    try:
+        plan = {
+            "topic": "test",
+            "search_intent": "novelty_check",
+            "must_include": ["test"],
+            "sources": ["arxiv", "google_scholar"],
+            "time_range": {"start_year": 2020, "end_year": 2026},
+            "max_results_per_source": 10,
+        }
+        p = _write_tmp_json(plan, ".yaml")
+        r = validate_search_plan(p, json_output=False)
+        assert r["status"] == "FAIL", f"Test 3: Expected FAIL, got {r['status']}"
+        assert any("google_scholar" in e for e in r["errors"]), f"Test 3: Expected source error, got {r['errors']}"
+        print("  [PASS] 3. unsupported source → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 3. unsupported source: {e}")
+        failed += 1
+    finally:
+        p.unlink(missing_ok=True)
+
+    # Test 4: init-run-skeleton creates all expected files
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        run_dir = tmp_dir / "test_run"
+        r = init_run_skeleton(run_dir, "test topic", "novelty_check")
+        assert r["status"] == "created", f"Test 4: Expected created, got {r['status']}"
+        expected_files = ["search_plan.yaml", "raw_results.jsonl", "candidates.jsonl",
+                          "top_k.md", "acquisition_status.json", "manual_acquisition_queue.md"]
+        for fname in expected_files:
+            assert (run_dir / fname).exists(), f"Test 4: Missing {fname}"
+        # Verify search_plan content
+        plan_content = json.loads((run_dir / "search_plan.yaml").read_text(encoding="utf-8"))
+        assert plan_content["topic"] == "test topic"
+        assert plan_content["search_intent"] == "novelty_check"
+        print("  [PASS] 4. init-run-skeleton creates all expected files")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 4. init-run-skeleton: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 5: valid acquisition_status → PASS
+    try:
+        acq = {
+            "papers": [{
+                "paper_id": "p1",
+                "title": "Test Paper",
+                "doi": "10.1234/test",
+                "arxiv_id": "",
+                "openalex_id": "",
+                "full_text_status": "available",
+                "source_type": "pdf",
+                "parse_status": "parsed",
+                "parse_quality": "high",
+                "evidence_gap": "",
+            }]
+        }
+        p = _write_tmp_json(acq)
+        r = validate_acquisition_status(p, json_output=False)
+        assert r["status"] == "PASS", f"Test 5: Expected PASS, got {r['status']}: {r['errors']}"
+        print("  [PASS] 5. valid acquisition_status → PASS")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 5. valid acquisition_status: {e}")
+        failed += 1
+    finally:
+        p.unlink(missing_ok=True)
+
+    # Test 6: metadata_only with empty evidence_gap → FAIL
+    try:
+        acq = {
+            "papers": [{
+                "paper_id": "p2",
+                "title": "Paywalled Paper",
+                "full_text_status": "metadata_only",
+                "source_type": "metadata",
+                "parse_status": "not_applicable",
+                "parse_quality": "unknown",
+                "evidence_gap": "",
+            }]
+        }
+        p = _write_tmp_json(acq)
+        r = validate_acquisition_status(p, json_output=False)
+        assert r["status"] == "FAIL", f"Test 6: Expected FAIL, got {r['status']}"
+        assert any("evidence_gap" in e for e in r["errors"]), f"Test 6: Expected evidence_gap error, got {r['errors']}"
+        print("  [PASS] 6. metadata_only empty evidence_gap → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 6. metadata_only empty evidence_gap: {e}")
+        failed += 1
+    finally:
+        p.unlink(missing_ok=True)
+
+    # Test 7: build-manual-queue writes queue for manual_required paper
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        acq = {
+            "papers": [
+                {
+                    "paper_id": "p3",
+                    "title": "Important Prior Work",
+                    "doi": "10.1234/important",
+                    "arxiv_id": "2301.00001",
+                    "openalex_id": "",
+                    "full_text_status": "manual_required",
+                    "source_type": "manual",
+                    "parse_status": "not_started",
+                    "parse_quality": "unknown",
+                    "evidence_gap": "likely closest prior work, need method section",
+                },
+                {
+                    "paper_id": "p4",
+                    "title": "Available Paper",
+                    "full_text_status": "available",
+                    "source_type": "pdf",
+                    "parse_status": "parsed",
+                    "parse_quality": "high",
+                    "evidence_gap": "",
+                },
+            ]
+        }
+        acq_path = tmp_dir / "acquisition_status.json"
+        acq_path.write_text(json.dumps(acq, indent=2), encoding="utf-8")
+        out_path = tmp_dir / "manual_acquisition_queue.md"
+        r = build_manual_queue(acq_path, out_path)
+        assert r["status"] == "built", f"Test 7: Expected built, got {r['status']}"
+        assert r["queued_count"] == 1, f"Test 7: Expected 1 queued, got {r['queued_count']}"
+        content = out_path.read_text(encoding="utf-8")
+        assert "Important Prior Work" in content, "Test 7: Expected paper title in queue"
+        assert "Available Paper" not in content, "Test 7: Should not include available paper"
+        print("  [PASS] 7. build-manual-queue for manual_required paper")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 7. build-manual-queue: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 8: summarize-run detects counts correctly
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        run_dir = tmp_dir / "summary_run"
+        init_run_skeleton(run_dir, "test", "novelty_check")
+
+        # Add a raw result
+        raw_rec = {
+            "source": "arxiv", "title": "Paper A", "year": 2024,
+            "url": "https://arxiv.org/abs/1234", "evidence_origin": "api_export",
+            "authors": ["Author A"], "abstract": "Test abstract",
+            "arxiv_id": "1234.5678"
+        }
+        with open(run_dir / "raw_results.jsonl", "w", encoding="utf-8") as f:
+            f.write(json.dumps(raw_rec) + "\n")
+
+        # Update acquisition status with papers
+        acq = {
+            "papers": [
+                {"paper_id": "p1", "title": "A", "full_text_status": "available"},
+                {"paper_id": "p2", "title": "B", "full_text_status": "manual_required", "evidence_gap": "need"},
+                {"paper_id": "p3", "title": "C", "full_text_status": "metadata_only", "evidence_gap": "gap"},
+            ]
+        }
+        (run_dir / "acquisition_status.json").write_text(json.dumps(acq, indent=2), encoding="utf-8")
+
+        r = summarize_run(run_dir, json_output=False)
+        assert r["search_plan_present"] is True, "Test 8: plan should be present"
+        assert r["raw_result_count"] == 1, f"Test 8: Expected 1 raw, got {r['raw_result_count']}"
+        assert r["manual_required_count"] == 1, f"Test 8: Expected 1 manual_required, got {r['manual_required_count']}"
+        assert r["full_text_available_count"] == 1, f"Test 8: Expected 1 available, got {r['full_text_available_count']}"
+        assert r["metadata_only_count"] == 1, f"Test 8: Expected 1 metadata_only, got {r['metadata_only_count']}"
+        assert r["status"] == "WARN", f"Test 8: Expected WARN (no candidates), got {r['status']}"
+        print("  [PASS] 8. summarize-run detects counts correctly")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 8. summarize-run: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    print(f"\nSelf-test results: {passed} passed, {failed} failed")
+    return failed == 0
+
+
 # ---- CLI ----
 
 def main():
@@ -699,7 +1283,34 @@ def main():
     t.add_argument("--k", type=int, default=10, help="Number of top candidates to select (default: 10)")
     t.add_argument("--json", action="store_true", help="Output JSON")
 
+    sp = sub.add_parser("validate-search-plan", help="Validate search plan JSON")
+    sp.add_argument("--file", required=True, help="Path to search_plan.yaml (JSON)")
+    sp.add_argument("--json", action="store_true", help="Output JSON")
+
+    ir = sub.add_parser("init-run-skeleton", help="Create empty run skeleton")
+    ir.add_argument("--run-dir", required=True, help="Target run directory")
+    ir.add_argument("--topic", required=True, help="Research topic")
+    ir.add_argument("--intent", required=True, help="Search intent")
+
+    va = sub.add_parser("validate-acquisition-status", help="Validate acquisition_status.json")
+    va.add_argument("--file", required=True, help="Path to acquisition_status.json")
+    va.add_argument("--json", action="store_true", help="Output JSON")
+
+    mq = sub.add_parser("build-manual-queue", help="Build manual acquisition queue")
+    mq.add_argument("--acquisition-status", required=True, help="Path to acquisition_status.json")
+    mq.add_argument("--output", required=True, help="Output path for manual_acquisition_queue.md")
+
+    sr = sub.add_parser("summarize-run", help="Summarize a literature search run")
+    sr.add_argument("--run-dir", required=True, help="Run directory to summarize")
+    sr.add_argument("--json", action="store_true", help="Output JSON")
+
+    parser.add_argument("--self-test", action="store_true", help="Run self-tests")
+
     args = parser.parse_args()
+
+    if args.self_test:
+        ok = _self_test()
+        sys.exit(0 if ok else 1)
 
     if args.command is None:
         parser.print_help()
@@ -715,6 +1326,18 @@ def main():
         validate_candidates(Path(args.file), args.json)
     elif args.command == "build-top-k":
         build_top_k(Path(args.run_dir), args.k, args.json)
+    elif args.command == "validate-search-plan":
+        validate_search_plan(Path(args.file), args.json)
+    elif args.command == "init-run-skeleton":
+        r = init_run_skeleton(Path(args.run_dir), args.topic, args.intent)
+        print(json.dumps(r, indent=2))
+    elif args.command == "validate-acquisition-status":
+        validate_acquisition_status(Path(args.file), args.json)
+    elif args.command == "build-manual-queue":
+        r = build_manual_queue(Path(args.acquisition_status), Path(args.output))
+        print(json.dumps(r, indent=2))
+    elif args.command == "summarize-run":
+        summarize_run(Path(args.run_dir), args.json)
 
 
 if __name__ == "__main__":

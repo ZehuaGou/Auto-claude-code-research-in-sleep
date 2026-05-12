@@ -1,0 +1,150 @@
+# Literature Search & Acquisition Layer — MVP Skeleton
+
+**Date:** 2026-05-13
+**Target Doc:** `docs/TRUSTED_RESEARCH_AUTOMATION_TARGET.md` Section 8
+
+---
+
+## What This Is
+
+A schema-level MVP skeleton for the Literature Search & Acquisition Layer. It provides:
+
+- Search plan validation (no network calls)
+- Run skeleton initialization (empty templates)
+- Acquisition status schema validation
+- Manual acquisition queue building
+- Run summarization (no network calls)
+- Self-tests (8 tests, tempfile-based, no network)
+
+This is **not** a full implementation. It has no real search execution, no PDF download, no PDF parsing, no citation dedup/ranking. It only defines the data contracts and validates them.
+
+---
+
+## Pipeline
+
+```
+search_plan.yaml
+  → validate-search-plan (schema check)
+  → init-run-skeleton (create empty templates)
+  → [future: execute search, populate raw_results.jsonl]
+  → [future: build-candidates, build-top-k]
+  → validate-acquisition-status (schema check)
+  → build-manual-queue (papers needing manual PDF)
+  → summarize-run (status overview)
+```
+
+---
+
+## Commands
+
+### validate-search-plan
+
+Validates a search plan JSON file. Checks required fields, enum values, and structural constraints.
+
+```bash
+python tools/literature_evidence_landing.py validate-search-plan --file search_plan.yaml
+python tools/literature_evidence_landing.py validate-search-plan --file search_plan.yaml --json
+```
+
+Required fields: `topic`, `search_intent`, `must_include`, `sources`, `time_range`, `max_results_per_source`
+
+Valid search intents: `novelty_check`, `background_review`, `methodology_search`, `evidence_gathering`
+
+Valid sources: `arxiv`, `semantic_scholar`, `openalex`, `local_pdf`
+
+### init-run-skeleton
+
+Creates an empty run directory with template files:
+
+```bash
+python tools/literature_evidence_landing.py init-run-skeleton \
+  --run-dir tmp/my_run --topic "hallucination detection" --intent novelty_check
+```
+
+Creates: `search_plan.yaml`, `raw_results.jsonl`, `candidates.jsonl`, `top_k.md`, `acquisition_status.json`, `manual_acquisition_queue.md`
+
+### validate-acquisition-status
+
+Validates `acquisition_status.json` schema. Checks paper entries for required fields, enum values, and evidence_gap consistency.
+
+```bash
+python tools/literature_evidence_landing.py validate-acquisition-status --file acquisition_status.json
+```
+
+Valid full_text_status: `available`, `metadata_only`, `manual_required`, `failed`
+Valid parse_status: `not_started`, `parsing`, `parsed`, `failed`, `not_applicable`
+Valid parse_quality: `high`, `medium`, `low`, `unknown`
+
+Rule: if `full_text_status` is not `available`, `evidence_gap` must be non-empty.
+
+### build-manual-queue
+
+Builds `manual_acquisition_queue.md` from acquisition status. Only includes papers with `manual_required` or `failed` status.
+
+```bash
+python tools/literature_evidence_landing.py build-manual-queue \
+  --acquisition-status acquisition_status.json \
+  --output manual_acquisition_queue.md
+```
+
+### summarize-run
+
+Summarizes a run directory. Reports file presence, record counts, acquisition status breakdown, and overall PASS/WARN/FAIL status.
+
+```bash
+python tools/literature_evidence_landing.py summarize-run --run-dir tmp/my_run
+python tools/literature_evidence_landing.py summarize-run --run-dir tmp/my_run --json
+```
+
+Status logic:
+- FAIL: no search_plan
+- WARN: no raw results, or no candidates, or top_k still template_only
+- PASS: all pipeline stages populated
+
+### --self-test
+
+Runs 8 tempfile-based self-tests covering all new commands.
+
+```bash
+python tools/literature_evidence_landing.py --self-test
+```
+
+---
+
+## Run Directory Structure
+
+```
+tmp/<run_name>/
+  search_plan.yaml           # JSON search plan
+  raw_results.jsonl          # raw search results (JSONL)
+  candidates.jsonl           # deduplicated/ranked candidates (JSONL)
+  top_k.md                   # top-K evidence summary
+  acquisition_status.json    # per-paper acquisition tracking
+  manual_acquisition_queue.md # papers needing manual PDF
+```
+
+---
+
+## What This Does NOT Do
+
+- No real search execution (arXiv API, Semantic Scholar, OpenAlex)
+- No PDF download or parsing
+- No citation dedup or ranking
+- No model calls
+- No network calls
+- No trusted execution integration
+- No evidence quality judgment
+
+---
+
+## Relationship to Trusted Execution
+
+When real search is implemented, the flow will be:
+
+1. `research_workflow.py prepare literature_search` generates search plan
+2. Search agent executes plan, writes raw_results.jsonl
+3. `literature_evidence_landing.py` validates and processes results
+4. `trusted_role_runner.py` executes literature_scout with validated evidence
+5. `validate_model_invocation.py` verifies ledger and call
+
+The MVP skeleton only covers steps 1 and 3 (schema validation). Steps 2, 4, 5 are future work.
