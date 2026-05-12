@@ -5,12 +5,28 @@
 
 stages:
 
+  input_normalization:
+    role: input_normalizer
+    description: 用户输入规范化 — normalize raw user input into structured brief and candidate idea
+    allowed_input_files:
+      - research/current/raw_user_input.md
+    forbidden_context:
+      - old conclusions
+      - previous experiment results
+      - mock results
+      - external_agent_direct
+      - user preference shortcuts
+      - unverified literature conclusions
+      - generator trace
+      - other candidates
+    output_file: research/current/input_normalization.md
+    require_validate: true
+
   research_contract:
     role: contract_reviewer
     description: 研究边界说明 — define what is in-scope, what is forbidden, success/failure criteria
     allowed_input_files:
-      - research/current/brief.md
-      - research/current/candidate_idea.md
+      - research/current/input_normalization.md
     forbidden_context:
       - old conclusions
       - unverified experiment results
@@ -26,10 +42,8 @@ stages:
     role: novelty_checker
     description: 新颖性检查 — verify the idea is genuinely novel before investing in experiments
     allowed_input_files:
-      - research/current/brief.md
-      - research/current/candidate_idea.md
+      - research/current/input_normalization.md
       - research/current/trusted_outputs/research_contract.md
-      - research/current/literature_notes.md
     forbidden_context:
       - old novelty conclusions
       - unverified experiment results
@@ -46,8 +60,7 @@ stages:
     role: experiment_auditor
     description: 实验计划 — design the experiment before writing any code
     allowed_input_files:
-      - research/current/brief.md
-      - research/current/candidate_idea.md
+      - research/current/input_normalization.md
       - research/current/trusted_outputs/research_contract.md
       - research/current/trusted_outputs/novelty_check.md
     forbidden_context:

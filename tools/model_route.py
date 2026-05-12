@@ -55,6 +55,7 @@ ALL_ROLES = frozenset({
     "claims_drafter",
     "log_summarizer",
     "paper_claim_auditor",
+    "input_normalizer",
 })
 
 # Codex-priority critical roles
