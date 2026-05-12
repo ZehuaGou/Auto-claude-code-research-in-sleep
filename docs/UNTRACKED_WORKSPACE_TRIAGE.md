@@ -25,8 +25,8 @@ This document records untracked files in the current Git working tree that may h
 | `probes/*.py` | Model probing scripts (`layer_sweep.py`, `ollama_diagnostic.py`, etc.). Review each before adding to the trusted workflow. |
 | `probes/trajectory/` | Possible source directory. Inspect contents before committing. |
 | `skills/ollama-model-download/` | Possible skill for downloading models via Ollama. Review `allowed-tools` and safety boundaries before committing. |
-| `skills/pdf-reader/` | Possible skill for reading PDF files. Review tool usage and copyright-safe behavior before committing. |
-| `tools/pdf_read.py` | Possible PDF extraction utility script. Review dependencies and copyright-safe extraction approach before committing. |
+| `skills/pdf-reader/` | Reviewed: allowed-tools narrowed, copyright/trusted workflow boundaries added; **moved to reviewed_for_commit**. |
+| `tools/pdf_read.py` | Reviewed: local-only PDF text extraction, no network/model/file-write; **moved to reviewed_for_commit**. |
 
 ---
 
@@ -65,8 +65,18 @@ Suggested order for future review sessions:
 
 ---
 
+## reviewed_for_commit
+
+| File/Directory | Review Result |
+|----------------|---------------|
+| `tools/pdf_read.py` | Reviewed 2026-05-12. Local-only PDF text extraction (pdftotext/PyPDF2). No network, no model calls, no file write. Committed with copyright safety notice in docstring. |
+| `skills/pdf-reader/` | Reviewed 2026-05-12. `allowed-tools` narrowed to `Bash(python tools/pdf_read.py:*), Read, Grep, Glob`. Safety Rules and Trusted Workflow Boundary sections added. |
+
+---
+
 ## Change Log
 
 | Date | Action |
 |------|--------|
 | 2026-05-12 | Document created; records current untracked items from `git status --short`. |
+| 2026-05-12 | PDF reader reviewed and accepted for commit: `tools/pdf_read.py` and `skills/pdf-reader/` moved to reviewed_for_commit. |
