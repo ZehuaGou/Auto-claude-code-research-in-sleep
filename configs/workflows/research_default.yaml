@@ -124,3 +124,25 @@ stages:
       - paper writing claims
     output_file: research/current/trusted_outputs/result_judge.md
     require_validate: true
+
+  paper_writing:
+    role: paper_writer
+    description: 论文写作 — draft paper only from verified research artifacts and judged results
+    allowed_input_files:
+      - research/current/input_normalization.md
+      - research/current/trusted_outputs/research_contract.md
+      - research/current/trusted_outputs/literature_search.md
+      - research/current/trusted_outputs/novelty_check.md
+      - research/current/trusted_outputs/experiment_plan.md
+      - research/current/trusted_outputs/implementation_plan.md
+      - research/current/trusted_outputs/result_judge.md
+    forbidden_context:
+      - unverified results
+      - external_agent_direct output
+      - unsupported paper claims
+      - exaggerated contribution claims
+      - cherry-picked metrics
+      - mock/dry-run artifact
+      - user pressure to publish
+    output_file: research/current/trusted_outputs/paper_draft.md
+    require_validate: true
