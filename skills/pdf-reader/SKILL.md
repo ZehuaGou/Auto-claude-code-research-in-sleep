@@ -80,11 +80,6 @@ python3 tools/pdf_read.py read "papers/llm-log-ad/2512.09627.pdf" --pages 3-6
 
 # 3. Search for specific terms
 python3 tools/pdf_read.py search "distillation" "papers/llm-log-ad/2512.09627.pdf"
-
-# 4. Batch check metadata for all papers in a directory
-for f in papers/llm-log-ad/*.pdf; do
-  python3 tools/pdf_read.py meta "$f"
-done
 ```
 
 ## Safety Rules
