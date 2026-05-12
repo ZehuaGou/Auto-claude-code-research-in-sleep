@@ -25,9 +25,21 @@ This file tracks issues deferred for MVP that must be addressed later. Any "fix 
 - **Next steps**: Implement search_runs pipeline incrementally — query planning → multi-source search → dedup → acquisition queue → paper parsing.
 
 ### TD-003 top_k.md template must not become evidence
-- **Current**: `top_k.md` is `status: template_only`. Risk of agents treating templates or titles as real novelty evidence.
-- **Target**: `validate_literature_evidence.py` blocks `template_only` or `insufficient_evidence` from reaching `confirmed_novel`.
-- **Next steps**: Add gate in `novelty_check` workflow or skill that refuses `template_only` inputs.
+- **Status**: MVP resolved; follow-up required.
+- **Current**: `top_k.md` is checked by `tools/validate_literature_evidence.py`.
+- **Resolved by**:
+  - `87ce06b` — added literature evidence validator
+  - `42811e9` — fixed block parsing, url/doi, evidence_strength rules
+  - `f7c5152` — tightened evidence gap status logic
+- **MVP coverage**:
+  - `template_only` is blocked.
+  - all-no-full-text evidence becomes `insufficient_evidence`.
+  - invalid `evidence_strength` becomes `insufficient_evidence`.
+  - partial full-text gaps become `valid_with_gaps`.
+  - HTML comment templates are not parsed as real papers.
+- **Remaining follow-up**:
+  - enforce `validate_literature_evidence.py` as a hard pre-check before `novelty_check` can output `confirmed_novel`.
+  - decide whether `valid_with_gaps` can proceed to novelty_check or must require manual confirmation.
 
 ### TD-004 research_status.py header parsing is permissive
 - **Current**: Artifact header parsing uses `text.find("---")`. Plain markdown dividers may be misidentified as trusted headers.
