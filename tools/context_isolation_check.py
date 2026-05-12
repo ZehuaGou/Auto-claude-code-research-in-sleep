@@ -71,7 +71,6 @@ def strip_yaml_frontmatter_blocks(text: str) -> str:
         # Detect start of a file section
         if line.startswith("# File:") or (line == "---" and i == 0):
             # Collect the header line(s) before frontmatter
-            section_start = i
             header_lines = [line]
             i += 1
 
