@@ -5,6 +5,17 @@ argument-hint: [research-direction]
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch, Agent, Skill, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
+## Workflow Relation
+
+This skill orchestrates the full idea discovery pipeline. Internally it routes sub-task roles through:
+
+- `tools/research_workflow.py` — manages stage sequencing and context manifest generation
+- `tools/context_isolation_check.py` — scans inputs for forbidden context at each role call
+- `tools/trusted_role_runner.py` — executes sub-task roles (idea_shortlist_auditor, idea_reviewer, novelty_checker, adversarial_reviewer, final_selector)
+- `tools/validate_model_invocation.py` — verifies each role ledger entry before proceeding
+
+Users invoke via `/idea-discovery "direction"`. The skill orchestrates the full workflow chain above. External agents must not bypass this chain or substitute its components.
+
 # Workflow 1: Idea Discovery Pipeline (Recommended Entry Point)
 
 `/idea-discovery` is the **recommended single-command entry point** for the ARIS research idea discovery pipeline. ARIS supports two usage modes:

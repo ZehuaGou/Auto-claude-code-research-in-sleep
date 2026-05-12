@@ -5,6 +5,17 @@ argument-hint: [CAND_XXX or free-text idea description]
 allowed-tools: WebSearch, WebFetch, Grep, Read, Glob, mcp__codex__codex
 ---
 
+## Workflow Relation
+
+This skill routes through the ARIS workflow stack internally:
+
+- `tools/research_workflow.py` — generates `context_manifest` and `prompt_file` for the `novelty_check` stage
+- `tools/context_isolation_check.py` — scans input for forbidden context before model call
+- `tools/trusted_role_runner.py` — executes the `novelty_checker` role (Codex MCP or API)
+- `tools/validate_model_invocation.py` — verifies ledger entry; `allowed_next_stage=true` required to proceed
+
+Users invoke via `/novelty-check "..."`. The skill orchestrates the full workflow chain above. External agents must not bypass this chain or substitute its components.
+
 # Novelty Check Skill
 
 Check whether a proposed method/idea has already been done in the literature: **$ARGUMENTS**

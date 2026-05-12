@@ -5,6 +5,17 @@ argument-hint: [--all | legacy | experiments]
 allowed-tools: Bash(*), Read, Grep, Glob
 ---
 
+## Workflow Relation
+
+This skill reads workflow state. Internally it uses:
+
+- `.aris/calls/` ledger entries (written by `tools/trusted_role_runner.py`)
+- `tools/validate_model_invocation.py` — to check `allowed_next_stage` status of each stage
+- `tools/research_workflow.py` — the workflow stages it reports on are managed by this controller
+- The skill reports where the workflow is blocked and what ledger evidence exists
+
+Users invoke via `/status`. This skill does not call models or modify workflow state.
+
 # Status
 
 ## Purpose

@@ -3280,6 +3280,37 @@ check("79p. trust rules explain external agent cannot bypass workflow",
       "External Agent" in (ROOT / "docs" / "RESEARCH_WORKFLOW_TRUST_RULES.md").read_text(errors="ignore")
       and "research_workflow.py" in (ROOT / "docs" / "RESEARCH_WORKFLOW_TRUST_RULES.md").read_text(errors="ignore"))
 
+print("\n=== 79q-79w. Native ARIS command as primary entry ===")
+quickstart = (ROOT / "docs" / "RESEARCH_WORKFLOW_QUICKSTART.md").read_text(errors="ignore")
+check("79q. quickstart shows native ARIS commands as primary entry",
+      "/idea-discovery" in quickstart and "/research-contract" in quickstart and "/novelty-check" in quickstart)
+check("79r. quickstart does not put 'python tools/research_workflow.py' as first user entry",
+      quickstart.index("/idea-discovery") < quickstart.index("python tools/research_workflow.py")
+      if "python tools/research_workflow.py" in quickstart else True)
+
+native_skills = [
+    ("skills/idea-discovery/SKILL.md", ["research_workflow", "trusted_role_runner", "validate_model_invocation"]),
+    ("skills/research-contract/SKILL.md", ["research_workflow", "trusted_role_runner", "validate_model_invocation"]),
+    ("skills/novelty-check/SKILL.md", ["research_workflow", "trusted_role_runner", "validate_model_invocation"]),
+    ("skills/experiment-bridge/SKILL.md", ["research_workflow", "trusted_role_runner", "validate_model_invocation"]),
+    ("skills/status/SKILL.md", ["research_workflow", "trusted_role_runner", "validate_model_invocation"]),
+]
+for skill_path, keywords in native_skills:
+    sp = ROOT / skill_path
+    if sp.exists():
+        content = sp.read_text(errors="ignore")
+        # Accept keyword with or without .py suffix
+        present = [kw for kw in keywords if kw in content or f"{kw}.py" in content]
+        missing = [kw for kw in keywords if kw not in content and f"{kw}.py" not in content]
+        check(f"79s. {skill_path} mentions workflow components: {', '.join(keywords)}",
+              len(missing) == 0,
+              f"Missing: {missing}" if missing else "")
+    else:
+        warn(f"79s. {skill_path} does not exist — skipping", "")
+
+check("79t. quickstart explains workflow chain (research_workflow → context_isolation_check → trusted_runner → validate)",
+      all(kw in quickstart for kw in ["research_workflow.py", "context_isolation_check.py", "trusted_role_runner.py", "validate_model_invocation.py"]))
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

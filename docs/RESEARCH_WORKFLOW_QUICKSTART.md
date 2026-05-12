@@ -1,32 +1,54 @@
 # ARIS Research Workflow — 快速上手
 
-## 这套流程的目标
+## 用户主入口：原生 ARIS 命令
 
-ARIS 研究流程通过分层设计，确保每个阶段都由专门的组件负责，防止外部 Agent（External Agent）绕过控制流程直接产出"可信"结论。
+用户使用原生 ARIS 命令，不需要记忆底层脚本。底层自动走 workflow 可信执行链。
 
-| 组件 | 职责 |
-|------|------|
-| **External Agent**（外部 Agent） | 只负责调度，不自己组织 prompt，不选模型，不产出可信结论 |
-| **Workflow Controller**（流程控制器） | 统一管理流程，生成 context manifest 和标准 prompt file |
-| **Context Isolation Check**（上下文内容检查） | 扫描输入文件，拦截 forbidden context 污染 |
-| **Trusted Runner**（可信执行脚本） | 真实调用模型，记录 ledger，保留完整路由元数据 |
-| **Validator**（验证器） | 在 ledger 中核对路由、backend、context 字段，PASS 才放行 |
+| ARIS 命令 | 说明 | 对应 workflow stage |
+|-----------|------|---------------------|
+| `/idea-discovery "方向"` | 完整 idea 发现 pipeline | research_lit → idea_creator → novelty_check |
+| `/research-contract "idea"` | 冻结研究边界和成功/失败标准 | research_contract |
+| `/novelty-check "idea"` | 查新，确认想法未被发表 | novelty_check |
+| `/experiment-bridge "plan"` | 把实验计划变成可运行代码 | experiment_plan → implementation_plan |
+| `/status` | 查看当前 workflow 状态 | 查看 ledger / validate 状态 |
+
+**这些是用户主入口。底层通过 workflow Controller 走 context_isolation_check → trusted_role_runner → validate_model_invocation。**
 
 ---
 
-## 标准使用顺序（四步）
+## 底层执行链（内部机制）
+
+```
+Native ARIS command
+  ↓
+tools/research_workflow.py     ← Workflow Controller，生成 context_manifest 和 prompt_file
+  ↓
+tools/context_isolation_check.py ← 扫描输入，禁止污染内容
+  ↓
+tools/trusted_role_runner.py    ← 真实调用模型（Codex MCP 或 DeepSeek API）
+  ↓
+tools/validate_model_invocation.py ← 验证 PASS 后才进入下一阶段
+```
+
+**用户不需要手动执行上面的脚本。原生命令是入口，workflow 组件是内部实现。**
+
+---
+
+## 调试用底层命令（仅开发/调试用）
+
+以下命令仅供检查配置或手动调试，普通用户不需要使用：
 
 ```bash
-# 第 1 步：查看有哪些阶段
+# 查看有哪些阶段
 python tools/research_workflow.py list-stages
 
-# 第 2 步：查看阶段计划（不写文件）
+# 查看阶段计划（不写文件）
 python tools/research_workflow.py plan research_contract --config configs/workflows/research_default.yaml
 
-# 第 3 步：干跑测试（不写文件，不调模型）
+# 干跑测试（不写文件，不调模型）
 python tools/research_workflow.py run research_contract --config configs/workflows/research_default.yaml --dry-run
 
-# 第 4 步：准备阶段（检查输入 → 生成 manifest → 内容扫描 → 打印命令）
+# 准备阶段（检查输入 → 生成 manifest → 内容扫描 → 打印命令）
 python tools/research_workflow.py prepare research_contract --config configs/workflows/research_default.yaml
 ```
 
@@ -90,8 +112,6 @@ TRUSTED_ROLE_RUNNER COMMAND:
 
 - **context_isolation_check** 是硬规则扫描（hard-rule scanning）。它能拦截 "old conclusion"、"unverified experiment result" 等明显标记，但不能做语义理解。有意规避仍可能漏过。
 
-- **run 真实自动执行** 还没有完全实现。当前标准流程是：`prepare` 生成标准命令，再由外部 Agent 执行该命令，然后手动 `validate_model_invocation`。
-
 - **正式实验代码** 必须等以下四个阶段全部验证通过后才能写：
   1. research_contract（研究边界说明）
   2. novelty_check（新颖性检查）
@@ -105,7 +125,7 @@ TRUSTED_ROLE_RUNNER COMMAND:
 ## 流程图
 
 ```
-External Agent
+Native ARIS command
      │
      ▼
 research_workflow.py prepare <stage>

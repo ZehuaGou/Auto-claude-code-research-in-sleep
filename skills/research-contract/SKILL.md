@@ -5,6 +5,17 @@ argument-hint: [idea-card-or-experiment-plan]
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__codex__codex, mcp__llm-chat__chat
 ---
 
+## Workflow Relation
+
+This skill routes through the ARIS workflow stack internally:
+
+- `tools/research_workflow.py` — generates `context_manifest` and `prompt_file` for the `research_contract` stage
+- `tools/context_isolation_check.py` — scans input for forbidden context before model call
+- `tools/trusted_role_runner.py` — executes the `contract_reviewer` role (Codex MCP or API)
+- `tools/validate_model_invocation.py` — verifies ledger entry; `allowed_next_stage=true` required to proceed
+
+Users invoke via `/research-contract "..."`. The skill internally orchestrates the full workflow chain above. External agents must not bypass this chain or substitute its components.
+
 # Research Contract
 
 ## Purpose

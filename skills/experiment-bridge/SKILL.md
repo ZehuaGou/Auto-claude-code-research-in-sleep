@@ -5,6 +5,19 @@ argument-hint: [experiment-plan-path-or-topic]
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Agent, Skill, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
+## Workflow Relation
+
+This skill routes through the ARIS workflow stack internally:
+
+- `tools/research_workflow.py` — generates `context_manifest` and `prompt_file` for `experiment_plan` and `implementation_plan` stages
+- `tools/context_isolation_check.py` — scans inputs for forbidden context before model calls
+- `tools/trusted_role_runner.py` — executes `experiment_implementer` and `experiment_code_reviewer` roles
+- `tools/validate_model_invocation.py` — verifies ledger entries; `allowed_next_stage=true` required to proceed
+
+**Hard gate**: If `experiment_plan` or `implementation_plan` has not passed `validate_model_invocation.py`, this skill must stop and not write experiment code.
+
+Users invoke via `/experiment-bridge "..."`. External agents must not bypass the workflow chain or substitute its components.
+
 # Workflow 1.5: Experiment Bridge
 
 Implement and deploy experiments from plan: **$ARGUMENTS**
