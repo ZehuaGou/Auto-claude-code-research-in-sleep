@@ -235,10 +235,26 @@ def _normalize_title(title: str) -> str:
     return t.strip()
 
 
-def _make_candidate_id(normalized_title: str, year: str, idx: int = 0) -> str:
-    """Stable hash from normalized_title + year, with index to ensure per-entry uniqueness."""
-    raw = f"{normalized_title}|{year}|{idx}"
-    h = hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()[:12]
+def _canonical_identity(rec: dict, normalized_title: str, year: str) -> str:
+    """Return a stable canonical identity string for dedup."""
+    doi = rec.get("doi", "").strip()
+    arxiv = rec.get("arxiv_id", "").strip()
+    ss = rec.get("semantic_scholar_id", "").strip()
+    oa = rec.get("openalex_id", "").strip()
+    if doi:
+        return f"doi:{doi.lower()}"
+    if arxiv:
+        return f"arxiv:{arxiv}"
+    if ss:
+        return f"semantic_scholar:{ss}"
+    if oa:
+        return f"openalex:{oa}"
+    return f"title_year:{normalized_title}|{year}"
+
+
+def _candidate_id_from_identity(identity: str) -> str:
+    """Stable candidate ID from canonical identity (no raw index)."""
+    h = hashlib.md5(identity.encode(), usedforsecurity=False).hexdigest()[:12]
     return f"cand_{h}"
 
 
@@ -249,11 +265,6 @@ def _build_stable_ids(rec: dict) -> dict:
         "semantic_scholar_id": rec.get("semantic_scholar_id") or "",
         "openalex_id": rec.get("openalex_id") or "",
     }
-
-
-def _is_same_normalized(nt1: str, nt2: str) -> bool:
-    """True if normalized titles are identical."""
-    return nt1 == nt2
 
 
 def _authors_to_list(authors):
@@ -285,72 +296,53 @@ def build_candidates(run_dir: Path, json_output: bool) -> dict:
         print("raw_results.jsonl is empty or does not exist. Nothing to build.", file=sys.stderr)
         sys.exit(1)
 
-    # Compute normalized titles and candidate IDs for all
+    # Compute normalized titles and canonical identities for all
     enriched = []
     for idx, rec in enumerate(records):
         nt = _normalize_title(rec.get("title", ""))
         yr = str(rec.get("year", ""))
-        cid = _make_candidate_id(nt, yr, idx)
+        identity = _canonical_identity(rec, nt, yr)
         stable_ids = _build_stable_ids(rec)
-
-        # Detect duplicates by stable IDs first
-        doi = stable_ids["doi"]
-        arxiv = stable_ids["arxiv_id"]
-        ss = stable_ids["semantic_scholar_id"]
-        oa = stable_ids["openalex_id"]
 
         enriched.append({
             "original": rec,
             "normalized_title": nt,
-            "candidate_id": cid,
             "year": yr,
+            "identity": identity,
+            "canonical_cid": _candidate_id_from_identity(identity),
             "stable_ids": stable_ids,
             "is_duplicate": False,
             "duplicate_of": "",
-            "_doi": doi,
-            "_arxiv": arxiv,
-            "_ss": ss,
-            "_oa": oa,
+            "raw_index": idx,
         })
 
     # Deterministic dedup: later entries marked duplicate of first seen
+    # Priority: doi > arxiv > ss > oa > normalized_title+year
     seen_keys: dict[str, dict] = {}
     for entry in enriched:
-        key = None
-        ref = None
-        # Priority: doi > arxiv > ss > oa > normalized_title+year
-        if entry["_doi"]:
-            key = ("doi", entry["_doi"])
-        elif entry["_arxiv"]:
-            key = ("arxiv", entry["_arxiv"])
-        elif entry["_ss"]:
-            key = ("ss", entry["_ss"])
-        elif entry["_oa"]:
-            key = ("oa", entry["_oa"])
+        identity = entry["identity"]
+        if identity in seen_keys:
+            entry["is_duplicate"] = True
+            entry["duplicate_of"] = seen_keys[identity]["canonical_cid"]
+        else:
+            seen_keys[identity] = entry
 
-        if key is not None:
-            if key in seen_keys:
-                entry["is_duplicate"] = True
-                entry["duplicate_of"] = seen_keys[key]["candidate_id"]
-            else:
-                seen_keys[key] = entry
-
-    # Second pass: normalized_title + year dedup for entries not already deduped by ID
-    # Only check entries where is_duplicate is still False
-    nt_year_seen: dict[str, dict] = {}
+    # Count how many times each canonical_cid is duplicated
+    dup_counter: dict[str, int] = {}
     for entry in enriched:
         if entry["is_duplicate"]:
-            continue
-        nt = entry["normalized_title"]
-        yr = entry["year"]
-        if not nt:
-            continue
-        key = (nt, yr)
-        if key in nt_year_seen:
-            entry["is_duplicate"] = True
-            entry["duplicate_of"] = nt_year_seen[key]["candidate_id"]
+            canonical = entry["duplicate_of"]
+            dup_counter[canonical] = dup_counter.get(canonical, 0) + 1
+
+    # Assign final candidate IDs: canonical = cand_<hash>, dup entries = cand_<hash>_dup1, _dup2, ...
+    dup_suffix_count: dict[str, int] = {}
+    for entry in enriched:
+        if entry["is_duplicate"]:
+            canonical = entry["duplicate_of"]
+            dup_suffix_count[canonical] = dup_suffix_count.get(canonical, 0) + 1
+            entry["candidate_id"] = f"{canonical}_dup{dup_suffix_count[canonical]}"
         else:
-            nt_year_seen[key] = entry
+            entry["candidate_id"] = entry["canonical_cid"]
 
     # Build output records
     output_records = []
