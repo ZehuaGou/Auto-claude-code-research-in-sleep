@@ -95,3 +95,39 @@ raw_user_input.md
 - Do not bypass missing input checks.
 - Do not commit .env.
 - Do not use dry-run/mock outputs as evidence.
+
+---
+
+## Alignment Guard (added 2026-05-13)
+
+### Purpose
+Pre-execution discipline tool that forces every task to map to the target document's five-layer architecture before execution begins.
+
+### Files
+- `tools/alignment_guard.py` — CLI tool (check-task, check-status, --self-test)
+- `docs/ALIGNMENT_GUARD.md` — usage documentation
+- `docs/TASK_ALIGNMENT_TEMPLATE.md` — required task brief template
+
+### Scope
+- Validates task brief structure (13 required sections)
+- Validates target layer enum (8 valid values)
+- Rejects vague task goals
+- Validates git status against allowed/forbidden files
+- Supports deviation documentation for target doc departures
+
+### Target Document Reference
+- `docs/TRUSTED_RESEARCH_AUTOMATION_TARGET.md` (v1.0)
+
+### Deviation Mechanism
+Deviations from the target document must be documented with: target_doc_section, reason, proposed_alternative, risk_of_deviation, risk_if_not_deviating, requires_user_approval.
+
+### Not a Replacement For
+- `context_isolation_check.py` (content contamination detection)
+- `trusted_role_runner.py` (model call execution)
+- `validate_model_invocation.py` (ledger and call verification)
+
+### Verification
+- Self-test: 10/10 passed
+- check-task integration: PASS on valid brief
+- check-status integration: PASS on clean repo
+- Regression: context_isolation_check 6/6, trusted_role_runner all passed, validate_model_invocation all passed
