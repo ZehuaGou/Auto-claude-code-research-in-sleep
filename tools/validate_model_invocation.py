@@ -211,6 +211,7 @@ def validate_role(
     confidence_downgraded = latest.get("confidence_downgraded", True)
     routing_source = latest.get("routing_source", "")
     response_file = latest.get("response_file", "")
+    ledger_output_text = latest.get("output_text", "")
     forbidden_context_checked = latest.get("forbidden_context_checked", False)
     contamination_scan_status = latest.get("contamination_scan_status", "")
     context_manifest = latest.get("context_manifest", None)
@@ -266,22 +267,35 @@ def validate_role(
         reasons.append("pending_external_mcp is not a completed trusted role")
 
     if routing_source == "trusted_role_runner_external_mcp":
-        if not response_file:
-            status = "FAIL"
-            reasons.append("external MCP completion missing response_file")
-        else:
+        if response_file:
             response_path = Path(response_file)
-            if not response_path.exists() or not response_path.is_file():
-                status = "FAIL"
-                reasons.append("external MCP response_file missing")
-            else:
+            if response_path.exists() and response_path.is_file():
                 try:
                     if not response_path.read_text(encoding="utf-8", errors="ignore").strip():
                         status = "FAIL"
                         reasons.append("external MCP response_file empty")
+                    # else: PASS, file is fine
                 except Exception:
                     status = "FAIL"
                     reasons.append("external MCP response_file unreadable")
+            else:
+                # File missing — check ledger output_text
+                if ledger_output_text:
+                    if status == "PASS":
+                        status = "PASS_WITH_WARNINGS"
+                    reasons.append("external MCP response_file missing but ledger output_text retained")
+                else:
+                    status = "FAIL"
+                    reasons.append("external MCP completion missing both response_file and ledger output_text")
+        else:
+            # No response_file recorded at all
+            if ledger_output_text:
+                if status == "PASS":
+                    status = "PASS_WITH_WARNINGS"
+                reasons.append("external MCP response_file not recorded but ledger output_text retained")
+            else:
+                status = "FAIL"
+                reasons.append("external MCP completion missing both response_file and ledger output_text")
 
     if verification_status in (
         "unverified_external_execution",
@@ -754,6 +768,55 @@ def cmd_self_test():
         r = validate_role("contract_reviewer", Path(temp_path), max_age_hours=24)
         test_results["external_mcp_missing_response"] = r
         assert r["status"] == "FAIL", f"Expected FAIL for external_mcp_missing_response, got {r['status']}"
+
+        # Test B: external MCP completed, response_file missing, but ledger output_text exists -> PASS_WITH_WARNINGS
+        entry14b = with_context({
+            "call_id": "call_test_014b",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "contract_reviewer",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "codex",
+            "actual_model": "auto",
+            "codex_thread_id": "thread_external_with_output_text",
+            "verification_status": "verified_routed_call",
+            "allowed_next_stage": True,
+            "confidence_downgraded": False,
+            "status": "completed",
+            "routing_source": "trusted_role_runner_external_mcp",
+            "response_file": str(response_dir / "truly_missing.md"),
+            "output_text": "# Research Contract\n\n## Research Question\n\nTrusted output text retained in ledger.",
+        }, manifest="manifest_contract_reviewer_b.json", checked=True, scan_status="passed", prompt_file="external_prompt_b.md", response_file=str(response_dir / "truly_missing.md"))
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry14b) + "\n")
+        r = validate_role("contract_reviewer", Path(temp_path), max_age_hours=24)
+        test_results["external_mcp_missing_file_with_output_text"] = r
+        assert r["status"] == "PASS_WITH_WARNINGS", f"Expected PASS_WITH_WARNINGS for external_mcp_missing_file_with_output_text, got {r['status']}"
+        assert r["allowed_next_stage"] is True, f"Expected allowed_next_stage=True for external_mcp_missing_file_with_output_text"
+
+        # Test C: external MCP completed, response_file missing, output_text empty -> FAIL
+        entry14c = with_context({
+            "call_id": "call_test_014c",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "role": "contract_reviewer",
+            "implementation_source": "routed_internal_model",
+            "routed_model_used": True,
+            "actual_backend": "codex",
+            "actual_model": "auto",
+            "codex_thread_id": "thread_external_no_output",
+            "verification_status": "verified_routed_call",
+            "allowed_next_stage": True,
+            "confidence_downgraded": False,
+            "status": "completed",
+            "routing_source": "trusted_role_runner_external_mcp",
+            "response_file": str(response_dir / "also_missing.md"),
+            "output_text": "",
+        }, manifest="manifest_contract_reviewer_c.json", checked=True, scan_status="passed", prompt_file="external_prompt_c.md", response_file=str(response_dir / "also_missing.md"))
+        with open(temp_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry14c) + "\n")
+        r = validate_role("contract_reviewer", Path(temp_path), max_age_hours=24)
+        test_results["external_mcp_missing_file_no_output"] = r
+        assert r["status"] == "FAIL", f"Expected FAIL for external_mcp_missing_file_no_output, got {r['status']}"
 
         # Test case 15: API role with codex_thread_id should fail
         entry15 = with_context({

@@ -18,13 +18,13 @@ status: completed
 routing_source: trusted_role_runner_external_mcp
 isolation_mode: context_manifest
 task_id: wf_research_contract_1d56394f
-context_manifest: D:\Code\Python\Auto-claude-code-research-in-sleep\tmp\wf_research_contract_manifest.json
+context_manifest: tmp/wf_research_contract_manifest.json
 allowed_input_files: ["research\\current\\input_normalization.md"]
 forbidden_context: ["old conclusions", "unverified experiment results", "other candidates", "user preference", "generator trace", "external_agent_direct output", "mock/dry-run artifact"]
 forbidden_context_checked: true
 context_hash: db255938a0af398e6acc2896f3bb075bd8eaf32a6a5ffe81c878dfbc2e0e6213
-prompt_file: D:\Code\Python\Auto-claude-code-research-in-sleep\.aris\calls\call_1e0fb69719ec_prompt.md
-response_file: D:/Code/Python/Auto-claude-code-research-in-sleep/tmp/research_contract_codex_response.md
+prompt_file: .aris/calls/call_1e0fb69719ec_prompt.md
+response_file: tmp/research_contract_codex_response.md
 source_boundary: workflow_research_contract_minimal_allowed_inputs_only
 contamination_scan_status: checked
 error_code: 
