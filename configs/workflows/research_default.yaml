@@ -44,6 +44,7 @@ stages:
     allowed_input_files:
       - research/current/input_normalization.md
       - research/current/trusted_outputs/research_contract.md
+      - research/current/literature_notes.md
     forbidden_context:
       - old novelty conclusions
       - unverified experiment results
