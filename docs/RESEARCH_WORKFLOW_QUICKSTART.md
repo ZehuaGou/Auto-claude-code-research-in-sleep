@@ -14,6 +14,8 @@
 
 **这些是用户主入口。底层通过 workflow Controller 走 context_isolation_check → trusted_role_runner → validate_model_invocation。**
 
+**Native skill 文件已被压缩为 thin wrapper，不再包含旧大流程执行逻辑。**
+
 ---
 
 ## 底层执行链（内部机制）
