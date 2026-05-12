@@ -38,8 +38,9 @@ This file tracks issues deferred for MVP that must be addressed later. Any "fix 
   - partial full-text gaps become `valid_with_gaps`.
   - HTML comment templates are not parsed as real papers.
 - **Remaining follow-up**:
-  - enforce `validate_literature_evidence.py` as a hard pre-check before `novelty_check` can output `confirmed_novel`.
-  - decide whether `valid_with_gaps` can proceed to novelty_check or must require manual confirmation.
+  - skill-level gate added: `e279d40` — skill SKILL.md now requires validator before novelty_check
+  - workflow prepare precheck added: `f4de796` — prepare novelty_check blocks on non-valid evidence
+  - valid_with_gaps manual confirmation policy still pending
 
 ### TD-004 research_status.py header parsing is permissive
 - **Current**: Artifact header parsing uses `text.find("---")`. Plain markdown dividers may be misidentified as trusted headers.
