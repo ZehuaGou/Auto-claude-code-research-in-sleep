@@ -4,19 +4,24 @@ This directory holds structured literature evidence for the ARIS trusted researc
 
 ## Structure
 
-- `search_runs/` —保存每次文献搜索证据
-  - `current/` —本次搜索的临时工作目录
-    - `search_plan.yaml` —搜索计划模板
-    - `raw_results.jsonl` —原始搜索结果（未筛选）
-    - `candidates.jsonl` —候选论文（待评估）
-    - `top_k.md` —结构化 top-k evidence（trusted workflow 输入）
-- `papers/` —已解析的论文材料
-- `manual_pdf_drop/` —用户手动补充 PDF 的入口
-- `manual_acquisition_queue.md` —无法自动获取全文的论文队列
-- `cache/` —后续缓存
+- `search_runs/` — evidence from each literature search run
+  - `current/` — working directory for the current search
+    - `search_plan.yaml` — search plan template
+    - `raw_results.jsonl` — raw search results (unfiltered)
+    - `candidates.jsonl` — candidate papers (pending evaluation)
+    - `top_k.md` — structured top-k evidence (trusted workflow input)
+- `papers/` — parsed paper materials
+- `manual_pdf_drop/` — manual PDF drop入口 for user-supplied papers
+- `manual_acquisition_queue.md` — queue for papers that cannot be auto-retrieved
+- `cache/` — subsequent cache
 
 ## Current Status
 
 This is a skeleton only. No real search has been conducted.
 The files in `search_runs/current/` are templates, not evidence.
 
+## Notes
+
+- `top_k.md` with `status: template_only` is not valid novelty evidence.
+- Run `python tools/validate_literature_evidence.py` to check evidence status before use.
+- Literature evidence must flow through `literature_search` stage before reaching `novelty_check`.

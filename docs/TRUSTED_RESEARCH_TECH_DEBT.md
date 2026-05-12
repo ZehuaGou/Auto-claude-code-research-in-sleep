@@ -49,9 +49,8 @@ This file tracks issues deferred for MVP that must be addressed later. Any "fix 
 - **Effect**: Plain markdown section dividers in file body are no longer misidentified as trusted artifact headers.
 
 ### TD-005 Literature docs style cleanup
-- **Current**: `literature/README.md` mixes Chinese and English.
-- **Target**: Unified documentation language and consistent formatting.
-- **Next steps**: Rewrite `literature/README.md` in consistent language.
+- **Status**: Resolved.
+- **Resolved by**: `this commit` — literature/README.md rewritten in unified English.
 
 ### TD-006 Experiment execution bridge not fully trusted yet
 - **Current**: Workflow has `experiment_plan` / `implementation_plan` / `result_judge`, but experiment-bridge, real experiment execution, code review, and result archiving are not yet integrated into the trusted workflow.
