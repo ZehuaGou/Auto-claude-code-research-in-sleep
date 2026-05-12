@@ -29,6 +29,23 @@ It maps to the `literature_search` workflow stage and delegates everything to th
 6. `validate_model_invocation.py --role literature_scout` — PASS means search is verified
 7. If `allowed_next_stage=false`, the skill stops
 
+## Evidence sources
+
+The `literature_search` stage reads two evidence sources:
+
+1. `research/current/literature_notes.md` — temporary manual or external literature notes
+2. `literature/search_runs/current/top_k.md` — structured top-k evidence from the material store
+
+Both are inputs to the workflow. `literature_notes.md` is the legacy temporary store; `top_k.md` is the target structured store. The workflow accepts both during the MVP transition period.
+
+## No crawler / scraper
+
+This skill does **not** run crawlers or scrapers. WebSearch and WebFetch are used only to:
+- Discover candidate paper links and titles
+- Read abstracts or metadata from publicly accessible URLs (arXiv, Semantic Scholar, OpenAlex)
+
+All results must be written to evidence files (`top_k.md`, `literature_notes.md`) before they can be used downstream. Results that are only displayed in chat are **not** evidence.
+
 ## WebSearch / WebFetch usage boundaries
 
 WebSearch and WebFetch are **allowed tools** for this skill, but with strict limits:
@@ -87,3 +104,4 @@ Papers that could not be obtained, especially if they may be closest prior work.
 - All literature evidence must record source URL, title, authors, year, source
 - Evidence that could not be verified must be flagged in Evidence Gaps
 - Do not produce a verdict — novelty_check role does that
+- `literature/search_runs/current/top_k.md` with `status: template_only` is **not** real evidence — it must not be used as novelty evidence until real search results are written

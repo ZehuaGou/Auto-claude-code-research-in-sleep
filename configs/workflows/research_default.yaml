@@ -45,6 +45,7 @@ stages:
       - research/current/input_normalization.md
       - research/current/trusted_outputs/research_contract.md
       - research/current/literature_notes.md
+      - literature/search_runs/current/top_k.md
     forbidden_context:
       - unverified search results as confirmed evidence
       - user preference shortcuts

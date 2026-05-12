@@ -1,0 +1,15 @@
+topic: ""
+search_intent: "novelty_check"
+must_include: []
+exclude: []
+sources:
+  - arxiv
+  - semantic_scholar
+  - openalex
+  - crossref
+  - openreview
+time_range:
+  start_year: null
+  end_year: null
+max_results_per_source: 50
+status: template_only
