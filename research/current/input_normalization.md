@@ -18,7 +18,7 @@ status: completed
 routing_source: trusted_role_runner
 isolation_mode: context_manifest
 task_id: wf_input_normalization_6c567850
-context_manifest: D:\Code\Python\Auto-claude-code-research-in-sleep\tmp\wf_input_normalization_manifest.json
+context_manifest: tmp/wf_input_normalization_manifest.json
 allowed_input_files: ["research\\current\\raw_user_input.md"]
 forbidden_context: ["old conclusions", "previous experiment results", "mock results", "external_agent_direct", "user preference shortcuts", "unverified literature conclusions", "generator trace", "other candidates"]
 forbidden_context_checked: true
