@@ -104,3 +104,23 @@ stages:
       - mock/dry-run artifact
     output_file: research/current/trusted_outputs/implementation_plan.md
     require_validate: true
+
+  result_judge:
+    role: result_judge
+    description: 结果判断 — judge whether experimental results support the research claim
+    allowed_input_files:
+      - research/current/input_normalization.md
+      - research/current/trusted_outputs/research_contract.md
+      - research/current/trusted_outputs/novelty_check.md
+      - research/current/trusted_outputs/experiment_plan.md
+      - research/current/trusted_outputs/implementation_plan.md
+      - research/current/experiment_results.md
+    forbidden_context:
+      - old optimistic summaries
+      - unverified results
+      - cherry-picked metrics
+      - external_agent_direct output
+      - mock/dry-run artifact
+      - paper writing claims
+    output_file: research/current/trusted_outputs/result_judge.md
+    require_validate: true
