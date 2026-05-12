@@ -3270,6 +3270,15 @@ check("79k. shared protocol includes result_judge and paper_writer context rules
       "result_judge" in docs_proto and "paper_writer" in docs_proto and "未验证结果" in docs_proto)
 check("79l. docs keep model routing via trusted_role_runner only",
       "trusted_role_runner.py" in docs_routing and "ROLE_*" in docs_routing and "do not need to modify skill" in docs_routing.lower())
+check("79m. research_workflow.py exists",
+      (ROOT / "tools" / "research_workflow.py").exists())
+check("79n. research_default.yaml workflow config exists",
+      (ROOT / "configs" / "workflows" / "research_default.yaml").exists())
+check("79o. RESEARCH_WORKFLOW_TRUST_RULES.md exists",
+      (ROOT / "docs" / "RESEARCH_WORKFLOW_TRUST_RULES.md").exists())
+check("79p. trust rules explain external agent cannot bypass workflow",
+      "External Agent" in (ROOT / "docs" / "RESEARCH_WORKFLOW_TRUST_RULES.md").read_text(errors="ignore")
+      and "research_workflow.py" in (ROOT / "docs" / "RESEARCH_WORKFLOW_TRUST_RULES.md").read_text(errors="ignore"))
 
 # ---------------------------------------------------------------------------
 # Summary

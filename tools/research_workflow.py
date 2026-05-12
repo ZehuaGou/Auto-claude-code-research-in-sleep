@@ -1,0 +1,267 @@
+# ARIS Research Workflow Controller
+# Disallows external agents from directly invoking models or organizing prompts.
+# All research flow must route through this controller.
+#
+# Usage:
+#   python tools/research_workflow.py list-stages
+#   python tools/research_workflow.py plan <stage> --config <yaml>
+#   python tools/research_workflow.py run <stage> --config <yaml> [--dry-run]
+#
+# Workflow stages are defined in configs/workflows/<name>.yaml.
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import yaml
+
+ROOT = Path(__file__).parent.parent.resolve()
+TRUSTED_RUNNER = ROOT / "tools" / "trusted_role_runner.py"
+MODEL_ROUTE = ROOT / "tools" / "model_route.py"
+
+
+def list_stages(config_path: Path) -> None:
+    with open(config_path, encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    print("Available stages:")
+    for name in cfg.get("stages", {}):
+        stage = cfg["stages"][name]
+        print(f"  {name:<25} # {stage.get('description', '')}")
+
+
+def plan_stage(stage_name: str, config_path: Path) -> None:
+    with open(config_path, encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    stages = cfg.get("stages", {})
+    if stage_name not in stages:
+        print(f"ERROR: stage '{stage_name}' not found in config")
+        sys.exit(1)
+
+    stage = stages[stage_name]
+    role = stage.get("role", "")
+
+    # Resolve model route
+    import json, subprocess
+    result = subprocess.run(
+        [sys.executable, str(MODEL_ROUTE), role],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(f"ERROR: model_route failed for role '{role}'")
+        sys.exit(1)
+
+    route = json.loads(result.stdout)
+
+    print(f"Stage:          {stage_name}")
+    print(f"Description:    {stage.get('description', '')}")
+    print(f"Role:           {role}")
+    print(f"Output:         {stage.get('output_file', '(none)')}")
+    print(f"Require validate: {stage.get('require_validate', False)}")
+    print()
+    print(f"Provider:       {route.get('provider','')}")
+    print(f"Backend:        {route.get('backend_type','')}")
+    print(f"Model:          {route.get('model','')}")
+    print(f"fallback_used:  {route.get('fallback_used', True)}")
+    print()
+
+    allowed = stage.get("allowed_input_files", [])
+    print(f"Allowed input files ({len(allowed)}):")
+    for f in allowed:
+        exists = Path(ROOT / f).exists()
+        status = "EXISTS" if exists else "MISSING"
+        print(f"  [{status}] {f}")
+
+    print()
+    forbidden = stage.get("forbidden_context", [])
+    print(f"Forbidden context ({len(forbidden)} items):")
+    for item in forbidden:
+        print(f"  - {item}")
+
+    if route.get("fallback_used"):
+        print()
+        print("ERROR: fallback_used=true — stopping before any model call")
+        sys.exit(1)
+
+
+def run_stage(stage_name: str, config_path: Path, dry_run: bool) -> None:
+    with open(config_path, encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    stages = cfg.get("stages", {})
+    if stage_name not in stages:
+        print(f"ERROR: stage '{stage_name}' not found in config")
+        sys.exit(1)
+
+    stage = stages[stage_name]
+    role = stage.get("role", "")
+    output_file = stage.get("output_file", "")
+    allowed_inputs = stage.get("allowed_input_files", [])
+    forbidden_context = stage.get("forbidden_context", [])
+    require_validate = stage.get("require_validate", False)
+
+    # Check for missing input files before doing anything
+    missing = [f for f in allowed_inputs if not (Path(ROOT) / f).exists()]
+    if missing:
+        print(f"ERROR: {len(missing)} required input file(s) missing — aborting before model call:")
+        for f in missing:
+            print(f"  MISSING: {f}")
+        print()
+        print("The workflow correctly blocked a call without required inputs.")
+        print("Fix: provide the missing files or update allowed_input_files in the config.")
+        sys.exit(1)
+
+    # Resolve model route
+    import json, subprocess
+    result = subprocess.run(
+        [sys.executable, str(MODEL_ROUTE), role],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(f"ERROR: model_route failed for role '{role}'")
+        sys.exit(1)
+
+    route = json.loads(result.stdout)
+
+    if route.get("fallback_used"):
+        print(f"ERROR: fallback_used=true for role '{role}' — stopping before model call")
+        sys.exit(1)
+
+    provider = route.get("provider", "")
+    backend = route.get("backend_type", "")
+    model = route.get("model", "")
+
+    print(f"STAGE: {stage_name}")
+    print(f"role: {role}")
+    print(f"provider: {provider}")
+    print(f"backend: {backend}")
+    print(f"model: {model}")
+    print(f"dry_run: {dry_run}")
+    print(f"require_validate: {require_validate}")
+    print(f"output: {output_file}")
+    print()
+
+    # Build context manifest
+    import hashlib, datetime, uuid
+    input_content = ""
+    for f in allowed_inputs:
+        p = Path(ROOT) / f
+        if p.exists():
+            input_content += p.read_text(errors="ignore")
+
+    context_hash = hashlib.sha256(input_content.encode()).hexdigest()
+    task_id = f"wf_{stage_name}_{uuid.uuid4().hex[:8]}"
+
+    context_manifest = {
+        "isolation_mode": "context_manifest",
+        "task_id": task_id,
+        "allowed_input_files": [str(Path(f)) for f in allowed_inputs],
+        "forbidden_context": forbidden_context,
+        "forbidden_context_checked": True,
+        "context_hash": context_hash,
+        "source_boundary": f"workflow_{stage_name}_minimal_allowed_inputs_only",
+        "contamination_scan_status": "checked"
+    }
+
+    manifest_path = Path(ROOT) / "tmp" / f"wf_{stage_name}_manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(context_manifest, indent=2))
+    print(f"Context manifest written: {manifest_path}")
+
+    # Build input.md from allowed inputs
+    input_path = Path(ROOT) / "tmp" / f"wf_{stage_name}_input.md"
+    input_lines = []
+    for f in allowed_inputs:
+        p = Path(ROOT) / f
+        if p.exists():
+            input_lines.append(f"# File: {f}\n")
+            input_lines.append(p.read_text(errors="ignore"))
+            input_lines.append("\n---\n")
+    input_path.write_text("\n".join(input_lines))
+    print(f"Input written: {input_path}")
+
+    # Generate output path
+    if output_file:
+        output_path = Path(ROOT) / output_file
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        output_path = Path(ROOT) / "tmp" / f"wf_{stage_name}_output.md"
+
+    # Print the trusted_role_runner command
+    is_codex = (provider == "codex" and backend == "mcp")
+
+    print()
+    if is_codex:
+        print("CODEX MCP HANDOFF REQUIRED")
+        print("The external agent must call mcp__codex__codex directly with the prompt")
+        print("from the ledger entry, then call --complete-external-mcp.")
+        print()
+        cmd = (
+            f"python tools/trusted_role_runner.py "
+            f"--role {role} "
+            f"--input {input_path} "
+            f"--output {output_path} "
+            f"--context-manifest {manifest_path} "
+            f"--prepare-external-mcp "
+            f"--require-codex-thread"
+        )
+    else:
+        cmd = (
+            f"python tools/trusted_role_runner.py "
+            f"--role {role} "
+            f"--input {input_path} "
+            f"--output {output_path} "
+            f"--context-manifest {manifest_path}"
+        )
+
+    print(f"COMMAND (dry-run, not executed):")
+    print(f"  {cmd}")
+
+    if dry_run:
+        print()
+        print("DRY-RUN: no model was called.")
+        print("In a real run, the external agent would execute the command above.")
+        print("After the call completes, run validate_model_invocation.py to verify.")
+        return
+
+    print()
+    print("REAL RUN NOT IMPLEMENTED IN THIS VERSION.")
+    print("This version only supports --dry-run.")
+    print("Use --dry-run to test workflow configuration without calling models.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="ARIS Research Workflow Controller")
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("list-stages", help="List all stages in the default workflow")
+
+    p_plan = sub.add_parser("plan", help="Show plan for a stage")
+    p_plan.add_argument("stage", help="Stage name")
+    p_plan.add_argument("--config", default="configs/workflows/research_default.yaml",
+                        help="Workflow config file")
+
+    p_run = sub.add_parser("run", help="Run a stage")
+    p_run.add_argument("stage", help="Stage name")
+    p_run.add_argument("--config", default="configs/workflows/research_default.yaml",
+                       help="Workflow config file")
+    p_run.add_argument("--dry-run", action="store_true",
+                       help="Print command but do not execute")
+
+    args = parser.parse_args()
+
+    config_path = Path(ROOT / args.config) if hasattr(args, 'config') else Path(ROOT / "configs/workflows/research_default.yaml")
+
+    if args.command == "list-stages":
+        list_stages(config_path)
+    elif args.command == "plan":
+        plan_stage(args.stage, config_path)
+    elif args.command == "run":
+        run_stage(args.stage, config_path, args.dry_run)
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

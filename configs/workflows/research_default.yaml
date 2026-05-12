@@ -1,0 +1,75 @@
+# ARIS Research Default Workflow
+# Defines the canonical sequence of research stages.
+# External agents MUST route through tools/research_workflow.py.
+# Do not manually invoke roles outside of this workflow.
+
+stages:
+
+  research_contract:
+    role: contract_reviewer
+    description: 研究边界说明 — define what is in-scope, what is forbidden, success/failure criteria
+    allowed_input_files:
+      - research/current/brief.md
+      - research/current/candidate_idea.md
+    forbidden_context:
+      - old conclusions
+      - unverified experiment results
+      - other candidates
+      - user preference
+      - generator trace
+      - external_agent_direct output
+      - mock/dry-run artifact
+    output_file: research/current/trusted_outputs/research_contract.md
+    require_validate: true
+
+  novelty_check:
+    role: novelty_checker
+    description: 新颖性检查 — verify the idea is genuinely novel before investing in experiments
+    allowed_input_files:
+      - research/current/brief.md
+      - research/current/candidate_idea.md
+      - research/current/trusted_outputs/research_contract.md
+      - research/current/literature_notes.md
+    forbidden_context:
+      - old novelty conclusions
+      - unverified experiment results
+      - other candidates
+      - user preference
+      - generator trace
+      - previous optimistic summaries
+      - external_agent_direct output
+      - mock/dry-run artifact
+    output_file: research/current/trusted_outputs/novelty_check.md
+    require_validate: true
+
+  experiment_plan:
+    role: experiment_auditor
+    description: 实验计划 — design the experiment before writing any code
+    allowed_input_files:
+      - research/current/brief.md
+      - research/current/candidate_idea.md
+      - research/current/trusted_outputs/research_contract.md
+      - research/current/trusted_outputs/novelty_check.md
+    forbidden_context:
+      - unverified results
+      - old optimistic summaries
+      - implementation preference from external agent
+      - mock/dry-run artifact
+    output_file: research/current/trusted_outputs/experiment_plan.md
+    require_validate: true
+
+  implementation_plan:
+    role: experiment_implementer
+    description: 实现计划 — plan the code implementation after contract + novelty + experiment_plan are verified
+    allowed_input_files:
+      - research/current/trusted_outputs/research_contract.md
+      - research/current/trusted_outputs/novelty_check.md
+      - research/current/trusted_outputs/experiment_plan.md
+    forbidden_context:
+      - unverified results
+      - old failure narratives
+      - unrelated experiments
+      - external_agent_direct output
+      - mock/dry-run artifact
+    output_file: research/current/trusted_outputs/implementation_plan.md
+    require_validate: true
