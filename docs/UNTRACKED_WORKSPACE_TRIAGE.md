@@ -20,7 +20,7 @@ This document records untracked files in the current Git working tree that may h
 |---------------|--------|
 | `detection/` | Possible anomaly detection source code (PatchTST, contrastive models, training pipelines). Review scope, dependencies, and whether generated artifacts (`__pycache__/`, `.pt` files) are properly excluded before any commit. |
 | `experiments/` | Possible experiment scripts. Do NOT commit `results/`, `data/`, or any runtime outputs — these are covered by `.gitignore`. |
-| `mcp-servers/codex-shim/` | Possible Codex MCP server shim. Review security assumptions and whether it is actively used. |
+| `mcp-servers/codex-shim/` | **Moved to should_not_commit** — see that section. |
 | `paper/` | Possible LaTeX paper source tree. Generated PDFs (`main.pdf`) and build artifacts (`*.aux`, `*.log`, etc.) must never be committed. |
 | `probes/*.py` | Model probing scripts (`layer_sweep.py`, `ollama_diagnostic.py`, etc.). Review each before adding to the trusted workflow. |
 | `probes/trajectory/` | Possible source directory. Inspect contents before committing. |
@@ -38,12 +38,21 @@ This document records untracked files in the current Git working tree that may h
 
 ---
 
+## should_not_commit
+
+| File/Directory | Reason |
+|----------------|--------|
+| `mcp-servers/codex-shim/` | Reviewed 2026-05-12. This local MCP shim mimics Codex tools but bypasses `trusted_role_runner.py`, `validate_model_invocation.py`, ledger recording, and `verification_status`. It can create unverified model outputs that appear like Codex results, so it must not be committed or used in the trusted workflow. Also see `.gitignore: mcp-servers/codex-shim/`. |
+
+---
+
 ## Rules
 
 - **Do not commit any untracked directory wholesale.**
 - **Do not use `git add .`** — add files explicitly by name.
 - Before committing any item, inspect its contents and remove runtime / data / build artifacts.
 - Skills must be reviewed for `allowed-tools` and whether they bypass the trusted workflow.
+- Local MCP shims that bypass `trusted_role_runner.py` or lack `verification_status` must not be committed.
 - Experiment code must not bring `results/`, `data/`, or `checkpoints/` into Git.
 - Paper files must not include generated PDFs or LaTeX build outputs.
 - Any sensitive or credential-like content must be excluded.
@@ -79,4 +88,5 @@ Suggested order for future review sessions:
 | Date | Action |
 |------|--------|
 | 2026-05-12 | Document created; records current untracked items from `git status --short`. |
+| 2026-05-12 | `mcp-servers/codex-shim/` reviewed and marked should_not_commit; ignored to prevent accidental commit. |
 | 2026-05-12 | PDF reader reviewed and accepted for commit: `tools/pdf_read.py` and `skills/pdf-reader/` moved to reviewed_for_commit. |

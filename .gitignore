@@ -199,6 +199,9 @@ paper/*.synctex.gz
 .codex/
 CLAUDE.md
 
+# === Unsafe local MCP shims ===
+mcp-servers/codex-shim/
+
 # === Local skill lock ===
 skills-lock.json
 
