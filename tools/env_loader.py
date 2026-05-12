@@ -382,6 +382,7 @@ def _resolve_legacy_role(role: str, vars: Dict[str, str]) -> Optional[Dict[str, 
     Maps old LLM_IDEA_REVIEWER_MODEL=deepseek-v4-pro -> backend_type=openai_compatible_api
     """
     prefix_map = {
+        "input_normalizer": "LLM_INPUT_NORMALIZER",
         "literature_scout": "LLM_LITERATURE_SCOUT",
         "paper_summarizer": "LLM_PAPER_SUMMARIZER",
         "gap_extractor": "LLM_GAP_EXTRACTOR",
