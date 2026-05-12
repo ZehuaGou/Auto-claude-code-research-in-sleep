@@ -20,6 +20,25 @@ This directory holds structured literature evidence for the ARIS trusted researc
 This is a skeleton only. No real search has been conducted.
 The files in `search_runs/current/` are templates, not evidence.
 
+## Evidence Landing
+
+WebSearch and WebFetch results must not stay only in chat. Paper metadata obtained externally must be saved as local JSONL.
+
+Use `tools/literature_evidence_landing.py`:
+
+```bash
+# Append candidate records from a local JSONL export
+python tools/literature_evidence_landing.py append-raw \
+  --input <local_evidence.jsonl> \
+  --run-dir literature/search_runs/current
+
+# Validate raw_results.jsonl
+python tools/literature_evidence_landing.py validate-raw \
+  --file literature/search_runs/current/raw_results.jsonl
+```
+
+`validate-raw` checks format only — it does not confirm that papers have been read in full. `raw_results.jsonl` is not a novelty verdict; it must still flow through candidates → top_k → novelty_check.
+
 ## Notes
 
 - `top_k.md` with `status: template_only` is not valid novelty evidence.

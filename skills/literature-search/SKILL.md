@@ -44,7 +44,23 @@ This skill does **not** run crawlers or scrapers. WebSearch and WebFetch are use
 - Discover candidate paper links and titles
 - Read abstracts or metadata from publicly accessible URLs (arXiv, Semantic Scholar, OpenAlex)
 
-All results must be written to evidence files (`top_k.md`, `literature_notes.md`) before they can be used downstream. Results that are only displayed in chat are **not** evidence.
+All results must be written to evidence files before they can be used downstream. Results that are only displayed in chat are **not** evidence.
+
+WebSearch/WebFetch paper metadata should be saved via the evidence landing tool:
+
+```bash
+python tools/literature_evidence_landing.py append-raw \
+  --input <local_evidence.jsonl> \
+  --run-dir literature/search_runs/current
+```
+
+After appending, validate with:
+```bash
+python tools/literature_evidence_landing.py validate-raw \
+  --file literature/search_runs/current/raw_results.jsonl
+```
+
+Note: `raw_results.jsonl` is not novelty evidence — it must still go through candidates → top_k → novelty_check.
 
 ## WebSearch / WebFetch usage boundaries
 

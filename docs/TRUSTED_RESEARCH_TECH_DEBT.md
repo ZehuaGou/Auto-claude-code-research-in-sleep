@@ -63,9 +63,17 @@ This file tracks issues deferred for MVP that must be addressed later. Any "fix 
 - **Next steps**: After `result_judge` and `paper_draft` stabilize, design `final_paper_auditor` integration.
 
 ### TD-008 WebSearch/WebFetch evidence landing
-- **Current**: WebSearch/WebFetch boundaries are defined in skill docs, but there is no standard evidence landing tool. Results may exist only in chat.
-- **Target**: All WebSearch/WebFetch results saved to `raw_results.jsonl` / `candidates.jsonl` / `top_k.md` and pass through `validate_literature_evidence.py` before downstream use.
-- **Next steps**: Implement evidence landing workflow; add tool to write WebFetch results to `raw_results.jsonl`.
+- **Status**: In progress.
+- **Progress**:
+  - `tools/literature_evidence_landing.py` added in this commit — provides `validate-raw` and `append-raw` for `raw_results.jsonl` schema.
+  - `literature/README.md` updated with evidence landing documentation.
+  - `skills/literature-search/SKILL.md` updated with landing tool usage instructions.
+- **Remaining**:
+  - `raw_results.jsonl` → `candidates.jsonl` pipeline not implemented.
+  - `candidates.jsonl` → `top_k.md` pipeline not implemented.
+  - Optional: WebFetch extraction helper to parse abstract/metadata from fetched HTML.
+  - Dedup and ranking not implemented yet.
+  - `manual_acquisition_queue.md` processing not automated.
 
 ### TD-009 Legacy AGENTIC status migration
 - **Current**: `/status` switched to trusted workflow; `idea-stage/AGENTIC/` is no longer the default main path.
