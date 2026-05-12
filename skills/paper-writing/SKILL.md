@@ -38,7 +38,7 @@ Each step uses `tools/research_workflow.py prepare paper_writing` followed by `t
 
 ## Hard rules
 
-- If `result_judge` output is `no` or `inconclusive`, the paper must如实 write negative / inconclusive — no packaging as success
+- If `result_judge` output is `no` or `inconclusive`, the paper must honestly report negative or inconclusive results — no packaging as success
 - Do NOT introduce core claims not present in any trusted output
 - Do NOT treat user preference, chat summary, or external agent summary as facts
 - Do NOT cite papers not recorded in `literature_search.md`
@@ -66,7 +66,7 @@ Literature from `literature_search.md` only — no uncited prior work.
 Description drawn from experiment_plan and implementation_plan.
 
 ### Experiments
-Results drawn from `result_judge.md` —如实 reporting, not cherry-picked.
+Results drawn from `result_judge.md` — honest reporting, not cherry-picked.
 
 ### Results
 Objective reporting of metrics checked in result_judge.
