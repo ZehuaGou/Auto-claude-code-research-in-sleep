@@ -54,7 +54,9 @@ external agents from bypassing the controlled workflow.
     or external agent preferences from contaminating the model input.
 
 13. **Contamination scan is required** — `contamination_scan_status` must be set to
-    "checked" before the stage output is trusted.
+    "checked" before the stage output is trusted. Current workflow first version only
+    generates `manifest_only` status; content-level automatic contamination scanning
+    requires `context_isolation_check.py` to be completed in a future phase.
 
 ## Dry-Run and Mock Rules
 
