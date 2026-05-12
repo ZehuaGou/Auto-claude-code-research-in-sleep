@@ -267,49 +267,50 @@ def check_task(task_path: Path) -> Dict[str, Any]:
     }
 
 
-def check_status(task_path: Path) -> Dict[str, Any]:
-    """Validate git status against Allowed/Forbidden Files in task brief."""
-    errors: List[str] = []
-    warnings: List[str] = []
-
-    if not task_path.exists():
-        return {"status": "FAIL", "errors": ["task file not found"], "warnings": []}
-
-    text = _read_task_file(task_path)
-
-    # Parse allowed files from the brief
-    allowed_section = _extract_section_text(text, "Allowed Files")
+def _parse_allowed_files(task_text: str) -> List[str]:
+    """Extract allowed files list from task brief text."""
+    allowed_section = _extract_section_text(task_text, "Allowed Files")
     allowed_files = []
     for line in allowed_section.splitlines():
         line = line.strip().lstrip("-").strip()
         if line and not line.startswith("#"):
             allowed_files.append(line)
+    return allowed_files
 
-    # Run git status
-    try:
-        result = subprocess.run(
-            ["git", "status", "--short"],
-            capture_output=True, text=True, cwd=str(ROOT)
-        )
-        status_output = result.stdout.strip()
-    except Exception as e:
-        return {"status": "FAIL", "errors": [f"git status failed: {e}"], "warnings": []}
 
-    if not status_output:
-        return {"status": "PASS", "errors": [], "warnings": [], "changed_files": []}
-
+def _parse_status_output(status_output: str) -> List[str]:
+    """Parse git status --short output into a list of filenames."""
     changed_files = []
     for line in status_output.splitlines():
-        line = line.strip()
-        if not line:
+        if not line.strip():
             continue
-        # git status --short format: XY filename
-        # Handle rename: XY old -> new
+        # git status --short format: XY filename (X at [0], Y at [1], space at [2], filename from [3:])
+        # Must slice before stripping to preserve index alignment
         if " -> " in line:
             fname = line.split(" -> ", 1)[1].strip()
         else:
-            fname = line[3:].strip() if len(line) > 3 else line
+            fname = line[3:].strip() if len(line) > 3 else line.strip()
         changed_files.append(fname)
+    return changed_files
+
+
+def _check_status_lines(status_output: str, allowed_files: List[str]) -> Dict[str, Any]:
+    """Core status validation logic. Accepts simulated git status output.
+
+    Args:
+        status_output: Raw git status --short output (or simulated equivalent).
+        allowed_files: List of allowed file paths/prefixes from task brief.
+
+    Returns:
+        Dict with status, errors, warnings, changed_files.
+    """
+    errors: List[str] = []
+    warnings: List[str] = []
+
+    if not status_output.strip():
+        return {"status": "PASS", "errors": [], "warnings": [], "changed_files": []}
+
+    changed_files = _parse_status_output(status_output)
 
     for fname in changed_files:
         fname_lower = fname.lower().replace("\\", "/")
@@ -357,6 +358,27 @@ def check_status(task_path: Path) -> Dict[str, Any]:
         "warnings": warnings,
         "changed_files": changed_files,
     }
+
+
+def check_status(task_path: Path) -> Dict[str, Any]:
+    """Validate git status against Allowed/Forbidden Files in task brief."""
+    if not task_path.exists():
+        return {"status": "FAIL", "errors": ["task file not found"], "warnings": []}
+
+    text = _read_task_file(task_path)
+    allowed_files = _parse_allowed_files(text)
+
+    # Run git status
+    try:
+        result = subprocess.run(
+            ["git", "status", "--short"],
+            capture_output=True, text=True, cwd=str(ROOT)
+        )
+        status_output = result.stdout
+    except Exception as e:
+        return {"status": "FAIL", "errors": [f"git status failed: {e}"], "warnings": []}
+
+    return _check_status_lines(status_output, allowed_files)
 
 
 def _self_test() -> bool:
@@ -570,38 +592,68 @@ deviation: none
     finally:
         p.unlink(missing_ok=True)
 
-    # Test 9: check-status with .env → FAIL
+    # Test 9: check-status with simulated .env → FAIL
     try:
-        p = _write_tmp_task(VALID_BRIEF)
-        # Create a temp git-like status output by mocking
-        # Since we can't easily mock git status, we test the logic directly
-        # by checking that .env is always forbidden
-        # We'll test this through the check-status logic
-        # For a real test, we'd need to be in a repo with .env staged
-        # Instead, verify the function exists and the logic is sound
-        r = check_status(p)
-        # In a clean repo, this should PASS (no .env in git status)
-        assert r["status"] == "PASS", f"Test 9: Expected PASS for clean repo, got {r['status']}: {r['errors']}"
-        print("  [PASS] 9. check-status clean repo → PASS")
+        allowed = _parse_allowed_files(VALID_BRIEF)
+        r = _check_status_lines(" M .env\n", allowed)
+        assert r["status"] == "FAIL", f"Test 9: Expected FAIL, got {r['status']}"
+        assert any("forbidden" in e.lower() and ".env" in e for e in r["errors"]), f"Test 9: Expected forbidden .env error, got {r['errors']}"
+        print("  [PASS] 9. check-status simulated .env → FAIL")
         passed += 1
     except Exception as e:
-        print(f"  [FAIL] 9. check-status: {e}")
+        print(f"  [FAIL] 9. check-status simulated .env: {e}")
         failed += 1
-    finally:
-        p.unlink(missing_ok=True)
 
-    # Test 10: check-status with allowed docs/ file only → PASS
+    # Test 10: check-status with simulated allowed docs/ file → PASS
     try:
-        p = _write_tmp_task(VALID_BRIEF)
-        r = check_status(p)
+        allowed = _parse_allowed_files(VALID_BRIEF)
+        r = _check_status_lines(" M docs/ALIGNMENT_GUARD.md\n", allowed)
         assert r["status"] == "PASS", f"Test 10: Expected PASS, got {r['status']}: {r['errors']}"
-        print("  [PASS] 10. check-status only allowed files → PASS")
+        assert "docs/ALIGNMENT_GUARD.md" in r["changed_files"]
+        print("  [PASS] 10. check-status simulated allowed docs/ file → PASS")
         passed += 1
     except Exception as e:
-        print(f"  [FAIL] 10. check-status allowed files: {e}")
+        print(f"  [FAIL] 10. check-status simulated docs/: {e}")
         failed += 1
-    finally:
-        p.unlink(missing_ok=True)
+
+    # Test 11: check-status with simulated research/ file (not allowed) → FAIL
+    try:
+        allowed = _parse_allowed_files(VALID_BRIEF)
+        r = _check_status_lines(" M research/current/input_normalization.md\n", allowed)
+        assert r["status"] == "FAIL", f"Test 11: Expected FAIL, got {r['status']}"
+        assert any("not in allowed scope" in e and "research" in e for e in r["errors"]), f"Test 11: Expected scope error, got {r['errors']}"
+        print("  [PASS] 11. check-status simulated research/ (not allowed) → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 11. check-status simulated research/: {e}")
+        failed += 1
+
+    # Test 12: check-status with simulated literature/ file (not allowed) → FAIL
+    try:
+        allowed = _parse_allowed_files(VALID_BRIEF)
+        r = _check_status_lines(" M literature/search_runs/current/top_k.md\n", allowed)
+        assert r["status"] == "FAIL", f"Test 12: Expected FAIL, got {r['status']}"
+        assert any("not in allowed scope" in e and "literature" in e for e in r["errors"]), f"Test 12: Expected scope error, got {r['errors']}"
+        print("  [PASS] 12. check-status simulated literature/ (not allowed) → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 12. check-status simulated literature/: {e}")
+        failed += 1
+
+    # Test 13: check-status with simulated literature/ file (allowed) → PASS
+    try:
+        brief_lit_allowed = VALID_BRIEF.replace(
+            "- docs/TASK_ALIGNMENT_TEMPLATE.md",
+            "- docs/TASK_ALIGNMENT_TEMPLATE.md\n- literature/"
+        )
+        allowed = _parse_allowed_files(brief_lit_allowed)
+        r = _check_status_lines(" M literature/search_runs/current/top_k.md\n", allowed)
+        assert r["status"] == "PASS", f"Test 13: Expected PASS, got {r['status']}: {r['errors']}"
+        print("  [PASS] 13. check-status simulated literature/ (allowed) → PASS")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 13. check-status simulated literature/ allowed: {e}")
+        failed += 1
 
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
