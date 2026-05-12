@@ -38,13 +38,30 @@ stages:
     output_file: research/current/trusted_outputs/research_contract.md
     require_validate: true
 
+  literature_search:
+    role: literature_scout
+    description: 文献搜索与整理 — gather and normalize literature evidence for novelty checking
+    allowed_input_files:
+      - research/current/input_normalization.md
+      - research/current/trusted_outputs/research_contract.md
+      - research/current/literature_notes.md
+    forbidden_context:
+      - unverified search results as confirmed evidence
+      - user preference shortcuts
+      - external_agent_direct
+      - old novelty conclusions
+      - mock/dry-run artifact
+      - paywalled_content_illegally_obtained
+    output_file: research/current/trusted_outputs/literature_search.md
+    require_validate: true
+
   novelty_check:
     role: novelty_checker
     description: 新颖性检查 — verify the idea is genuinely novel before investing in experiments
     allowed_input_files:
       - research/current/input_normalization.md
       - research/current/trusted_outputs/research_contract.md
-      - research/current/literature_notes.md
+      - research/current/trusted_outputs/literature_search.md
     forbidden_context:
       - old novelty conclusions
       - unverified experiment results
