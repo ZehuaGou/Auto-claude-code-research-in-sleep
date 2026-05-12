@@ -11,7 +11,7 @@ This directory holds structured literature evidence for the ARIS trusted researc
     - `candidates.jsonl` — candidate papers (pending evaluation)
     - `top_k.md` — structured top-k evidence (trusted workflow input)
 - `papers/` — parsed paper materials
-- `manual_pdf_drop/` — manual PDF drop入口 for user-supplied papers
+- `manual_pdf_drop/` — manual PDF drop location for user-supplied papers
 - `manual_acquisition_queue.md` — queue for papers that cannot be auto-retrieved
 - `cache/` — subsequent cache
 

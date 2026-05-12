@@ -50,7 +50,7 @@ This file tracks issues deferred for MVP that must be addressed later. Any "fix 
 
 ### TD-005 Literature docs style cleanup
 - **Status**: Resolved.
-- **Resolved by**: `this commit` — literature/README.md rewritten in unified English.
+- **Resolved by**: `3d136a9 + this commit` — literature/README.md rewritten in unified English; remaining mixed-language text fixed.
 
 ### TD-006 Experiment execution bridge not fully trusted yet
 - **Current**: Workflow has `experiment_plan` / `implementation_plan` / `result_judge`, but experiment-bridge, real experiment execution, code review, and result archiving are not yet integrated into the trusted workflow.
