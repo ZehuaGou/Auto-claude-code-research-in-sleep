@@ -37,69 +37,6 @@ FORBIDDEN_MARKERS = [
 ]
 
 
-def _is_constraint_section_header(line: str) -> bool:
-    """Return True if line is a header that defines boundaries/forbidden context.
-
-    These sections discuss what is NOT allowed and will always contain forbidden
-    markers as part of their scope definition. They should be skipped during
-    contamination scanning.
-    """
-    import re
-    line = line.strip()
-    if not line.startswith("##"):
-        return False
-    # Strip leading ## and whitespace
-    header = line.lstrip("#").strip().lower()
-    constraint_headers = [
-        "out-of-scope",
-        "out of scope",
-        "forbidden",
-        "what is not claimed",
-        "what isn't claimed",
-        "constraints for",
-        "constraints on",
-        "assumptions",
-        "failure",
-        "abandon criteria",
-        "failure / abandon",
-        "not in scope",
-        "not claimed",
-        "disclaimers",
-        "scope boundaries",
-    ]
-    return any(header.startswith(h) or header == h for h in constraint_headers)
-
-
-def strip_constraint_definition_sections(text: str) -> str:
-    """Remove sections that define boundaries, constraints, or forbidden context.
-
-    These sections (e.g. 'Out-of-Scope (Forbidden)', 'What Is NOT Claimed',
-    'Constraints for literature_search') discuss forbidden markers as their
-    subject matter and would always trigger false positives. We skip them
-    during contamination scanning.
-    """
-    lines = text.split("\n")
-    result_lines = []
-    i = 0
-    n = len(lines)
-
-    while i < n:
-        line = lines[i]
-        if _is_constraint_section_header(line):
-            # Skip this section header and all content until next ## header or EOF
-            result_lines.append(line)
-            i += 1
-            while i < n:
-                if lines[i].startswith("## ") or lines[i].startswith("# "):
-                    break
-                i += 1
-        else:
-            result_lines.append(line)
-            i += 1
-
-    return "\n".join(result_lines)
-
-
 def strip_yaml_frontmatter_blocks(text: str) -> str:
     """Remove YAML frontmatter blocks from each file section in a combined input.
 
@@ -117,15 +54,10 @@ def strip_yaml_frontmatter_blocks(text: str) -> str:
     section, so that forbidden-marker scanning only hits the actual body
     content and not the artifact metadata in headers.
 
-    Additionally strips constraint-definition sections (Out-of-Scope, Constraints,
-    What Is NOT Claimed, Assumptions, etc.) which discuss forbidden markers as
-    their subject matter and would always trigger false positives.
-
     Rules:
     - Handles '# File:' section headers with optional leading blank lines.
     - Handles file blocks that start with a frontmatter at the very beginning.
-    - Skips constraint-definition section bodies.
-    - Returns the stripped text with frontmatter and constraint sections removed.
+    - Returns the stripped text with frontmatter lines removed.
     - Does NOT remove markdown dividers ('---') that appear in body content.
     """
     lines = text.split("\n")
@@ -261,7 +193,7 @@ def check(manifest_path: Path, input_path: Path) -> dict:
 
     # 6. Check for forbidden markers in input
     # Strip YAML frontmatter from file sections so metadata doesn't trigger false positives
-    scan_content = strip_constraint_definition_sections(strip_yaml_frontmatter_blocks(input_content))
+    scan_content = strip_yaml_frontmatter_blocks(input_content)
     hits = []
     for marker in FORBIDDEN_MARKERS:
         if marker.lower() in scan_content.lower():
@@ -278,25 +210,18 @@ def check(manifest_path: Path, input_path: Path) -> dict:
     # Extract lines that reference file paths
     unexpected = []
     input_lines = input_content.split("\n")
-
-    def _norm(p: str) -> str:
-        """Normalize path to forward slashes for cross-platform comparison."""
-        return p.replace("\\", "/")
-
     for line in input_lines:
         if line.startswith("# File:") or line.startswith("## File:"):
             # Extract the path after "# File:" (split on ":" once, then strip)
             parts = line.split(":", 1)
             if len(parts) >= 2:
                 ref_path = parts[1].strip().strip("'\"")
-                ref_norm = _norm(ref_path)
-                # Check if this path is in allowed_input_files (normalize both sides)
+                # Check if this path is in allowed_input_files
                 allowed_any = any(
-                    ref_norm == _norm(f) or
-                    (ref_norm.rsplit("/", 1)[-1] and ref_norm.endswith("/" + _norm(f).rsplit("/", 1)[-1]))
+                    ref_path == f or (f.split("/")[-1] and ref_path.endswith("/" + f.split("/")[-1]))
                     for f in allowed_input_files
                 )
-                if not allowed_any and ref_path and not ref_path.startswith("/tmp/") and not ref_path.startswith("tmp/") and not any(ref_norm.startswith(pre.rstrip('/')) for pre in ("research/current", "idea-stage", "novelty-stage", "review-stage")):
+                if not allowed_any and ref_path and not ref_path.startswith("/tmp/") and not ref_path.startswith("tmp/") and not any(ref_path.startswith(pre.rstrip('/')) for pre in ("research/current", "idea-stage", "novelty-stage", "review-stage")):
                     unexpected.append(ref_path)
 
     if unexpected:
