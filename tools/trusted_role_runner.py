@@ -17,18 +17,21 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+import subprocess
 import sys
 import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 TOOLS_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(TOOLS_DIR))
 
 from env_loader import find_project_root
 from model_backends import BackendResult, call_codex_mcp, call_openai_compatible
+
+CONTEXT_ISOLATION_CHECK = TOOLS_DIR / "context_isolation_check.py"
 
 
 def _get_ledger_path() -> Path:
@@ -155,6 +158,56 @@ def _load_context_manifest(context_manifest_path: Optional[str]) -> Dict[str, An
     }
 
 
+def verify_context_manifest_before_call(
+    context_manifest_path: Optional[str],
+    input_spec: str,
+) -> Tuple[bool, str]:
+    """Re-run context_isolation_check.py before any real model call.
+
+    This prevents an agent from bypassing context isolation by manually
+    setting contamination_scan_status=checked in the manifest file.
+
+    Returns (passed, reason).
+    """
+    if not context_manifest_path:
+        # No manifest = non-workflow call; allowed for backward compat.
+        return True, "no manifest provided; skipping re-verification"
+
+    manifest_path = Path(context_manifest_path)
+    if not manifest_path.exists():
+        return False, f"context manifest not found: {manifest_path}"
+
+    # Resolve input_spec to a file path for the check.
+    candidate = Path(input_spec)
+    if candidate.exists() and candidate.is_file():
+        input_path = candidate
+    else:
+        # input_spec is raw text, not a file path.
+        return False, "context manifest verification requires file input, got inline text"
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(CONTEXT_ISOLATION_CHECK),
+             "--manifest", str(manifest_path),
+             "--input", str(input_path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        output = json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
+        return False, f"context isolation check failed to run: {exc}"
+
+    if output.get("status") == "PASS":
+        return True, "context isolation verified by runner"
+
+    reason = output.get("reason", "unknown failure")
+    forbidden_hits = output.get("forbidden_hits", [])
+    if forbidden_hits:
+        reason += f" forbidden_hits={forbidden_hits}"
+    return False, reason
+
+
 def _attach_context_fields(
     entry: Dict[str, Any],
     *,
@@ -164,6 +217,25 @@ def _attach_context_fields(
     context_info = _load_context_manifest(context_manifest_path)
     entry.update(context_info)
     entry["context_hash"] = _sha256_text(context_hash_source)
+
+
+def _apply_context_scan_result(
+    entry: Dict[str, Any],
+    passed: bool,
+    reason: str,
+) -> None:
+    """Update entry fields with the context scan result."""
+    now = datetime.now(timezone.utc).isoformat()
+    entry["context_scan_verified_by_runner"] = True
+    entry["context_scan_verified_at"] = now
+    entry["context_scan_source"] = "trusted_role_runner"
+    if passed:
+        entry["contamination_scan_status"] = "checked"
+        entry["forbidden_context_checked"] = True
+    else:
+        entry["contamination_scan_status"] = "failed"
+        entry["context_scan_fail_reason"] = reason
+        entry["forbidden_context_checked"] = True
 
 
 def _find_latest_call(call_id: str, ledger_path: Optional[Path]) -> Optional[Dict[str, Any]]:
@@ -479,6 +551,24 @@ def _prepare_external_mcp(
             "exit_code": 1,
         }
 
+    # --- Context isolation re-verification (fail closed) ---
+    if context_manifest_path:
+        scan_passed, scan_reason = verify_context_manifest_before_call(
+            context_manifest_path, input_spec,
+        )
+        _apply_context_scan_result(entry, scan_passed, scan_reason)
+        if not scan_passed:
+            _write_ledger_entry(entry, ledger_path)
+            return {
+                "status": "failed",
+                "verification_status": "call_failed",
+                "allowed_next_stage": False,
+                "confidence_downgraded": True,
+                "error": f"context_isolation_failed: {scan_reason}",
+                "error_code": "context_isolation_failed",
+                "exit_code": 1,
+            }
+
     prompt_file = _get_calls_dir(ledger_path) / f"{entry['call_id']}_prompt.md"
     prompt_text_without_hash = _build_codex_prompt(
         role,
@@ -582,6 +672,23 @@ def _complete_external_mcp(
             "confidence_downgraded": True,
             "error": f"call_id {call_id} does not resolve to Codex/MCP",
             "error_code": "call_failed",
+            "exit_code": 1,
+        }
+
+    # Only enforce contamination scan when a context manifest was declared.
+    has_manifest = entry.get("context_manifest", "none") not in ("none", "", None)
+    if has_manifest and entry.get("contamination_scan_status") != "checked":
+        return {
+            "status": "failed",
+            "verification_status": "call_failed",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
+            "error": (
+                f"call_id {call_id} has contamination_scan_status="
+                f"'{entry.get('contamination_scan_status', 'missing')}'; "
+                "refusing to complete unchecked pending call"
+            ),
+            "error_code": "context_isolation_failed",
             "exit_code": 1,
         }
 
@@ -719,6 +826,28 @@ def run_trusted(
         _write_artifact(output_path, finished, finished["output_text"])
         finished["exit_code"] = 1
         return finished
+
+    # --- Context isolation re-verification (fail closed) ---
+    if context_manifest_path:
+        scan_passed, scan_reason = verify_context_manifest_before_call(
+            context_manifest_path, input_spec,
+        )
+        _apply_context_scan_result(entry, scan_passed, scan_reason)
+        if not scan_passed:
+            finished = _finalize_entry(
+                entry,
+                ledger_path=ledger_path,
+                status="failed",
+                output_text="",
+                error=f"context_isolation_failed: {scan_reason}",
+                error_code="context_isolation_failed",
+            )
+            _write_artifact(output_path, finished, json.dumps({
+                "error": "context_isolation_failed",
+                "reason": scan_reason,
+            }, ensure_ascii=False))
+            finished["exit_code"] = 1
+            return finished
 
     primary_result = _forced_primary_result or _call_backend(route_config, input_text)
     if primary_result.ok:
@@ -1128,6 +1257,159 @@ def cmd_self_test() -> bool:
             api_route = mr.resolve_role("idea_generator")
             assert code_route.get("backend_type") == "mcp"
             assert api_route.get("backend_type") == "openai_compatible_api"
+
+            # --- Context isolation tampered-manifest tests ---
+            # Test: manifest says checked but input has forbidden marker
+            tampered_manifest = Path(tmp_dir) / "tampered_manifest.json"
+            tampered_manifest.write_text(json.dumps({
+                "isolation_mode": "context_manifest",
+                "task_id": "tampered_test",
+                "allowed_input_files": ["tmp/tampered_input.md"],
+                "forbidden_context": ["external_agent_direct"],
+                "forbidden_context_checked": True,
+                "contamination_scan_status": "checked",  # tampered!
+            }), encoding="utf-8")
+            tampered_input = Path(tmp_dir) / "tampered_input.md"
+            tampered_input.write_text(
+                "# File: tmp/tampered_input.md\n\nThis contains external_agent_direct marker.\n",
+                encoding="utf-8",
+            )
+
+            # Test 1: run_trusted with tampered manifest blocks model call
+            tampered_result = run_trusted(
+                role="idea_generator",
+                input_spec=str(tampered_input),
+                ledger_path=ledger_path,
+                context_manifest_path=str(tampered_manifest),
+                _resolved_override={
+                    "expected_backend": "openai_compatible_api",
+                    "expected_model": "deepseek-v4-pro",
+                    "expected_provider": "deepseek",
+                    "route_config": {
+                        "backend_type": "openai_compatible_api",
+                        "provider": "deepseek",
+                        "model": "deepseek-v4-pro",
+                        "api_key_env": "DEEPSEEK_API_KEY",
+                        "base_url": "https://api.deepseek.com",
+                    },
+                },
+                _forced_primary_result=BackendResult(
+                    ok=True,
+                    actual_backend="deepseek",
+                    actual_model="deepseek-v4-pro",
+                    output_text="SHOULD_NOT_BE_REACHED",
+                    raw_metadata={"self_test": True},
+                ),
+            )
+            assert tampered_result["verification_status"] != "verified_routed_call", (
+                f"tampered manifest must not pass verification, got {tampered_result['verification_status']}"
+            )
+            assert tampered_result["allowed_next_stage"] is False
+            assert tampered_result["exit_code"] == 1
+            assert tampered_result.get("contamination_scan_status") == "failed"
+            assert "context_isolation_failed" in str(tampered_result.get("error_code", ""))
+
+            # Test 2: run_trusted with clean manifest and clean input passes
+            clean_manifest = Path(tmp_dir) / "clean_manifest.json"
+            clean_manifest.write_text(json.dumps({
+                "isolation_mode": "context_manifest",
+                "task_id": "clean_test",
+                "allowed_input_files": ["tmp/clean_input.md"],
+                "forbidden_context": ["external_agent_direct"],
+                "forbidden_context_checked": True,
+                "contamination_scan_status": "checked",
+            }), encoding="utf-8")
+            clean_input = Path(tmp_dir) / "clean_input.md"
+            clean_input.write_text(
+                "# File: tmp/clean_input.md\n\nClean research content with no forbidden markers.\n",
+                encoding="utf-8",
+            )
+            clean_result = run_trusted(
+                role="idea_generator",
+                input_spec=str(clean_input),
+                ledger_path=ledger_path,
+                context_manifest_path=str(clean_manifest),
+                _resolved_override={
+                    "expected_backend": "openai_compatible_api",
+                    "expected_model": "deepseek-v4-pro",
+                    "expected_provider": "deepseek",
+                    "route_config": {
+                        "backend_type": "openai_compatible_api",
+                        "provider": "deepseek",
+                        "model": "deepseek-v4-pro",
+                        "api_key_env": "DEEPSEEK_API_KEY",
+                        "base_url": "https://api.deepseek.com",
+                    },
+                },
+                _forced_primary_result=BackendResult(
+                    ok=True,
+                    actual_backend="deepseek",
+                    actual_model="deepseek-v4-pro",
+                    output_text="clean result",
+                    raw_metadata={"self_test": True},
+                ),
+            )
+            assert clean_result["verification_status"] == "verified_routed_call"
+            assert clean_result["allowed_next_stage"] is True
+            assert clean_result["exit_code"] == 0
+            assert clean_result.get("contamination_scan_status") == "checked"
+            assert clean_result.get("context_scan_verified_by_runner") is True
+
+            # Test 3: _prepare_external_mcp with tampered manifest blocks handoff
+            tampered_prepare = _prepare_external_mcp(
+                role="novelty_checker",
+                input_spec=str(tampered_input),
+                output_path=artifact_path,
+                ledger_path=ledger_path,
+                require_codex_thread=True,
+                context_manifest_path=str(tampered_manifest),
+                resolved_override={
+                    "expected_backend": "mcp",
+                    "expected_model": "auto",
+                    "expected_provider": "codex",
+                    "route_config": {
+                        "backend_type": "mcp",
+                        "provider": "codex",
+                        "model": "auto",
+                    },
+                },
+            )
+            assert tampered_prepare["status"] == "failed"
+            assert tampered_prepare["allowed_next_stage"] is False
+            assert tampered_prepare["exit_code"] == 1
+            assert "context_isolation_failed" in str(tampered_prepare.get("error_code", ""))
+
+            # Test 4: _complete_external_mcp rejects unchecked pending call
+            # First create a pending entry with contamination_scan_status != checked
+            unchecked_entry = _build_started_entry("novelty_checker", {
+                "expected_backend": "mcp",
+                "expected_model": "auto",
+                "expected_provider": "codex",
+                "route_config": {},
+            })
+            unchecked_entry["status"] = "pending_external_mcp"
+            unchecked_entry["verification_status"] = "pending_external_mcp"
+            unchecked_entry["contamination_scan_status"] = "failed"
+            unchecked_entry["route_expected_backend"] = "mcp"
+            unchecked_entry["context_manifest"] = str(tampered_manifest)  # must be non-none
+            _write_ledger_entry(unchecked_entry, ledger_path)
+
+            unchecked_complete = _complete_external_mcp(
+                call_id=unchecked_entry["call_id"],
+                codex_thread_id="fixture-thread-unchecked",
+                response_file=str(response_path),
+                output_path=artifact_path,
+                ledger_path=ledger_path,
+            )
+            assert unchecked_complete["status"] == "failed"
+            assert unchecked_complete["allowed_next_stage"] is False
+            assert unchecked_complete["exit_code"] == 1
+            assert "context_isolation_failed" in str(unchecked_complete.get("error_code", ""))
+
+            print("  tampered manifest blocked in run_trusted: [OK]")
+            print("  clean manifest passed in run_trusted: [OK]")
+            print("  tampered manifest blocked in prepare_external_mcp: [OK]")
+            print("  unchecked pending call blocked in complete_external_mcp: [OK]")
 
             summary = cmd_summary(ledger_path)
             assert summary["total_calls"] >= 8
