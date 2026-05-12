@@ -104,6 +104,7 @@ ROLE_GAP_EXTRACTOR=DS_PRO_HIGH
 ROLE_PAPER_WRITER=DS_PRO_HIGH
 ROLE_CLAIMS_DRAFTER=DS_PRO_HIGH
 
+ROLE_INPUT_NORMALIZER=DS_FLASH
 ROLE_LITERATURE_SCOUT=DS_FLASH
 ROLE_PAPER_SUMMARIZER=DS_FLASH
 ROLE_LOG_SUMMARIZER=DS_FLASH
@@ -112,7 +113,7 @@ ROLE_BASELINE_REVIEWER=DS_PRO_HIGH
 ```
 
 All available roles:
-- `literature_scout`, `paper_summarizer`, `gap_extractor`
+- `input_normalizer`, `literature_scout`, `paper_summarizer`, `gap_extractor`
 - `idea_generator`, `idea_deduplicator`
 - `idea_reviewer`, `novelty_checker`, `adversarial_reviewer`
 - `final_selector`, `contract_reviewer`
@@ -125,6 +126,7 @@ All available roles:
 
 | Stage | Role | Purpose | Default Backend |
 |-------|------|---------|-----------------|
+| Prepare | input_normalizer | Normalize raw user input into brief + candidate idea | DS_FLASH |
 | Discovery | literature_scout | Find relevant papers | DS_FLASH |
 | Discovery | paper_summarizer | Summarize paper content | DS_FLASH |
 | Discovery | gap_extractor | Extract research gaps | DS_PRO_HIGH |
@@ -366,7 +368,12 @@ LLM_MODEL=deepseek-v4-pro
 LLM_FALLBACK_MODEL=deepseek-v4-flash
 LLM_THINKING=enabled
 LLM_REASONING_EFFORT=high
+
+# Legacy fallback for input_normalizer (low-cost input normalization)
+LLM_INPUT_NORMALIZER_MODEL=deepseek-v4-flash
 ```
+
+**Note:** `input_normalizer` uses `DS_FLASH` (deepseek-v4-flash) by default. It is intended for low-cost input structuring, not critical judgment. Legacy fallback: `LLM_INPUT_NORMALIZER_MODEL`.
 
 ## Verifying Configuration
 

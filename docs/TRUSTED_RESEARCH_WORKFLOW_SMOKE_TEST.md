@@ -159,6 +159,19 @@ python tools/research_workflow.py prepare novelty_check
 
 ---
 
+## Local Env Requirement
+
+`input_normalization` stage requires `ROLE_INPUT_NORMALIZER=DS_FLASH` in the local `.env` before running `prepare`.
+
+- `.env.example` (commit `4f3dd8e`) contains this value.
+- Existing `.env` files created before `4f3dd8e` may not have it.
+- If `python tools/research_workflow.py plan input_normalization` fails with:
+  `ERROR: model_route failed for role 'input_normalizer'`
+  then add `ROLE_INPUT_NORMALIZER=DS_FLASH` to local `.env`.
+- **Do not commit `.env`** — it contains real API keys.
+
+---
+
 ## Safety Rules
 
 - Do NOT commit `tmp/` directories or temporary test output

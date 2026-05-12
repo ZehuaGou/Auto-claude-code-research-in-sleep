@@ -97,6 +97,16 @@ TRUSTED_ROLE_RUNNER COMMAND:
 
 ---
 
+**首次配置：拉取最新代码后，对比本地 `.env` 与 `.env.example`，确保以下路由存在：**
+```bash
+# 确认 .env 中有 input_normalizer 路由（.env.example 已包含，commit 4f3dd8e）
+grep "ROLE_INPUT_NORMALIZER" .env
+# 如果缺失，手动添加：ROLE_INPUT_NORMALIZER=DS_FLASH
+```
+**不要提交 `.env`（包含真实 API key）。**
+
+---
+
 ## 明确禁止
 
 | 禁止项 | 原因 |
