@@ -93,10 +93,11 @@ def parse_paper_blocks(text: str) -> list[dict]:
     return entries
 
 
-def check_entry_fields(entry: dict) -> tuple[list[str], list[str]]:
-    """Return (missing_base, issues)."""
+def check_entry_fields(entry: dict) -> tuple[list[str], list[str], bool]:
+    """Return (missing_base, issues, is_critical)."""
     missing = []
     issues = []
+    is_critical = False
     for field in BASE_REQUIRED_FIELDS:
         if field not in entry or not entry[field]:
             missing.append(field)
@@ -111,15 +112,18 @@ def check_entry_fields(entry: dict) -> tuple[list[str], list[str]]:
     es = entry.get("evidence_strength", "").lower()
     if es and es not in ALLOWED_EVIDENCE_STRENGTH:
         issues.append(f"evidence_strength must be high/medium/low, got '{es}'")
+        is_critical = True
 
     ft = entry.get("full_text_available", "").lower()
     if ft in ("no", "unknown", "") and es == "high":
         issues.append("evidence_strength=high but full_text_available is no/unknown")
+        is_critical = True
 
     if es == "high" and not entry.get("method_or_finding_relevant_to_claim", "").strip():
         issues.append("evidence_strength=high but method_or_finding_relevant_to_claim is empty")
+        is_critical = True
 
-    return missing, issues
+    return missing, issues, is_critical
 
 
 def check_full_text_availability(entry: dict) -> bool:
@@ -168,8 +172,9 @@ def validate_top_k(file_path: Path) -> dict:
     # Check each entry
     all_entries_status = []
     all_issues = []
+    critical_count = 0
     for idx, entry in enumerate(entries):
-        missing, entry_issues = check_entry_fields(entry)
+        missing, entry_issues, is_critical = check_entry_fields(entry)
         has_full_text = check_full_text_availability(entry)
         all_entries_status.append({
             "index": idx,
@@ -180,21 +185,26 @@ def validate_top_k(file_path: Path) -> dict:
             "evidence_strength": entry.get("evidence_strength", ""),
         })
         all_issues.extend(entry_issues)
+        if is_critical:
+            critical_count += 1
 
     # Determine overall status
     any_missing_base = any(e["missing_fields"] for e in all_entries_status)
     all_no_full_text = all(not e["full_text_available"] for e in all_entries_status)
-    any_critical_issues = any("evidence_strength=high" in i for i in all_issues)
+    any_no_full_text = any(not e["full_text_available"] for e in all_entries_status)
 
     if all_no_full_text:
         status = "insufficient_evidence"
         message = "All entries have no full text available."
+    elif critical_count > 0:
+        status = "insufficient_evidence"
+        message = f"{critical_count} critical issue(s) found in entries (see issues list)."
     elif any_missing_base:
         status = "insufficient_evidence"
         message = "Some entries are missing required base fields."
-    elif any_critical_issues:
-        status = "insufficient_evidence"
-        message = "Critical issues found in entries (see issues list)."
+    elif any_no_full_text:
+        status = "valid_with_gaps"
+        message = "Entries have required fields but some entries lack full text."
     elif all_issues:
         status = "valid_with_gaps"
         message = "Entries have required fields but some gaps or minor issues exist."
