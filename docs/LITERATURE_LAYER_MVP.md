@@ -48,9 +48,11 @@ python tools/literature_evidence_landing.py validate-search-plan --file search_p
 
 Required fields: `topic`, `search_intent`, `must_include`, `sources`, `time_range`, `max_results_per_source`
 
-Valid search intents: `novelty_check`, `background_review`, `methodology_search`, `evidence_gathering`
+Valid search intents: `idea_discovery`, `novelty_check`, `experiment_plan`, `related_work`
 
-Valid sources: `arxiv`, `semantic_scholar`, `openalex`, `local_pdf`
+Valid sources: `arxiv`, `semantic_scholar`, `openalex`, `crossref`, `unpaywall`, `openreview`, `conference_site`, `author_homepage`, `github`, `manual`
+
+Note: `search_plan.yaml` currently stores JSON-formatted content. Full YAML parsing is future work. Manual PDFs should go through `manual` source + `manual_acquisition_queue.md` + `literature/manual_pdf_drop/`, not a `local_pdf` source.
 
 ### init-run-skeleton
 
