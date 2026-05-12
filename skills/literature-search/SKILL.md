@@ -49,18 +49,21 @@ All results must be written to evidence files before they can be used downstream
 WebSearch/WebFetch paper metadata should be saved via the evidence landing tool:
 
 ```bash
+# Append raw records to raw_results.jsonl
 python tools/literature_evidence_landing.py append-raw \
   --input <local_evidence.jsonl> \
   --run-dir literature/search_runs/current
-```
 
-After appending, validate with:
-```bash
+# Validate raw_results.jsonl
 python tools/literature_evidence_landing.py validate-raw \
   --file literature/search_runs/current/raw_results.jsonl
+
+# Normalize and dedup into candidates.jsonl
+python tools/literature_evidence_landing.py build-candidates \
+  --run-dir literature/search_runs/current
 ```
 
-Note: `raw_results.jsonl` is not novelty evidence — it must still go through candidates → top_k → novelty_check.
+Note: `raw_results.jsonl` and `candidates.jsonl` are not novelty evidence — they must still go through candidates → top_k → novelty_check.
 
 ## WebSearch / WebFetch usage boundaries
 

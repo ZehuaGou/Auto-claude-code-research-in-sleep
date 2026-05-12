@@ -8,11 +8,15 @@ Does NOT access the network, does NOT call models, does NOT download PDFs.
 Usage:
     python tools/literature_evidence_landing.py validate-raw --file <path> [--json]
     python tools/literature_evidence_landing.py append-raw --input <path> --run-dir <dir>
+    python tools/literature_evidence_landing.py build-candidates --run-dir <dir> [--json]
+    python tools/literature_evidence_landing.py validate-candidates --file <path> [--json]
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -23,6 +27,8 @@ ALLOWED_ORIGINS = frozenset([
     "websearch", "webfetch", "manual", "api_export"
 ])
 
+
+# ---- Shared JSONL helpers ----
 
 def _parse_jsonl(path: Path):
     """Parse a JSONL file, yield each record. Track line-level errors."""
@@ -52,6 +58,14 @@ def _parse_jsonl(path: Path):
     return records, errors
 
 
+def _write_jsonl(path: Path, records: list[dict]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        for rec in records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+# ---- Raw validation ----
+
 def _validate_records(records: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
     """Returns (errors, warnings, record_results)."""
     all_errors = []
@@ -75,12 +89,10 @@ def _validate_records(records: list[dict]) -> tuple[list[dict], list[dict], list
             "has_pdf_url": bool(rec.get("pdf_url", "").strip()),
         }
 
-        # Required field checks
         for field in ("source", "title", "year", "url", "evidence_origin"):
             if not rec.get(field):
                 r_errors.append(f"missing required field: {field}")
 
-        # Enum checks
         source = rec.get("source", "")
         if source and source not in ALLOWED_SOURCES:
             r_errors.append(f"source '{source}' not in allowed list: {sorted(ALLOWED_SOURCES)}")
@@ -89,7 +101,6 @@ def _validate_records(records: list[dict]) -> tuple[list[dict], list[dict], list
         if origin and origin not in ALLOWED_ORIGINS:
             r_errors.append(f"evidence_origin '{origin}' not in allowed list: {sorted(ALLOWED_ORIGINS)}")
 
-        # Warning checks
         if not rec.get("authors"):
             r_warnings.append("missing optional field: authors")
         if not rec.get("retrieved_at"):
@@ -101,7 +112,6 @@ def _validate_records(records: list[dict]) -> tuple[list[dict], list[dict], list
         if not rec.get("doi") and not rec.get("arxiv_id") and not rec.get("semantic_scholar_id") and not rec.get("openalex_id"):
             r_warnings.append("no stable identifier (doi/arxiv_id/semantic_scholar_id/openalex_id)")
 
-        # PDF warning
         if rec.get("pdf_url") and source not in ("arxiv", "openalex", "openreview"):
             r_warnings.append("pdf_url present but source is not open — do not auto-download; confirm manually")
 
@@ -118,13 +128,8 @@ def validate_raw(file_path: Path, json_output: bool) -> dict:
     records, parse_errors = _parse_jsonl(file_path)
 
     if parse_errors:
-        result = {
-            "status": "invalid",
-            "total_records": 0,
-            "valid_records": 0,
-            "errors": parse_errors,
-            "warnings": [],
-        }
+        result = {"status": "invalid", "total_records": 0, "valid_records": 0,
+                  "errors": parse_errors, "warnings": []}
         if json_output:
             print(json.dumps(result, indent=2))
         else:
@@ -132,13 +137,8 @@ def validate_raw(file_path: Path, json_output: bool) -> dict:
         return result
 
     if not records:
-        result = {
-            "status": "empty",
-            "total_records": 0,
-            "valid_records": 0,
-            "errors": [],
-            "warnings": [],
-        }
+        result = {"status": "empty", "total_records": 0, "valid_records": 0,
+                  "errors": [], "warnings": []}
         if json_output:
             print(json.dumps(result, indent=2))
         else:
@@ -147,9 +147,8 @@ def validate_raw(file_path: Path, json_output: bool) -> dict:
 
     errors, warnings, record_results = _validate_records(records)
     valid_count = sum(1 for r in record_results if not r["errors"])
-    has_critical = bool(errors)
 
-    if has_critical:
+    if errors:
         status = "invalid"
     elif warnings:
         status = "valid_with_warnings"
@@ -226,10 +225,269 @@ def append_raw(input_path: Path, run_dir: Path, json_output: bool) -> None:
     print(f"Total records in file now: {len(all_records)}")
 
 
+# ---- Candidate building ----
+
+def _normalize_title(title: str) -> str:
+    """Lowercase, trim, collapse whitespace, remove trailing punctuation."""
+    t = title.lower().strip()
+    t = re.sub(r"\s+", " ", t)
+    t = re.sub(r"[^\w\s]", "", t)
+    return t.strip()
+
+
+def _make_candidate_id(normalized_title: str, year: str, idx: int = 0) -> str:
+    """Stable hash from normalized_title + year, with index to ensure per-entry uniqueness."""
+    raw = f"{normalized_title}|{year}|{idx}"
+    h = hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()[:12]
+    return f"cand_{h}"
+
+
+def _build_stable_ids(rec: dict) -> dict:
+    return {
+        "doi": rec.get("doi") or "",
+        "arxiv_id": rec.get("arxiv_id") or "",
+        "semantic_scholar_id": rec.get("semantic_scholar_id") or "",
+        "openalex_id": rec.get("openalex_id") or "",
+    }
+
+
+def _is_same_normalized(nt1: str, nt2: str) -> bool:
+    """True if normalized titles are identical."""
+    return nt1 == nt2
+
+
+def _authors_to_list(authors):
+    if isinstance(authors, list):
+        return authors
+    if isinstance(authors, str):
+        return [a.strip() for a in authors.split(",") if a.strip()]
+    return []
+
+
+def build_candidates(run_dir: Path, json_output: bool) -> dict:
+    run_dir = Path(run_dir)
+    raw_path = run_dir / "raw_results.jsonl"
+
+    records, parse_errors = _parse_jsonl(raw_path)
+
+    if parse_errors:
+        result = {"status": "invalid", "message": "Failed to read raw_results.jsonl",
+                  "errors": parse_errors}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Status: invalid")
+            for e in parse_errors:
+                print(f"  {e}")
+        return result
+
+    if not records:
+        print("raw_results.jsonl is empty or does not exist. Nothing to build.", file=sys.stderr)
+        sys.exit(1)
+
+    # Compute normalized titles and candidate IDs for all
+    enriched = []
+    for idx, rec in enumerate(records):
+        nt = _normalize_title(rec.get("title", ""))
+        yr = str(rec.get("year", ""))
+        cid = _make_candidate_id(nt, yr, idx)
+        stable_ids = _build_stable_ids(rec)
+
+        # Detect duplicates by stable IDs first
+        doi = stable_ids["doi"]
+        arxiv = stable_ids["arxiv_id"]
+        ss = stable_ids["semantic_scholar_id"]
+        oa = stable_ids["openalex_id"]
+
+        enriched.append({
+            "original": rec,
+            "normalized_title": nt,
+            "candidate_id": cid,
+            "year": yr,
+            "stable_ids": stable_ids,
+            "is_duplicate": False,
+            "duplicate_of": "",
+            "_doi": doi,
+            "_arxiv": arxiv,
+            "_ss": ss,
+            "_oa": oa,
+        })
+
+    # Deterministic dedup: later entries marked duplicate of first seen
+    seen_keys: dict[str, dict] = {}
+    for entry in enriched:
+        key = None
+        ref = None
+        # Priority: doi > arxiv > ss > oa > normalized_title+year
+        if entry["_doi"]:
+            key = ("doi", entry["_doi"])
+        elif entry["_arxiv"]:
+            key = ("arxiv", entry["_arxiv"])
+        elif entry["_ss"]:
+            key = ("ss", entry["_ss"])
+        elif entry["_oa"]:
+            key = ("oa", entry["_oa"])
+
+        if key is not None:
+            if key in seen_keys:
+                entry["is_duplicate"] = True
+                entry["duplicate_of"] = seen_keys[key]["candidate_id"]
+            else:
+                seen_keys[key] = entry
+
+    # Second pass: normalized_title + year dedup for entries not already deduped by ID
+    # Only check entries where is_duplicate is still False
+    nt_year_seen: dict[str, dict] = {}
+    for entry in enriched:
+        if entry["is_duplicate"]:
+            continue
+        nt = entry["normalized_title"]
+        yr = entry["year"]
+        if not nt:
+            continue
+        key = (nt, yr)
+        if key in nt_year_seen:
+            entry["is_duplicate"] = True
+            entry["duplicate_of"] = nt_year_seen[key]["candidate_id"]
+        else:
+            nt_year_seen[key] = entry
+
+    # Build output records
+    output_records = []
+    for entry in enriched:
+        rec = entry["original"]
+        output = {
+            "candidate_id": entry["candidate_id"],
+            "title": rec.get("title", ""),
+            "normalized_title": entry["normalized_title"],
+            "authors": _authors_to_list(rec.get("authors", "")),
+            "year": entry["year"],
+            "source": rec.get("source", ""),
+            "url": rec.get("url", ""),
+            "evidence_origin": rec.get("evidence_origin", ""),
+            "retrieved_at": rec.get("retrieved_at", ""),
+            "duplicate_of": entry["duplicate_of"],
+            "stable_ids": entry["stable_ids"],
+            "abstract": rec.get("abstract", ""),
+            "venue": rec.get("venue", ""),
+            "notes": rec.get("notes", ""),
+        }
+        output_records.append(output)
+
+    # Write candidates.jsonl
+    candidates_path = run_dir / "candidates.jsonl"
+    _write_jsonl(candidates_path, output_records)
+
+    canonical = [r for r in output_records if not r["duplicate_of"]]
+    dup = [r for r in output_records if r["duplicate_of"]]
+    total = len(output_records)
+
+    print(f"Built {total} candidate(s) -> {candidates_path}")
+    print(f"  Canonical: {len(canonical)}, Duplicates: {len(dup)}")
+
+    result = {
+        "status": "built",
+        "total": total,
+        "canonical": len(canonical),
+        "duplicates": len(dup),
+        "output": str(candidates_path),
+    }
+    if json_output:
+        print(json.dumps(result, indent=2))
+    return result
+
+
+def validate_candidates(file_path: Path, json_output: bool) -> dict:
+    records, parse_errors = _parse_jsonl(file_path)
+
+    if parse_errors:
+        result = {"status": "invalid", "total_records": 0, "canonical_records": 0,
+                  "duplicate_records": 0, "errors": parse_errors, "warnings": []}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        else:
+            _print_validate_candidates_human(result)
+        return result
+
+    if not records:
+        result = {"status": "empty", "total_records": 0, "canonical_records": 0,
+                  "duplicate_records": 0, "errors": [], "warnings": []}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        else:
+            _print_validate_candidates_human(result)
+        return result
+
+    all_errors = []
+    all_warnings = []
+    canonical_count = 0
+    dup_count = 0
+
+    for rec in records:
+        r_errors = []
+        r_warnings = []
+
+        for field in ("candidate_id", "title", "year", "source", "url", "evidence_origin"):
+            if not rec.get(field):
+                r_errors.append(f"missing required field: {field}")
+
+        if rec.get("duplicate_of"):
+            dup_count += 1
+        else:
+            canonical_count += 1
+
+        if not rec.get("abstract"):
+            r_warnings.append("missing optional field: abstract")
+        if not rec.get("retrieved_at"):
+            r_warnings.append("missing optional field: retrieved_at")
+        ids = rec.get("stable_ids", {})
+        if not any(ids.get(k) for k in ("doi", "arxiv_id", "semantic_scholar_id", "openalex_id")):
+            r_warnings.append("no stable identifiers in stable_ids")
+
+        all_errors.extend(r_errors)
+        all_warnings.extend(r_warnings)
+
+    if all_errors:
+        status = "invalid"
+    elif all_warnings:
+        status = "valid_with_warnings"
+    else:
+        status = "valid"
+
+    result = {
+        "status": status,
+        "total_records": len(records),
+        "canonical_records": canonical_count,
+        "duplicate_records": dup_count,
+        "errors": all_errors[:20],
+        "warnings": all_warnings[:20],
+    }
+
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        _print_validate_candidates_human(result)
+    return result
+
+
+def _print_validate_candidates_human(result: dict) -> None:
+    print(f"Status: {result['status']}")
+    print(f"Total records: {result['total_records']}")
+    print(f"Canonical: {result['canonical_records']}, Duplicates: {result['duplicate_records']}")
+    if result["errors"]:
+        print(f"Errors ({len(result['errors'])}):")
+        for e in result["errors"][:10]:
+            print(f"  - {e}")
+    if result["warnings"]:
+        print(f"Warnings ({len(result['warnings'])}):")
+        for w in result["warnings"][:10]:
+            print(f"  - {w}")
+
+
+# ---- CLI ----
+
 def main():
-    parser = argparse.ArgumentParser(
-        description="Literature Evidence Landing Tool"
-    )
+    parser = argparse.ArgumentParser(description="Literature Evidence Landing Tool")
     sub = parser.add_subparsers(dest="command")
 
     v = sub.add_parser("validate-raw", help="Validate raw_results.jsonl")
@@ -241,6 +499,14 @@ def main():
     a.add_argument("--run-dir", required=True, help="Target run directory")
     a.add_argument("--json", action="store_true", help="Output JSON result")
 
+    b = sub.add_parser("build-candidates", help="Build candidates.jsonl from raw_results.jsonl")
+    b.add_argument("--run-dir", required=True, help="Run directory (contains raw_results.jsonl)")
+    b.add_argument("--json", action="store_true", help="Output JSON")
+
+    c = sub.add_parser("validate-candidates", help="Validate candidates.jsonl")
+    c.add_argument("--file", required=True, help="Path to candidates.jsonl")
+    c.add_argument("--json", action="store_true", help="Output JSON")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -248,12 +514,13 @@ def main():
         sys.exit(0)
 
     if args.command == "validate-raw":
-        file_path = Path(args.file)
-        validate_raw(file_path, args.json)
+        validate_raw(Path(args.file), args.json)
     elif args.command == "append-raw":
-        input_path = Path(args.input)
-        run_dir = Path(args.run_dir)
-        append_raw(input_path, run_dir, args.json)
+        append_raw(Path(args.input), Path(args.run_dir), args.json)
+    elif args.command == "build-candidates":
+        build_candidates(Path(args.run_dir), args.json)
+    elif args.command == "validate-candidates":
+        validate_candidates(Path(args.file), args.json)
 
 
 if __name__ == "__main__":

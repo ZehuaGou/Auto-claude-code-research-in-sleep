@@ -65,15 +65,14 @@ This file tracks issues deferred for MVP that must be addressed later. Any "fix 
 ### TD-008 WebSearch/WebFetch evidence landing
 - **Status**: In progress.
 - **Progress**:
-  - `tools/literature_evidence_landing.py` added in this commit — provides `validate-raw` and `append-raw` for `raw_results.jsonl` schema.
-  - `literature/README.md` updated with evidence landing documentation.
-  - `skills/literature-search/SKILL.md` updated with landing tool usage instructions.
+  - `tools/literature_evidence_landing.py` provides `validate-raw`, `append-raw`, `build-candidates`, `validate-candidates`.
+  - `literature/README.md` and `skills/literature-search/SKILL.md` updated with tool usage.
+  - `raw_results.jsonl` → `candidates.jsonl` pipeline implemented in this commit (normalize + deterministic dedup).
 - **Remaining**:
-  - `raw_results.jsonl` → `candidates.jsonl` pipeline not implemented.
   - `candidates.jsonl` → `top_k.md` pipeline not implemented.
-  - Optional: WebFetch extraction helper to parse abstract/metadata from fetched HTML.
-  - Dedup and ranking not implemented yet.
+  - Richer ranking/scoring not implemented.
   - `manual_acquisition_queue.md` processing not automated.
+  - Optional: WebFetch extraction helper to parse abstract/metadata from fetched HTML.
 
 ### TD-009 Legacy AGENTIC status migration
 - **Current**: `/status` switched to trusted workflow; `idea-stage/AGENTIC/` is no longer the default main path.

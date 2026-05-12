@@ -27,7 +27,7 @@ WebSearch and WebFetch results must not stay only in chat. Paper metadata obtain
 Use `tools/literature_evidence_landing.py`:
 
 ```bash
-# Append candidate records from a local JSONL export
+# Append raw records from a local JSONL export to raw_results.jsonl
 python tools/literature_evidence_landing.py append-raw \
   --input <local_evidence.jsonl> \
   --run-dir literature/search_runs/current
@@ -35,9 +35,17 @@ python tools/literature_evidence_landing.py append-raw \
 # Validate raw_results.jsonl
 python tools/literature_evidence_landing.py validate-raw \
   --file literature/search_runs/current/raw_results.jsonl
+
+# Build candidates.jsonl from raw_results.jsonl (normalize + dedup)
+python tools/literature_evidence_landing.py build-candidates \
+  --run-dir literature/search_runs/current
+
+# Validate candidates.jsonl
+python tools/literature_evidence_landing.py validate-candidates \
+  --file literature/search_runs/current/candidates.jsonl
 ```
 
-`validate-raw` checks format only — it does not confirm that papers have been read in full. `raw_results.jsonl` is not a novelty verdict; it must still flow through candidates → top_k → novelty_check.
+**Data flow**: `raw_results.jsonl` (raw evidence) → `candidates.jsonl` (normalized, deduped) → `top_k.md` (trusted workflow input). `raw_results.jsonl` and `candidates.jsonl` are not novelty verdicts.
 
 ## Notes
 
