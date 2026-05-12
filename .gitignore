@@ -119,7 +119,17 @@ EXPERIMENT_TRACKER.md
 CLAIMS_FROM_RESULTS.md
 
 # ===== Project-specific generated research files =====
-research/
+research/*
+!research/current/
+research/current/*
+!research/current/raw_user_input.md
+!research/current/input_normalization.md
+!research/current/literature_notes.md
+!research/current/experiment_results.md
+!research/current/trusted_outputs/
+research/current/trusted_outputs/*
+!research/current/trusted_outputs/*.md
+
 docs/research_contract.md
 docs/research_contract.lock.json
 
