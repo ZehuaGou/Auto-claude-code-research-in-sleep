@@ -548,7 +548,7 @@ def build_top_k(run_dir: Path, k: int, json_output: bool) -> dict:
         score, year_int, title_lower = _score_candidate(rec)
         scored.append((score, year_int, title_lower, rec))
 
-    scored.sort(key=lambda x: (-x[0], -x[1], x[3]))
+    scored.sort(key=lambda x: (-x[0], -x[1], x[2]))
     top_k_records = scored[:k]
 
     dup_of_counter: dict[str, int] = {}
@@ -614,10 +614,7 @@ def _write_top_k_md(path: Path, top_k_records: list, duplicates: list,
         else:
             evidence_strength = "low"
 
-        if source in ("arxiv", "openreview") and url:
-            full_text_available = "unknown"
-        else:
-            full_text_available = "unknown"
+        full_text_available = "unknown"
 
         fetched_or_manual = rec.get("evidence_origin", "") or ""
 
