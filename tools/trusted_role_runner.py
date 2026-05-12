@@ -551,6 +551,9 @@ def _prepare_external_mcp(
             "exit_code": 1,
         }
 
+    # Apply manifest fields before scan so scan result overwrites them.
+    entry.update(context_info)
+
     # --- Context isolation re-verification (fail closed) ---
     if context_manifest_path:
         scan_passed, scan_reason = verify_context_manifest_before_call(
@@ -599,7 +602,6 @@ def _prepare_external_mcp(
             "error_code": "call_failed",
             "exit_code": 1,
         }
-    entry.update(context_info)
     entry["context_hash"] = context_hash
     entry["prompt_file"] = str(prompt_file)
     entry["raw_metadata"] = {
@@ -1406,13 +1408,63 @@ def cmd_self_test() -> bool:
             assert unchecked_complete["exit_code"] == 1
             assert "context_isolation_failed" in str(unchecked_complete.get("error_code", ""))
 
+            # Test 5: pending manifest status is overwritten to checked after clean scan
+            pending_manifest = Path(tmp_dir) / "pending_manifest.json"
+            pending_manifest.write_text(json.dumps({
+                "isolation_mode": "context_manifest",
+                "task_id": "pending_test",
+                "allowed_input_files": ["tmp/pending_input.md"],
+                "forbidden_context": ["external_agent_direct"],
+                "forbidden_context_checked": True,
+                "contamination_scan_status": "pending",  # not yet checked
+            }), encoding="utf-8")
+            pending_input = Path(tmp_dir) / "pending_input.md"
+            pending_input.write_text(
+                "# File: tmp/pending_input.md\n\nClean content with no forbidden markers.\n",
+                encoding="utf-8",
+            )
+            pending_prepare = _prepare_external_mcp(
+                role="novelty_checker",
+                input_spec=str(pending_input),
+                output_path=artifact_path,
+                ledger_path=ledger_path,
+                require_codex_thread=True,
+                context_manifest_path=str(pending_manifest),
+                resolved_override={
+                    "expected_backend": "mcp",
+                    "expected_model": "auto",
+                    "expected_provider": "codex",
+                    "route_config": {
+                        "backend_type": "mcp",
+                        "provider": "codex",
+                        "model": "auto",
+                    },
+                },
+            )
+            assert pending_prepare["status"] == "NEEDS_EXTERNAL_MCP_CALL", (
+                f"expected NEEDS_EXTERNAL_MCP_CALL, got {pending_prepare['status']}"
+            )
+            # Find the ledger entry for this call
+            pending_call_id = None
+            for e in reversed(_read_ledger(ledger_path)):
+                if e.get("task_id") == "pending_test":
+                    pending_call_id = e
+                    break
+            assert pending_call_id is not None, "ledger entry for pending_test not found"
+            assert pending_call_id.get("contamination_scan_status") == "checked", (
+                f"expected checked, got {pending_call_id.get('contamination_scan_status')}"
+            )
+            assert pending_call_id.get("context_scan_verified_by_runner") is True
+            assert pending_call_id.get("context_scan_source") == "trusted_role_runner"
+
             print("  tampered manifest blocked in run_trusted: [OK]")
             print("  clean manifest passed in run_trusted: [OK]")
             print("  tampered manifest blocked in prepare_external_mcp: [OK]")
             print("  unchecked pending call blocked in complete_external_mcp: [OK]")
+            print("  pending manifest status overwritten to checked after clean scan: [OK]")
 
             summary = cmd_summary(ledger_path)
-            assert summary["total_calls"] >= 8
+            assert summary["total_calls"] >= 10
 
             print("SELF-TEST RESULTS:")
             print(f"  prepare external MCP: verification_status={prepare_codex['verification_status']} exit={prepare_codex['exit_code']} [OK]")
