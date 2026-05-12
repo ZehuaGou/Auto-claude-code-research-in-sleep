@@ -89,6 +89,9 @@ def plan_stage(stage_name: str, config_path: Path) -> None:
         sys.exit(1)
 
 
+CONTEXT_CHECK = ROOT / "tools" / "context_isolation_check.py"
+
+
 def _load_stage(stage_name: str, config_path: Path):
     """Load stage config, resolve route, check inputs. Returns (stage, route)."""
     with open(config_path, encoding="utf-8") as f:
@@ -177,15 +180,13 @@ def prepare_stage(stage_name: str, config_path: Path) -> None:
         "forbidden_context_checked": True,
         "context_hash": context_hash,
         "source_boundary": f"workflow_{stage_name}_minimal_allowed_inputs_only",
-        "contamination_scan_status": "manifest_only"
-        # Note: content-level contamination scan requires context_isolation_check.py (future)
+        "contamination_scan_status": "pending"
     }
 
     manifest_path = Path(ROOT) / "tmp" / f"wf_{stage_name}_manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(context_manifest, indent=2), encoding="utf-8")
     print(f"Context manifest written: {manifest_path}")
-    print("  (manifest-level isolation only — content scan pending context_isolation_check.py)")
 
     # Build input.md from allowed inputs
     input_path = Path(ROOT) / "tmp" / f"wf_{stage_name}_input.md"
@@ -198,6 +199,33 @@ def prepare_stage(stage_name: str, config_path: Path) -> None:
             input_lines.append("\n---\n")
     input_path.write_text("\n".join(input_lines), encoding="utf-8")
     print(f"Input written: {input_path}")
+
+    # Run context isolation check
+    print()
+    print("Running context isolation check...")
+    check_result = subprocess.run(
+        [sys.executable, str(CONTEXT_CHECK), "--manifest", str(manifest_path), "--input", str(input_path)],
+        capture_output=True, text=True
+    )
+    check_output = json.loads(check_result.stdout)
+
+    if check_output.get("status") == "PASS":
+        context_manifest["contamination_scan_status"] = "checked"
+        manifest_path.write_text(json.dumps(context_manifest, indent=2), encoding="utf-8")
+        print(f"  contamination_scan_status: checked")
+    else:
+        context_manifest["contamination_scan_status"] = "failed"
+        context_manifest["contamination_fail_reason"] = check_output.get("reason", "")
+        manifest_path.write_text(json.dumps(context_manifest, indent=2), encoding="utf-8")
+        print(f"  contamination_scan_status: failed")
+        print(f"  Reason: {check_output.get('reason', '')}")
+        if check_output.get("forbidden_hits"):
+            print(f"  Forbidden hits: {check_output['forbidden_hits']}")
+        print()
+        print("ERROR: Context isolation check FAILED — stopping before model call.")
+        print("The input file contains forbidden context or unexpected file references.")
+        print("Fix the input or update allowed_input_files in the workflow config.")
+        sys.exit(1)
 
     # Generate output path
     if output_file:
