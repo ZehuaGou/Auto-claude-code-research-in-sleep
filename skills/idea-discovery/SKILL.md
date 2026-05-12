@@ -20,17 +20,17 @@ The skill guides a raw user research direction through the trusted workflow chai
 ```
 用户研究方向
   → 写入 research/current/raw_user_input.md
-  → /input-normalization
+  → input_normalization stage
   → research/current/input_normalization.md (validate PASS)
-  → /research-contract
+  → research_contract stage
   → research/current/trusted_outputs/research_contract.md (validate PASS)
-  → /literature-search
+  → literature_search stage
   → research/current/trusted_outputs/literature_search.md (validate PASS)
-  → /novelty-check
+  → novelty_check stage
   → research/current/trusted_outputs/novelty_check.md (validate PASS)
-  → /experiment-plan
+  → experiment_plan stage
   → research/current/trusted_outputs/experiment_plan.md (validate PASS)
-  → /implementation-plan
+  → implementation_plan stage
   → research/current/trusted_outputs/implementation_plan.md (validate PASS)
 ```
 
