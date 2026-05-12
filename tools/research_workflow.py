@@ -92,6 +92,61 @@ def plan_stage(stage_name: str, config_path: Path) -> None:
 CONTEXT_CHECK = ROOT / "tools" / "context_isolation_check.py"
 
 
+VALIDATOR = ROOT / "tools" / "validate_literature_evidence.py"
+
+
+def _run_stage_prechecks(stage_name: str, config_path: Path) -> None:
+    """Run stage-specific prechecks before any model call. Currently only for novelty_check."""
+    if stage_name != "novelty_check":
+        return
+
+    result = subprocess.run(
+        [sys.executable, str(VALIDATOR), "--file", "literature/search_runs/current/top_k.md", "--json"],
+        capture_output=True, text=True
+    )
+
+    status = "unknown"
+    message = ""
+    try:
+        if result.returncode in (0, 1):
+            # Even exit 1 has JSON body
+            data = json.loads(result.stdout)
+            status = data.get("status", "unknown")
+            message = data.get("message", "")
+    except Exception:
+        pass
+
+    if status == "valid":
+        return  # passed
+
+    # Block for any non-valid status
+    print()
+    print("=" * 60)
+    print("LITERATURE EVIDENCE PRECHECK FAILED for novelty_check")
+    print("=" * 60)
+    print(f"status: {status}")
+    print(f"reason: {message}")
+    print()
+    if status == "template_only":
+        print("top_k.md is template_only and cannot support confirmed_novel.")
+        print("Fix: populate literature/search_runs/current/top_k.md with validated evidence,")
+        print("     then rerun: python tools/validate_literature_evidence.py --json")
+    elif status == "insufficient_evidence":
+        print("Evidence is insufficient — confirmed_novel is not permitted.")
+        print("Fix: improve literature evidence quality and coverage,")
+        print("     then rerun: python tools/validate_literature_evidence.py --json")
+    elif status == "valid_with_gaps":
+        print("Evidence is valid_with_gaps.")
+        print("Manual confirmation for valid_with_gaps is not implemented yet.")
+        print("Stopping before novelty_check to avoid false confirmed_novel.")
+    else:
+        print("Evidence validator failed or returned an unknown status.")
+        print("Fix: run manually: python tools/validate_literature_evidence.py --json")
+    print()
+    print("ERROR: LITERATURE EVIDENCE PRECHECK FAILED — stopping before model call.")
+    sys.exit(1)
+
+
 def _load_stage(stage_name: str, config_path: Path):
     """Load stage config, resolve route, check inputs. Returns (stage, route)."""
     with open(config_path, encoding="utf-8") as f:
@@ -149,6 +204,9 @@ def prepare_stage(stage_name: str, config_path: Path) -> None:
     allowed_inputs = stage.get("allowed_input_files", [])
     forbidden_context = stage.get("forbidden_context", [])
     require_validate = stage.get("require_validate", False)
+
+    # Run stage-specific prechecks (e.g. literature evidence precheck for novelty_check)
+    _run_stage_prechecks(stage_name, config_path)
 
     provider = route.get("provider", "")
     backend = route.get("backend_type", "")
