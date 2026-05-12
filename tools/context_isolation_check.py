@@ -37,6 +37,92 @@ FORBIDDEN_MARKERS = [
 ]
 
 
+def strip_yaml_frontmatter_blocks(text: str) -> str:
+    """Remove YAML frontmatter blocks from each file section in a combined input.
+
+    A combined input.md from workflow prepare contains one or more file sections:
+        # File: path/to/file.md
+        ---
+        yaml header
+        ---
+        body
+        ---
+        (next file...)
+
+    This function strips the YAML frontmatter (between the first '---' after
+    '# File:' or at the very start, and its closing '---') from each file
+    section, so that forbidden-marker scanning only hits the actual body
+    content and not the artifact metadata in headers.
+
+    Rules:
+    - Handles '# File:' section headers with optional leading blank lines.
+    - Handles file blocks that start with a frontmatter at the very beginning.
+    - Returns the stripped text with frontmatter lines removed.
+    - Does NOT remove markdown dividers ('---') that appear in body content.
+    """
+    lines = text.split("\n")
+    result_lines = []
+    i = 0
+    n = len(lines)
+
+    while i < n:
+        line = lines[i]
+
+        # Detect start of a file section
+        if line.startswith("# File:") or (line == "---" and i == 0):
+            # Collect the header line(s) before frontmatter
+            section_start = i
+            header_lines = [line]
+            i += 1
+
+            # Skip leading blank lines before potential frontmatter
+            while i < n and lines[i].strip() == "":
+                header_lines.append(lines[i])
+                i += 1
+
+            # Check if next non-blank line opens a frontmatter
+            if i < n and lines[i] == "---":
+                # Consume the opening ---
+                header_lines.append(lines[i])
+                i += 1
+                # Skip until closing ---
+                depth = 1
+                while i < n and depth > 0:
+                    if lines[i] == "---":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                        header_lines.append(lines[i])  # include closing line in header_lines so we skip it
+                    elif lines[i].startswith("---") and len(lines[i]) == 3:
+                        # Could be a nested or consecutive divider
+                        pass
+                    i += 1
+                # i now points to line after closing --- (or end)
+                # header_lines contains everything we want to skip
+                # Don't add frontmatter lines to result
+                result_lines.extend(header_lines[:-1])  # keep everything before closing ---
+                # Skip the closing --- line itself
+                # result_lines stays at header_lines[-1] which was skipped
+                # Now continue to add body lines
+            else:
+                # No frontmatter found; add all collected header_lines
+                result_lines.extend(header_lines)
+                header_lines = []
+
+            # Now add body lines until next '# File:' or end
+            while i < n:
+                if lines[i].startswith("# File:"):
+                    break
+                result_lines.append(lines[i])
+                i += 1
+        else:
+            # Standalone line not part of a '# File:' section
+            result_lines.append(lines[i])
+            i += 1
+
+    return "\n".join(result_lines)
+
+
 def check(manifest_path: Path, input_path: Path) -> dict:
     """Run context isolation check. Returns result dict."""
     result = {
@@ -107,11 +193,13 @@ def check(manifest_path: Path, input_path: Path) -> dict:
         return result
 
     # 6. Check for forbidden markers in input
+    # Strip YAML frontmatter from file sections so metadata doesn't trigger false positives
+    scan_content = strip_yaml_frontmatter_blocks(input_content)
     hits = []
     for marker in FORBIDDEN_MARKERS:
-        if marker.lower() in input_content.lower():
+        if marker.lower() in scan_content.lower():
             # Count occurrences
-            count = input_content.lower().count(marker.lower())
+            count = scan_content.lower().count(marker.lower())
             hits.append(f"'{marker}' ({count}x)")
 
     if hits:
@@ -233,6 +321,58 @@ def self_test() -> bool:
         failed += 1
     os.unlink(ref_manifest)
     os.unlink(ref_input)
+
+    # Test 5: Forbidden context markers in YAML header should NOT cause false positive
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({
+            "allowed_input_files": ["research/current/input_normalization.md"],
+            "forbidden_context": ["old conclusions"]
+        }, f)
+        header_manifest = f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("# File: research/current/input_normalization.md\n")
+        f.write("---\n")
+        f.write("forbidden_context: [\"old conclusions\", \"mock results\", \"external_agent_direct\"]\n")
+        f.write("verification_status: verified_routed_call\n")
+        f.write("---\n")
+        f.write("# Normalized Brief\n")
+        f.write("Clean body.\n")
+        header_input = f.name
+    result = check(Path(header_manifest), Path(header_input))
+    if result["status"] == "PASS" and result["contamination_scan_status"] == "checked":
+        print("  [PASS] 5. YAML header forbidden_context does not cause false positive")
+        passed += 1
+    else:
+        print(f"  [FAIL] 5. Expected PASS (header should not trigger), got: {result}")
+        failed += 1
+    os.unlink(header_manifest)
+    os.unlink(header_input)
+
+    # Test 6: Same YAML header but body contains forbidden marker → should still FAIL
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({
+            "allowed_input_files": ["research/current/input_normalization.md"],
+            "forbidden_context": ["old conclusions"]
+        }, f)
+        body_manifest = f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("# File: research/current/input_normalization.md\n")
+        f.write("---\n")
+        f.write("forbidden_context: [\"old conclusions\", \"mock results\", \"external_agent_direct\"]\n")
+        f.write("verification_status: verified_routed_call\n")
+        f.write("---\n")
+        f.write("# Normalized Brief\n")
+        f.write("Old conclusion found in body.\n")
+        body_input = f.name
+    result = check(Path(body_manifest), Path(body_input))
+    if result["status"] == "FAIL" and result["forbidden_hits"]:
+        print("  [PASS] 6. Forbidden marker in body still detected after header strip")
+        passed += 1
+    else:
+        print(f"  [FAIL] 6. Expected FAIL (body has forbidden marker), got: {result}")
+        failed += 1
+    os.unlink(body_manifest)
+    os.unlink(body_input)
 
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
