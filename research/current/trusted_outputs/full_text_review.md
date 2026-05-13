@@ -6,7 +6,7 @@ route_expected_backend: openai_compatible_api
 route_expected_model: deepseek-v4-pro
 actual_backend: deepseek
 actual_model: deepseek-v4-pro
-ledger_call_id: call_9bd32d3c6231
+ledger_call_id: call_5a83358c4210
 codex_used: False
 codex_thread_id: 
 fallback_used: False
@@ -17,12 +17,12 @@ allowed_next_stage: True
 status: completed
 routing_source: trusted_role_runner
 isolation_mode: context_manifest
-task_id: wf_full_text_review_ef8a91cf
+task_id: wf_full_text_review_2435a459
 context_manifest: D:\Code\Python\Auto-claude-code-research-in-sleep\tmp\wf_full_text_review_manifest.json
-allowed_input_files: ["literature\\full_text_store\\current\\manifest.json", "literature\\full_text_store\\current\\full_text_queue.json", "literature\\full_text_store\\current\\review_notes.md", "literature\\search_runs\\current\\top_k.md", "research\\current\\trusted_outputs\\method_refinement.md"]
+allowed_input_files: ["literature\\full_text_store\\current\\manifest.json", "literature\\full_text_store\\current\\full_text_queue.json", "literature\\full_text_store\\current\\review_notes.md", "literature\\search_runs\\current\\top_k.md", "research\\current\\trusted_outputs\\method_refinement.md", "literature\\full_text_store\\current\\extracted_text\\ftq_002.txt", "literature\\full_text_store\\current\\extracted_text\\ftq_004.txt", "literature\\full_text_store\\current\\extracted_text\\ftq_008.txt", "literature\\full_text_store\\current\\extracted_text\\ftq_010.txt"]
 forbidden_context: ["old novelty conclusions", "unverified experiment results", "mock/dry-run artifact", "external_agent_direct output", "user preference shortcuts", "paper draft", "paywalled_content_illegally_obtained", "metadata_pages_treated_as_full_text"]
 forbidden_context_checked: true
-context_hash: ec81418f8812c0979001ba0b5854c893162de898f513551565a2aa501c15d286
+context_hash: 44da20dcd0d3a59c5514827593525d0461ea0d10b18720d2549ec502bc255c44
 prompt_file: 
 response_file: 
 source_boundary: workflow_full_text_review_minimal_allowed_inputs_only
@@ -34,140 +34,190 @@ error:
 # Full Text Review — Closest Prior Work Evidence Check
 
 ## Scope and Evidence Boundary
-- This is **not a novelty proof**.
-- This is **not an experiment plan**.
-- This is **not a paper claim**.
+- This is **not** a novelty proof.
+- This is **not** an experiment plan.
+- This is **not** a paper claim.
 - It reviews **only currently acquired open-access/local materials**.
-- **Metadata-only and landing-page-only items are not treated as full text**.
-- **No paywalled text was used.**
-- Reviews are based on model-assisted extraction of local full-text files (LaTeX→Markdown or PDF text); **human verification is required**.
-- This artifact does not replace a thorough human reading of the full texts.
+- Metadata‑only and landing‑page‑only items are **not** treated as full text.
+- **No paywalled text** was used.
+- The evidence presented here is limited to the items in the full‑text store manifest; any missing full texts or external resources are explicitly identified as gaps.
+
+---
 
 ## Reviewable Papers
 
 | queue_id | title | full_text_status | source type | local extracted material status | reviewed |
-|----------|-------|------------------|-------------|--------------------------------|----------|
-| ftq_001 | Probabilistic distances-based hallucination detection in LLMs with RAG | source_acquired_unreviewed | arxiv_source | LaTeX→Markdown | yes |
-| ftq_002 | Lookback Lens: Detecting and Mitigating Contextual Hallucinations in LLMs Using Only Attention Maps | likely_full_text | open_pdf (ACL Anthology) | PDF extracted text | partial (abstract & introduction excerpt only) |
-| ftq_003 | INSIDE: LLMs’ Internal States Retain the Power of Hallucination Detection | source_acquired_unreviewed | arxiv_source | LaTeX→Markdown | yes |
-| ftq_005 | Weakly Supervised Distillation of Hallucination Signals into Transformer Representations | source_acquired_unreviewed | arxiv_source | LaTeX→Markdown | yes |
-| ftq_006 | ICR Probe: Tracking Hidden State Dynamics for Reliable Hallucination Detection in LLMs | source_acquired_unreviewed | arxiv_source | LaTeX→Markdown | yes |
-| ftq_008 | Hallucination Detection with the Internal Layers of LLMs | likely_full_text | arxiv_pdf | PDF extracted text | partial (thesis abstract & introduction excerpt only) |
+|----------|-------|------------------|-------------|---------------------------------|----------|
+| ftq_001 | Probabilistic distances-based hallucination detection in LLMs with RAG | source_acquired_unreviewed | arxiv_source | extracted_markdown | yes |
+| ftq_002 | Lookback Lens: Detecting and Mitigating Contextual Hallucinations in Large Language Models Using Only Attention Maps | likely_full_text | open_pdf | extracted_text (PDF) | yes |
+| ftq_003 | INSIDE: LLMs' Internal States Retain the Power of Hallucination Detection | source_acquired_unreviewed | arxiv_source | extracted_markdown | yes |
+| ftq_004 | LLMs Know More Than They Show: On the Intrinsic Representation of LLM Hallucinations | likely_full_text | arxiv_source & openalex | extracted_text (pypdf) | yes |
+| ftq_005 | Weakly Supervised Distillation of Hallucination Signals into Transformer Representations | source_acquired_unreviewed | arxiv_source | extracted_markdown | yes |
+| ftq_006 | ICR Probe: Tracking Hidden State Dynamics for Reliable Hallucination Detection in LLMs | source_acquired_unreviewed | arxiv_source | extracted_markdown | yes |
+| ftq_008 | Hallucination Detection with the Internal Layers of LLMs | likely_full_text | arxiv_pdf | extracted_text (PDF) | yes |
+| ftq_010 | Unsupervised Real-Time Hallucination Detection based on the Internal States of Large Language Models | likely_full_text | arxiv_source & openalex | extracted_text (pypdf) | yes |
 
-Papers ftq_002 and ftq_008 are only partially reviewed because the trusted review ingestion has not been completed; we rely on the provided trusted review summaries and keyword windows.
-
-## Non-reviewable Papers
+## Non‑reviewable Papers
 
 | queue_id | title | full_text_status | reason |
 |----------|-------|------------------|--------|
-| ftq_004 | LLMs Know More Than They Show: On the Intrinsic Representation of LLM Hallucinations | metadata_page_only | OpenAlex metadata page only; no full text acquired. |
-| ftq_007 | Detection of LLM Hallucinations Using Late Internal Representations | landing_page_only | IEEE DOI landing page; no full text (paywall). |
-| ftq_009 | MixHD: A Method for Detecting Hallucinations Based on the Internal State and Output Probability of Large Language Models | metadata_page_only | OpenAlex metadata page only; no full text. |
-| ftq_010 | Unsupervised Real-Time Hallucination Detection based on the Internal States of Large Language Models | metadata_page_only | OpenAlex metadata page only; no full text. |
+| ftq_007 | Detection of LLM Hallucinations Using Late Internal Representations | manual_required (paywall) | IEEE DOI, paywall protected; no open‑access path without Sci‑Hub, full text not acquired |
+| ftq_009 | MixHD: A Method for Detecting Hallucinations Based on the Internal State and Output Probability of Large Language Models | manual_required (paywall) | IEEE DOI, paywall protected; no open‑access path without Sci‑Hub, full text not acquired |
 
-These papers **could not be reviewed**. Their titles suggest potential relevance to trajectory-/dynamics-based hallucination detection, but without full text no assessment can be made.
-
-## Per-Paper Method Review
-
-### ftq_001 — Probabilistic distances-based hallucination detection in LLMs with RAG
-- **Uses hidden states?** no (operates on output probability distributions, not internal states)
-- **Uses token-level sequence?** no (collapses distributions to a single distance score)
-- **Uses trajectory/dynamics?** no
-- **Uses anomaly detection?** no (distance-based confidence score)
-- **Uses classifier/probe?** no
-- **Defines a reference distribution?** no (compares to retrieved context distribution, not a truthful reference)
-- **Handles variable-length generated outputs?** yes (collapsed to single score)
-- **Closest overlap risk:** low
-- **Evidence** (paraphrase, section pointers): Section 3 describes computing Jensen–Shannon or Wasserstein distance between token probability vectors of the generation and the retrieved context. There is no hidden-state trajectory, no reference set of truthful trajectories, and no anomaly modeling. The approach is purely output-probability based and orthogonal to the proposed trajectory-anomaly framing.
-
-### ftq_002 — Lookback Lens: Detecting and Mitigating Contextual Hallucinations in LLMs Using Only Attention Maps
-- **Uses hidden states?** no (primary detector uses attention *weights*, not hidden states; the paper notes that a linear classifier on hidden states achieves comparable performance but is not the proposed method)
-- **Uses token-level sequence?** partially (computes ratio of attention on context vs. on newly generated tokens per attention head; this is per-token but aggregated)
-- **Uses trajectory/dynamics?** no (static ratio features, no sequential modeling across tokens)
-- **Uses anomaly detection?** no (binary classifier)
-- **Uses classifier/probe?** yes (linear classifier on lookback ratio features)
-- **Defines a reference distribution?** no
-- **Handles variable-length generated outputs?** yes (per-head ratios are collapsed before classification)
-- **Closest overlap risk:** low
-- **Evidence** (from abstract and introduction excerpt): The paper proposes a simple linear classifier using attention-weight ratios. It explicitly compares against a detector that uses entire hidden states and finds it equally effective, but the core contribution is attention-based, not hidden-state trajectory-based. There is no reference distribution of truthful dynamics, no trajectory modeling, and no anomaly detection.
-
-### ftq_003 — INSIDE: LLMs’ Internal States Retain the Power of Hallucination Detection
-- **Uses hidden states?** yes
-- **Uses token-level sequence?** partially (per-token hidden states extracted but aggregated via mean/max pooling before classification, losing sequence order)
-- **Uses trajectory/dynamics?** no (static classification)
-- **Uses anomaly detection?** no (supervised binary classifier)
-- **Uses classifier/probe?** yes (MLP/linear probe on pooled hidden states)
-- **Defines a reference distribution?** no
-- **Handles variable-length generated outputs?** yes (through pooling)
-- **Closest overlap risk:** medium
-- **Evidence** (from LaTeX source review, Sections 3.1–3.3): The method extracts hidden states from multiple layers, pools them (mean or max) to a fixed-size vector, and feeds that vector to a binary classifier. While it uses internal states, it discards the sequential structure of the trajectory. There is no anomaly detection paradigm, no reference distribution, and no dynamic trajectory analysis. The supervised classifier is the primary differentiator.
-
-### ftq_005 — Weakly Supervised Distillation of Hallucination Signals into Transformer Representations
-- **Uses hidden states?** yes
-- **Uses token-level sequence?** unclear (per-token projection mentioned but likely aggregated to sequence level)
-- **Uses trajectory/dynamics?** no (static mapping with linear head)
-- **Uses anomaly detection?** no (weakly supervised learning)
-- **Uses classifier/probe?** yes (linear classifier on distilled representations)
-- **Defines a reference distribution?** no
-- **Handles variable-length generated outputs?** yes (aggregation is implied)
-- **Closest overlap risk:** medium
-- **Evidence** (from LaTeX source review, Section 4.1): The approach fine-tunes the LLM so that hidden states become linearly separable for hallucination detection. A linear probe is trained on the distilled representations. There is no trajectory-level anomaly scoring, no reference distribution of truthful dynamics, and no unsupervised detection.
-
-### ftq_006 — ICR Probe: Tracking Hidden State Dynamics for Reliable Hallucination Detection in LLMs
-- **Uses hidden states?** yes
-- **Uses token-level sequence?** yes (explicitly models temporal dynamics across tokens/layers)
-- **Uses trajectory/dynamics?** yes (core of the method; constructs a trajectory representation from per-token hidden states)
-- **Uses anomaly detection?** unclear (the probe outputs a hallucination score; it is supervised but might implicitly measure deviation from learned patterns; no explicit reference distribution described)
-- **Uses classifier/probe?** yes (ICR probe is a probe/classifier)
-- **Defines a reference distribution?** unclear (no mention in available text of a separate distribution of truthful dynamics; the probe is trained on labeled hallucination/non-hallucination pairs)
-- **Handles variable-length generated outputs?** yes (models the sequence of hidden states)
-- **Closest overlap risk:** high
-- **Evidence** (from LaTeX source review, Sections 3–4): The paper proposes to track hidden state dynamics across tokens and layers, constructing a trajectory representation. A specialized probe (ICR) then scores the trajectory. This directly competes with the proposed trajectory-anomaly framing by using hidden-state trajectories for hallucination detection. However, whether it employs an unsupervised anomaly detection paradigm or simply a supervised probe remains to be determined from a complete reading.
-
-### ftq_008 — Hallucination Detection with the Internal Layers of LLMs
-- **Uses hidden states?** yes (uses internal LLM layer representations)
-- **Uses token-level sequence?** unclear (the thesis proposes dynamic weighting and combination of layers, but likely operates on per-token or aggregated features; no evidence of full sequence trajectory modeling)
-- **Uses trajectory/dynamics?** no (dynamic weighting refers to layer mixing, not temporal dynamics)
-- **Uses anomaly detection?** no (probe/classifier based)
-- **Uses classifier/probe?** yes (probing-based classifiers)
-- **Defines a reference distribution?** no
-- **Handles variable-length generated outputs?** yes (presumably via aggregation)
-- **Closest overlap risk:** medium
-- **Evidence** (from thesis abstract and introduction excerpt): The work builds on probing-based classifiers that utilize internal representations. The novel contribution is a new architecture that dynamically weights and combines internal layers to improve detection. There is no mention of modeling trajectories or anomaly detection. The risk is medium because it still uses hidden states, but the absence of trajectory dynamics makes it less directly overlapping.
-
-## Cross-Paper Overlap Assessment
-**Verdict: high_risk_overlap**
-
-ICR Probe (ftq_006) explicitly tracks hidden state dynamics across tokens and layers, creating a trajectory representation and using it to detect hallucination. This directly overlaps with the core idea of treating generation as a hidden-state trajectory and using it for hallucination detection. The other reviewable papers either do not use trajectories (ftq_001, ftq_002, ftq_003, ftq_005, ftq_008) or do so only in a different, supervised-classifier context, but none provide a definitive counterexample that would lower the risk. The ICR Probe may already embody a trajectory-anomaly detector (if its scoring is anomaly-based), or it could be a purely supervised probe; without the full text we cannot confirm the overlap nature. Because the risk is high, the proposed trajectory-anomaly framing could be preempted. The remaining non-reviewable papers (ftq_004, ftq_007, ftq_009, ftq_010) could further increase or confirm this risk if full texts become available.
-
-## Implications for Current Research Idea
-
-- **Already covered:** Hidden-state-based hallucination detection is well-attested (INSIDE, Lookback Lens baseline, ICR Probe, thesis ftq_008). Direct probing/classifier methods are common.
-- **Trajectory/dynamics aspect:** ICR Probe already utilizes trajectory dynamics; if it includes an anomaly detection component, the entire framing may be covered. Even if it is supervised, the high-level idea of using token-level hidden-state sequences is present.
-- **Remains unclear:** Whether any prior work constructs an explicit *reference distribution of truthful trajectories* and uses *unsupervised anomaly scoring* (distance, density, reconstruction) on full trajectories. ICR Probe’s description does not clearly mention such a reference; it may be a probe trained with hallucination labels, which differs from anomaly detection. However, this nuance cannot be resolved without full text.
-- **What needs more review:** Full text of ICR Probe (ftq_006) is needed to determine if it uses anomaly detection or only supervised classification. Additionally, the non-reviewable titles (especially “Unsupervised Real-Time Hallucination Detection based on the Internal States of Large Language Models”) might contain relevant trajectory-anomaly methods; acquiring their full texts is essential.
-- **Trajectory-anomaly framing status:** Currently **high-risk** and **not distinguishable** with the available evidence. The framing may be an incremental extension of existing trajectory-based probing unless the anomaly element is both novel and absent in prior work. No novelty claim can be sustained at this stage.
-
-## Remaining Evidence Gaps
-- **Metadata-only papers** (ftq_004, ftq_007, ftq_009, ftq_010) still need true full text. Their landing pages and metadata pages give no method details; they could contain trajectory-anomaly approaches.
-- **ftq_008** is partially reviewed (only thesis abstract and introduction excerpt). A full PDF is available but the per-paper review used only the provided excerpt; dedicted trusted review ingestion is incomplete.
-- **ftq_002** similarly lacks a full method review beyond the abstract and keyword windows.
-- **Semantic Scholar deferred:** The novelty_check and literature_search did not include Semantic Scholar; potentially missed papers.
-- **Human validation required:** All per-paper reviews are model-assisted (deepseek-v4-pro). A human must verify the extracted method properties against the full source texts.
-
-## Readiness for Rerunning Trusted Stages
-**needs_more_full_text_acquisition**
-
-Before rerunning the literature search, novelty check, or method refinement, the minimum requirement is to obtain and fully review the full texts of:
-- ftq_004, ftq_007, ftq_009, ftq_010 (metadata/landing-page-only)
-- Complete trusted ingestion for ftq_002 and ftq_008
-- Thorough full-text review of ftq_006 (ICR Probe) to determine anomaly detection usage.
-
-## Next Allowed Action
-**collect_more_full_text**
-
-Do not proceed to experiment_plan. The immediate action is to acquire the missing full texts (via alternative sources, repositories, or manual retrieval) and then perform a human-verified full-text review. After that, the literature_search and novelty_check stages can be rerun with enriched evidence.
+These two papers could not be reviewed because the full text is behind a paywall and no open‑access alternative was obtained. Their titles suggest potential overlap (internal representations, late layers, mixing internal states), but without full text their methods remain unknown.
 
 ---
 
-This artifact is a full-text review of locally acquired materials only. It is not a novelty proof, an experiment plan, or a paper claim. Do not advance to experiment_plan without meeting the readiness gate criteria above.
+## Per‑Paper Method Review
+
+### ftq_001 – Probabilistic distances-based hallucination detection in LLMs with RAG
+- **Uses hidden states?** no
+- **Uses token‑level sequence?** no (operates on output probability distributions)
+- **Uses trajectory/dynamics?** no
+- **Uses anomaly detection?** no (distance‑based confidence score)
+- **Uses classifier/probe?** no
+- **Defines a reference distribution?** no (compares to retrieved context distribution)
+- **Handles variable‑length generated outputs?** yes (collapsed to a single score)
+- **Closest overlap risk:** low
+- **Evidence supports this with:** The method (Section 3) computes JS/Wasserstein distances between token probability vectors from the generated answer and retrieved context. It does not involve hidden states, sequences, or anomaly detection, making it orthogonal to the trajectory‑anomaly paradigm.
+
+### ftq_002 – Lookback Lens
+- **Uses hidden states?** no (uses attention weights)
+- **Uses token‑level sequence?** yes (attention weights over generated tokens, averaged within spans)
+- **Uses trajectory/dynamics?** no (attention‑weight ratios, not hidden‑state dynamics)
+- **Uses anomaly detection?** no (supervised logistic regression)
+- **Uses classifier/probe?** yes (linear classifier on lookback ratio features)
+- **Defines a reference distribution?** no
+- **Handles variable‑length generated outputs?** yes (span‑based averaging)
+- **Closest overlap risk:** low
+- **Evidence supports this with:** The Lookback Lens (Section 2.1) extracts the ratio of attention weights on context vs. newly generated tokens and uses a logistic regression classifier. It does not leverage hidden states, train a reference distribution, or perform anomaly detection. The paper explicitly contrasts against hidden‑state‑based detectors (Table 2) and focuses on attention maps.
+
+### ftq_003 – INSIDE
+- **Uses hidden states?** yes
+- **Uses token‑level sequence?** partially (per‑token states aggregated via pooling)
+- **Uses trajectory/dynamics?** no (static classification)
+- **Uses anomaly detection?** no (supervised classifier)
+- **Uses classifier/probe?** yes (MLP/linear probe)
+- **Defines a reference distribution?** no
+- **Handles variable‑length generated outputs?** yes (through pooling, loses sequence order)
+- **Closest overlap risk:** medium
+- **Evidence supports this with:** INSIDE (Sections 3.1–3.3) extracts hidden states from multiple layers, applies mean/max pooling to collapse token positions, and trains a binary classifier. It does not model trajectory dynamics, define a reference distribution of truthful trajectories, or use anomaly scoring. The risk is medium because it uses internal states for hallucination detection, but the approach is fundamentally supervised probe‑based, not an unsupervised anomaly‑detection framework.
+
+### ftq_004 – LLMs Know More Than They Show
+- **Uses hidden states?** yes
+- **Uses token‑level sequence?** yes (investigates per‑token hidden states, especially exact answer tokens)
+- **Uses trajectory/dynamics?** no (probes are applied to static token positions, not a trajectory sequence)
+- **Uses anomaly detection?** no (supervised probing classifiers; error types are predicted by classification, not anomaly)
+- **Uses classifier/probe?** yes (linear probing classifiers)
+- **Defines a reference distribution?** no
+- **Handles variable‑length generated outputs?** yes (exact answer token selection handles variable length; probes are trained on specific token positions)
+- **Closest overlap risk:** medium
+- **Evidence supports this with:** The paper (Sections 3–5) demonstrates probing classifiers on hidden states at exact answer tokens, achieving strong detection but in a supervised manner. It explores error types and internal/external misalignment, but always through classification, not anomaly detection with a reference distribution. The broad coverage of internal representations makes it a medium risk for overlap in the sense that it shares the use of hidden states, but it does not formulate the problem as trajectory anomaly detection.
+
+### ftq_005 – Weakly Supervised Distillation
+- **Uses hidden states?** yes
+- **Uses token‑level sequence?** unclear (per‑token projection may be aggregated to sequence level)
+- **Uses trajectory/dynamics?** no (static mapping)
+- **Uses anomaly detection?** no (supervised/weakly supervised)
+- **Uses classifier/probe?** yes (linear classifier)
+- **Defines a reference distribution?** no
+- **Handles variable‑length generated outputs?** yes (likely via aggregation)
+- **Closest overlap risk:** medium
+- **Evidence supports this with:** The proposed method (Section 4.1) fine‑tunes the LLM so that hidden states become linearly separable for hallucination detection, then applies a linear classifier. It does not involve trajectory dynamics, anomaly scoring, or a reference distribution. The risk is medium because it uses hidden states and supervised learning, but the approach is fundamentally a fine‑tuned probe, not an unsupervised trajectory‑anomaly detector.
+
+### ftq_006 – ICR Probe: Tracking Hidden State Dynamics
+- **Uses hidden states?** yes
+- **Uses token‑level sequence?** yes (explicitly models temporal dynamics)
+- **Uses trajectory/dynamics?** yes (core of the method)
+- **Uses anomaly detection?** unclear (score derived from trajectory patterns, but supervised training)
+- **Uses classifier/probe?** yes (ICR probe)
+- **Defines a reference distribution?** unclear (no explicit description of a reference distribution of truthful dynamics)
+- **Handles variable‑length generated outputs?** yes (analyzes sequence of hidden states)
+- **Closest overlap risk:** high
+- **Evidence supports this with:** The paper (Sections 3–4) describes per‑token hidden state extraction, construction of a trajectory representation, and the ICR probe that outputs a hallucination score. This is the closest prior work to the research idea because it directly models hidden‑state dynamics across tokens and layers. Although the technique uses supervised training for the probe and does not explicitly define a reference distribution, the overlap in the core concept of tracking hidden state trajectories to detect hallucination is substantial.
+
+### ftq_008 – Hallucination Detection with the Internal Layers of LLMs
+- **Uses hidden states?** yes
+- **Uses token‑level sequence?** yes (for text classification, the last token of each layer; for sequence labeling, all tokens per layer)
+- **Uses trajectory/dynamics?** no (for text classification, only the last token’s multi‑layer representation is used; the comparison module operates on layer‑wise encodings, not temporal dynamics)
+- **Uses anomaly detection?** no (supervised MLP classifiers)
+- **Uses classifier/probe?** yes (MLP with layer‑wise encoding and optional cosine similarity comparison)
+- **Defines a reference distribution?** no
+- **Handles variable‑length generated outputs?** yes (via token‑level classification and tagging schemes for sequential labeling)
+- **Closest overlap risk:** medium
+- **Evidence supports this with:** The thesis (Sections 4.4, 5.2) proposes a new architecture that encodes each LLM layer with the same MLP and compares encodings; the final classification is supervised. The work does not model trajectory dynamics over token positions in the text‑classification setting (it uses the last token’s representations) and does not use anomaly detection or a reference distribution. The risk is medium because it uses internal states and explores layer weighting, but it remains a supervised probe‑based approach.
+
+### ftq_010 – MIND (Unsupervised Real‑Time Hallucination Detection)
+- **Uses hidden states?** yes (contextualized embeddings)
+- **Uses token‑level sequence?** yes (the detector inspects the last token’s hidden state of the final layer; for training, pseudo‑labels are derived from entity matching over the continuation)
+- **Uses trajectory/dynamics?** no (no sequence‑level trajectory modeling; static single‑token representation)
+- **Uses anomaly detection?** no (unsupervised pseudo‑label generation followed by supervised MLP training)
+- **Uses classifier/probe?** yes (4‑layer MLP classifier)
+- **Defines a reference distribution?** no
+- **Handles variable‑length generated outputs?** yes (classification on the last token’s hidden state is length‑agnostic)
+- **Closest overlap risk:** medium
+- **Evidence supports this with:** MIND (Sections 3, 6) uses internal states and an unsupervised data‑generation pipeline to train a classifier, but the detection relies on a single token’s hidden state, not a full trajectory. It does not construct a reference distribution or apply anomaly detection. The overlap risk is medium because it demonstrates that unsupervised learning from internal states is possible, but the method is still a classifier, not a trajectory‑anomaly detector.
+
+---
+
+## Cross‑Paper Overlap Assessment
+
+**Overall verdict: high_risk_overlap**
+
+The review of eight reviewable full‑text papers reveals a dense landscape of internal‑state‑based hallucination detection. While no reviewed work explicitly adopts the combination of (a) a reference distribution of truthful trajectories, (b) token‑level trajectory anomaly detection, and (c) overall unsupervised anomaly scoring, the closest prior work—**ICR Probe (ftq_006)**—directly models hidden‑state dynamics across tokens and layers, constructs a trajectory representation, and outputs a hallucination score. Although it relies on supervised probe training, the conceptual overlap in tracking hidden‑state trajectories is high.  
+
+Several other papers (ftq_003, ftq_004, ftq_005, ftq_008, ftq_010) all use hidden states for classification or probing, indicating that the general approach of leveraging internal representations for hallucination detection is well‑established. The specific differentiator of the research idea (unsupervised trajectory anomaly detection with a learned reference distribution) is not yet attested, but the existing trajectory‑based work (ICR Probe) makes the risk of non‑novelty substantial, especially if the supervised probe in ICR Probe already captures the same trajectory patterns that an anomaly detector would exploit.
+
+Therefore, based on the currently acquired materials, the closest prior work presents a **high risk of overlap** with the intended trajectory‑anomaly framing. The remaining evidence gaps (especially the paywalled papers ftq_007 and ftq_009) could further increase this risk or, less likely, confirm the gap, but they cannot lower the current risk assessment.
+
+---
+
+## Implications for Current Research Idea
+
+**Parts already covered by prior work**
+- Using hidden states for hallucination detection is thoroughly explored (ftq_003, ftq_004, ftq_006, ftq_008, ftq_010).
+- Token‑level hidden state representations (including exact answer tokens and sequence positions) are common (ftq_004, ftq_006).
+- Probing/classifying hidden states with MLP or linear probes is standard (ftq_003, ftq_004, ftq_005, ftq_006, ftq_008, ftq_010).
+- Tracking hidden state dynamics across tokens is explicitly handled by ICR Probe (ftq_006).
+
+**What remains unclear**
+- Whether **any** prior work frames hallucination detection as an **unsupervised anomaly detection** problem with a **reference distribution** built from truthful trajectories.
+- Whether the variable‑length handling and explicit trajectory alignment (e.g., DTW) introduce a meaningful distinction beyond what ICR Probe already captures.
+- The full text of ftq_007 (Detection of LLM Hallucinations Using Late Internal Representations) and ftq_009 (MixHD) are unavailable; the titles suggest they could be even closer to the idea.
+
+**What needs more review**
+- Complete full‑text verification of ftq_006 (ICR Probe) beyond the current extracted markdown to confirm there is no anomaly‑like scoring; the current evidence only says “supervised probe” but ambiguous wording could hide an anomaly component.
+- Acquisition of full texts for ftq_007 and ftq_009; without them, the evidence base is incomplete and the risk of hidden overlap remains.
+
+**Trajectory‑anomaly framing: distinguishable or high‑risk?**
+Given that ICR Probe already constructs and scores a trajectory representation, the proposed unsupervised anomaly framing is **high‑risk** and may be incremental rather than a distinct gap. The lack of an explicit reference distribution in ICR Probe is a minor difference; a supervised probe that outputs hallucination probabilities can be trivially converted into an anomaly detector by thresholding, and it implicitly learns what constitutes “normal” (truthful) trajectories from its training data. Thus, the core claim may be pre‑empted by this work. Without conclusive full‑text evidence to the contrary, the trajectory‑anomaly framing must be considered as having a high probability of overlap.
+
+---
+
+## Remaining Evidence Gaps
+- **Paywalled papers ftq_007 and ftq_009** still lack full text. Their titles (“Detection of LLM Hallucinations Using Late Internal Representations”, “MixHD: … Internal State and Output Probability”) are highly relevant and could directly cover the idea. Full‑text acquisition is mandatory before any novelty claim.
+- **ICR Probe (ftq_006)** is currently reviewed from an extracted Markdown; a human review of the raw LaTeX source or a re‑extraction may reveal subtleties about anomaly scoring that are not fully captured.
+- **Semantic Scholar sources were deferred** – literature search did not include Semantic Scholar; additional papers may exist that are even closer to the trajectory‑anomaly concept.
+- **The current review is model‑assisted.** The per‑paper assessments for ftq_001, ftq_003, ftq_005, and ftq_006 rely on model‑assisted summaries; **human validation is still required** before firm conclusions.
+
+---
+
+## Readiness for Rerunning Trusted Stages
+
+`needs_more_full_text_acquisition`
+
+**Justification:** The paywalled papers ftq_007 and ftq_009 are missing, and they represent a potential high‑risk gap. Additionally, human validation of the model‑assisted reviews is pending. Rerunning the literature search and novelty check stages would be premature without these sources and the human verification.
+
+---
+
+## Next Allowed Action
+
+`collect_more_full_text`
+
+(This action entails obtaining the full texts of ftq_007 and ftq_009, completing human validation of all model‑assisted reviews, and if necessary, re‑extracting/verifying ftq_006. Only after those steps should a rerun of literature search/novelty check be considered.)
+
+---
+
+This artifact is a full‑text review of locally acquired materials only.  
+It is not a novelty proof, an experiment plan, or a paper claim.  
+Do not advance to experiment_plan without meeting the readiness gate criteria above.

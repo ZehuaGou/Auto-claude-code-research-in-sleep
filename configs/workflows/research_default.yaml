@@ -250,6 +250,10 @@ stages:
       - literature/full_text_store/current/review_notes.md
       - literature/search_runs/current/top_k.md
       - research/current/trusted_outputs/method_refinement.md
+      - literature/full_text_store/current/extracted_text/ftq_002.txt
+      - literature/full_text_store/current/extracted_text/ftq_004.txt
+      - literature/full_text_store/current/extracted_text/ftq_008.txt
+      - literature/full_text_store/current/extracted_text/ftq_010.txt
     forbidden_context:
       - old novelty conclusions
       - unverified experiment results

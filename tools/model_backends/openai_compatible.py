@@ -101,7 +101,7 @@ def call_openai_compatible(
             },
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": 4096,
+        "max_tokens": 16384,
     }
     if thinking and thinking != "disabled":
         payload["thinking"] = {"type": thinking}
