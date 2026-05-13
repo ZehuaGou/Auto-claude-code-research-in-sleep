@@ -15,9 +15,28 @@ import json
 import sys
 from pathlib import Path
 
-def normalize_path(path: str) -> str:
-    """Normalize a path to forward slashes for cross-platform comparison."""
-    return path.replace("\\", "/")
+def normalize_context_path(path: str) -> tuple[str, bool]:
+    """Normalize a path for cross-platform context isolation comparison.
+
+    Returns (normalized_path, is_safe):
+      - normalized_path: forward-slashes, no duplicate slashes, no leading ./, no trailing slash
+      - is_safe: False if the path contains parent traversal (..) that could escape allowed scope
+    """
+    p = path.strip().strip("'\"")
+    p = p.replace("\\", "/")
+    # Collapse duplicate slashes
+    while "//" in p:
+        p = p.replace("//", "/")
+    # Strip leading ./ repeatedly
+    while p.startswith("./"):
+        p = p[2:]
+    # Strip trailing slash (but not root "/")
+    if len(p) > 1 and p.endswith("/"):
+        p = p.rstrip("/")
+    # Reject parent traversal
+    if p == ".." or p.startswith("../") or "/../" in p:
+        return p, False
+    return p, True
 
 
 FORBIDDEN_MARKERS = [
@@ -214,6 +233,13 @@ def check(manifest_path: Path, input_path: Path) -> dict:
     # 7. Check for unexpected file path markers in input
     # Extract lines that reference file paths
     unexpected = []
+    # Build normalized allowed set for O(1) lookup
+    allowed_norms = set()
+    for f in allowed_input_files:
+        norm_f, safe_f = normalize_context_path(f)
+        if safe_f:
+            allowed_norms.add(norm_f)
+
     input_lines = input_content.split("\n")
     for line in input_lines:
         if line.startswith("# File:") or line.startswith("## File:"):
@@ -221,15 +247,20 @@ def check(manifest_path: Path, input_path: Path) -> dict:
             parts = line.split(":", 1)
             if len(parts) >= 2:
                 ref_path = parts[1].strip().strip("'\"")
-                # Check if this path is in allowed_input_files
-                norm_ref = normalize_path(ref_path)
-                allowed_any = any(
-                    norm_ref == normalize_path(f)
-                    or (normalize_path(f).split("/")[-1] and norm_ref.endswith("/" + normalize_path(f).split("/")[-1]))
-                    for f in allowed_input_files
-                )
-                if not allowed_any and ref_path and not ref_path.startswith("/tmp/") and not ref_path.startswith("tmp/") and not any(ref_path.startswith(pre.rstrip('/')) for pre in ("research/current", "idea-stage", "novelty-stage", "review-stage")):
+                if not ref_path:
+                    continue
+                norm_ref, safe_ref = normalize_context_path(ref_path)
+                # Reject traversal in ref_path
+                if not safe_ref:
                     unexpected.append(ref_path)
+                    continue
+                # Exact match against normalized allowed set
+                if norm_ref in allowed_norms:
+                    continue
+                # Allow tmp/ staging prefix only
+                if norm_ref.startswith("tmp/"):
+                    continue
+                unexpected.append(ref_path)
 
     if unexpected:
         result["unexpected_file_markers"] = unexpected
@@ -439,6 +470,126 @@ def self_test() -> bool:
         failed += 1
     os.unlink(deep_win_manifest)
     os.unlink(deep_fwd_input)
+
+    # Test 10: Leading ./ normalized away → should PASS
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({
+            "allowed_input_files": ["research/current/input_normalization.md"],
+            "forbidden_context": ["old conclusions"]
+        }, f)
+        t10_manifest = f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("# File: ./research/current/input_normalization.md\n\nClean content.")
+        t10_input = f.name
+    result = check(Path(t10_manifest), Path(t10_input))
+    if result["status"] == "PASS" and result["contamination_scan_status"] == "checked":
+        print("  [PASS] 10. Leading ./ normalized away matches allowed path")
+        passed += 1
+    else:
+        print(f"  [FAIL] 10. Expected PASS for leading ./ normalization, got: {result}")
+        failed += 1
+    os.unlink(t10_manifest)
+    os.unlink(t10_input)
+
+    # Test 11: Duplicate slashes normalized away → should PASS
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({
+            "allowed_input_files": ["research//current//input_normalization.md"],
+            "forbidden_context": ["old conclusions"]
+        }, f)
+        t11_manifest = f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("# File: research/current/input_normalization.md\n\nClean content.")
+        t11_input = f.name
+    result = check(Path(t11_manifest), Path(t11_input))
+    if result["status"] == "PASS" and result["contamination_scan_status"] == "checked":
+        print("  [PASS] 11. Duplicate slashes normalized away matches allowed path")
+        passed += 1
+    else:
+        print(f"  [FAIL] 11. Expected PASS for duplicate slash normalization, got: {result}")
+        failed += 1
+    os.unlink(t11_manifest)
+    os.unlink(t11_input)
+
+    # Test 12: Different file name, same directory → should FAIL
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({
+            "allowed_input_files": ["research/current/input_normalization.md"],
+            "forbidden_context": ["old conclusions"]
+        }, f)
+        t12_manifest = f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("# File: research/current/other.md\n\nClean content.")
+        t12_input = f.name
+    result = check(Path(t12_manifest), Path(t12_input))
+    if result["status"] == "FAIL" and result["unexpected_file_markers"]:
+        print("  [PASS] 12. Different filename in same directory rejected")
+        passed += 1
+    else:
+        print(f"  [FAIL] 12. Expected FAIL for different filename, got: {result}")
+        failed += 1
+    os.unlink(t12_manifest)
+    os.unlink(t12_input)
+
+    # Test 13: Same basename with .bak suffix → should FAIL
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({
+            "allowed_input_files": ["research/current/input_normalization.md"],
+            "forbidden_context": ["old conclusions"]
+        }, f)
+        t13_manifest = f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("# File: research/current/input_normalization.md.bak\n\nClean content.")
+        t13_input = f.name
+    result = check(Path(t13_manifest), Path(t13_input))
+    if result["status"] == "FAIL" and result["unexpected_file_markers"]:
+        print("  [PASS] 13. .bak suffix spoof rejected")
+        passed += 1
+    else:
+        print(f"  [FAIL] 13. Expected FAIL for .bak spoof, got: {result}")
+        failed += 1
+    os.unlink(t13_manifest)
+    os.unlink(t13_input)
+
+    # Test 14: Same basename in different directory → should FAIL
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({
+            "allowed_input_files": ["research/current/input_normalization.md"],
+            "forbidden_context": ["old conclusions"]
+        }, f)
+        t14_manifest = f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("# File: some/other/input_normalization.md\n\nClean content.")
+        t14_input = f.name
+    result = check(Path(t14_manifest), Path(t14_input))
+    if result["status"] == "FAIL" and result["unexpected_file_markers"]:
+        print("  [PASS] 14. Same basename in different directory rejected")
+        passed += 1
+    else:
+        print(f"  [FAIL] 14. Expected FAIL for basename spoof, got: {result}")
+        failed += 1
+    os.unlink(t14_manifest)
+    os.unlink(t14_input)
+
+    # Test 15: Parent traversal (../secrets.md) → should FAIL
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({
+            "allowed_input_files": ["research/current/input_normalization.md"],
+            "forbidden_context": ["old conclusions"]
+        }, f)
+        t15_manifest = f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("# File: research/current/../secrets.md\n\nClean content.")
+        t15_input = f.name
+    result = check(Path(t15_manifest), Path(t15_input))
+    if result["status"] == "FAIL" and result["unexpected_file_markers"]:
+        print("  [PASS] 15. Parent traversal rejected")
+        passed += 1
+    else:
+        print(f"  [FAIL] 15. Expected FAIL for traversal, got: {result}")
+        failed += 1
+    os.unlink(t15_manifest)
+    os.unlink(t15_input)
 
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
