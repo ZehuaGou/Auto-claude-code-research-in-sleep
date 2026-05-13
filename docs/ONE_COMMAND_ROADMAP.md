@@ -205,8 +205,9 @@ Phase 18A is implemented. See Phase 18A/B below.
 
 ### Phase 18C — One-command `novelty_risk` dry-run
 - Sequence planning only — show what would run
-- No model calls
-- Validates inputs exist
+- No model calls, no network calls, no file mutations
+- Validates inputs exist, shows planned stages/validators/outputs/stop conditions
+- dry-run is NOT live orchestration — execution does not occur
 - Estimated: 1 day
 
 ### Phase 18D — One-command `novelty_risk` live

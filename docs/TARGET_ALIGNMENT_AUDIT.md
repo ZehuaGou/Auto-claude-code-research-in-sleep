@@ -19,16 +19,16 @@ The system is useful but incomplete. The primary gap is user experience: there i
 
 ### Native Command Layer
 
-**Status: MOSTLY COMPLETE (Phase 18A/B/C implemented)**
+**Status: PARTIAL — status/validate/repair-queue/start dry-run implemented; live start and continue remain missing.**
 
 - `tools/research_cli.py` implemented with `status`, `validate`, `repair-queue`, and `start` subcommands.
-- `start --idea "..." --mode novelty_risk --dry-run` shows full planned workflow (15 stages, 5 validators, 12 outputs, 10 stop conditions).
-- `start` validates: non-empty idea, only novelty_risk mode, --dry-run required (live execution not yet implemented).
+- `start --idea "..." --mode novelty_risk --dry-run` shows full planned workflow (15 stages, 5 validators, 12 outputs, 10 stop conditions) — but execution does NOT run.
+- `start` validates: non-empty idea, only novelty_risk mode, --dry-run required. Live execution is not implemented.
 - `status` reads all trusted outputs, aggregates validator results, summarizes evidence, parses repair queue, computes next allowed stage.
 - `validate` runs all checks and exits 0 only if no blocking issues.
 - `repair-queue` parses and displays the full repair queue table.
 - `/status` slash command still via `register_slash_commands.py` + `skills/status/SKILL.md` but research_cli.py provides the core functionality.
-- One-command `continue --stage` and live `start` remain future work (Phase 18D).
+- `continue --stage` and live `start` remain future work (Phase 18D). Dry-run is not live orchestration.
 
 ### Skill Method Layer
 
@@ -152,8 +152,8 @@ Gaps:
 
 | Requirement | Target Section | Current Status |
 |------------|---------------|----------------|
-| Native command layer | Section 5 | Mostly complete (Phase 18A/B/C) |
-| One-command user experience | Section 5 | Mostly complete (dry-run) |
+| Native command layer | Section 5 | PARTIAL — dry-run planner exists; live one-command execution not implemented |
+| One-command user experience | Section 5 | PARTIAL — dry-run planner exists, but live one-command execution is not implemented |
 | Skill specs for all stages | Section 6 | Partial (contracts only) |
 | Multi-source search | Section 8.3 | Only OpenAlex |
 | Full-text acquisition | Section 8.8 | Not implemented |
