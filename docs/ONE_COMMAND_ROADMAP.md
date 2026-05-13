@@ -11,6 +11,8 @@
 
 **Phase 21A Status:** IMPLEMENTED — open-access full-text acquisition MVP. 10/10 top-k papers acquired (5 arxiv_source, 1 arxiv_pdf, 4 open_html). 4 extracted_markdown, 5 extracted_text, 1 tool_missing (no PDF extraction library). No paywall bypass. No committed PDFs/full text. Full-text store with manifest, queue, review notes. 80 self-tests pass. **Phase 21A fix:** full_text_status classification added (source_acquired_unreviewed: 4, likely_full_text: 1, metadata_page_only: 4, landing_page_only: 1). OpenAlex metadata pages correctly classified as metadata_page_only. Manifest/queue consistency validated. experiment_plan remains blocked until human review of closest prior work completes (Phase 21B).
 
+**Phase 21B Status:** IMPLEMENTED — trusted full-text review MVP. full_text_review stage added to research_default.yaml. full_text_reviewer role (DS_PRO_HIGH, deepseek-v4-pro). Bounded review input from local extracted materials (22KB). Trusted role runner executed (call_e2a8e48a2d35). Validation PASS. Review found high_risk_overlap with ICR Probe (ftq_006). 4/10 papers reviewable, 5/10 not reviewable (metadata/landing page only), 1/10 PDF extraction pending. Readiness: needs_more_full_text_acquisition. Next: collect_more_full_text. experiment_plan remains blocked.
+
 ---
 
 ## 1. Goal

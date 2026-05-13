@@ -95,7 +95,7 @@ Gaps:
 
 ### Literature Layer
 
-**Status: MVP COMPLETE — multi-source + full-text acquisition + status classification (Phase 20 + 21A + 21A fix)**
+**Status: MVP COMPLETE — multi-source + full-text acquisition + status classification + trusted review (Phase 20 + 21A + 21A fix + 21B)**
 
 Completed:
 - OpenAlex adapter (`openalex_fetch.py`)
@@ -112,6 +112,8 @@ Completed:
 - Open-access full-text acquisition MVP (Phase 21A): arXiv LaTeX source, arXiv PDF, open HTML/PDF
 - LaTeX-to-Markdown extraction (rough conversion)
 - Full-text store with manifest, queue, review notes, .gitignore
+- **full_text_status classification (Phase 21A fix):** source_acquired_unreviewed, likely_full_text, metadata_page_only, landing_page_only, manual_required
+- **Trusted full-text review (Phase 21B):** full_text_review stage, full_text_reviewer role, bounded review input, trusted_role_runner execution
 - **full_text_status classification (Phase 21A fix):** source_acquired_unreviewed, likely_full_text, metadata_page_only, landing_page_only, manual_required
 - Manifest/queue consistency validation
 - Repair queue (`LITERATURE_REPAIR_QUEUE.md`)

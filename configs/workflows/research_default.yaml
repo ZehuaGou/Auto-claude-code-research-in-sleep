@@ -240,6 +240,106 @@ stages:
            a novelty proof, or a paper claim. Do not advance to experiment_plan without
            meeting the readiness gate criteria above."
 
+  full_text_review:
+    role: full_text_reviewer
+    description: 全文审查 — review locally acquired open-access full-text materials for closest prior works
+    allow_insufficient_evidence_risk_assessment: true
+    allowed_input_files:
+      - literature/full_text_store/current/manifest.json
+      - literature/full_text_store/current/full_text_queue.json
+      - literature/full_text_store/current/review_notes.md
+      - literature/search_runs/current/top_k.md
+      - research/current/trusted_outputs/method_refinement.md
+    forbidden_context:
+      - old novelty conclusions
+      - unverified experiment results
+      - mock/dry-run artifact
+      - external_agent_direct output
+      - user preference shortcuts
+      - paper draft
+      - paywalled_content_illegally_obtained
+      - metadata_pages_treated_as_full_text
+    output_file: research/current/trusted_outputs/full_text_review.md
+    require_validate: true
+    stage_output_contract: |
+      ROLE BOUNDARY — full_text_review OUTPUT CONTRACT
+      You are full_text_reviewer. Your task is to review locally acquired open-access full-text
+      materials for the closest prior works. This is NOT a novelty proof.
+      This is NOT an experiment plan. This is NOT a paper claim.
+
+      HARD CONSTRAINTS (violation = artifact rejected):
+      1. Document title MUST be "# Full Text Review — Closest Prior Work Evidence Check".
+      2. Do NOT use forbidden phrases as conclusions:
+         - "confirmed novel", "no prior work", "direct overlap none", "no direct overlap found"
+         - "definitely novel", "publishable novelty", "novelty proven"
+      3. Allowed verdict labels ONLY:
+         - high_risk_overlap
+         - medium_risk_overlap
+         - low_confidence_possible_gap
+         - insufficient_evidence
+      4. Required sections:
+         - Scope and Evidence Boundary
+         - Reviewable Papers
+         - Non-reviewable Papers
+         - Per-Paper Method Review
+         - Cross-Paper Overlap Assessment
+         - Implications for Current Research Idea
+         - Remaining Evidence Gaps
+         - Readiness for Rerunning Trusted Stages
+         - Next Allowed Action
+      5. Scope and Evidence Boundary MUST state:
+         - This is not a novelty proof.
+         - This is not an experiment plan.
+         - This is not a paper claim.
+         - It reviews only currently acquired open-access/local materials.
+         - Metadata-only and landing-page-only items are not treated as full text.
+         - No paywalled text was used.
+      6. Reviewable Papers section MUST list each reviewable paper with:
+         - queue_id, title, full_text_status, source type
+         - local extracted material status
+         - reviewed yes/no/partial
+      7. Non-reviewable Papers section MUST list metadata_page_only / landing_page_only papers
+         and explain why they are not reviewable.
+      8. Per-Paper Method Review section MUST answer for each reviewable paper:
+         - Does it use hidden states? yes/no/unclear
+         - Does it use token-level sequence? yes/no/unclear
+         - Does it use trajectory/dynamics? yes/no/unclear
+         - Does it use anomaly detection? yes/no/unclear
+         - Does it use classifier/probe? yes/no/unclear
+         - Does it define a reference distribution? yes/no/unclear
+         - Does it handle variable-length generated outputs? yes/no/unclear
+         - What is the closest overlap risk? high/medium/low/unclear
+         - What evidence supports this? Use paraphrase and section pointers, not long quotes.
+      9. Cross-Paper Overlap Assessment section MUST use ONLY allowed labels:
+         - high_risk_overlap, medium_risk_overlap, low_confidence_possible_gap, insufficient_evidence
+         Do NOT use: confirmed novel, no prior work, direct overlap none, definitely novel.
+      10. Implications for Current Research Idea section MUST:
+          - Explain what parts are already covered by prior work
+          - Explain what remains unclear
+          - Explain what needs more review
+          - Explain whether trajectory-anomaly framing remains distinguishable or high-risk
+          Do NOT claim novelty.
+      11. Remaining Evidence Gaps section MUST include:
+          - metadata-only papers still need true full text
+          - PDF tool missing for ftq_008 if not extracted
+          - Semantic Scholar deferred
+          - human validation still needed if review is model-assisted
+      12. Readiness for Rerunning Trusted Stages MUST be one of:
+          - ready_to_rerun_literature_and_novelty
+          - needs_more_full_text_acquisition
+          - needs_manual_review
+          - blocked
+      13. Next Allowed Action MUST be one of:
+          - rerun_literature_search_novelty_check_method_refinement
+          - collect_more_full_text
+          - manual_review_required
+          - stop
+          Do NOT recommend experiment_plan directly.
+      14. End the document with a boundary statement:
+          "This artifact is a full-text review of locally acquired materials only.
+           It is not a novelty proof, an experiment plan, or a paper claim.
+           Do not advance to experiment_plan without meeting the readiness gate criteria above."
+
   experiment_plan:
     role: experiment_auditor
     description: 实验计划 — design the experiment before writing any code
