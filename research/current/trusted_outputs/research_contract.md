@@ -73,7 +73,7 @@ The contract covers the conceptual validity of this framing and the requirements
 - Claiming that any specific anomaly detection method is effective for this task.
 - Claiming novelty, uniqueness, or prior-art separation.
 - Using any external literature, prior experiments, benchmark results, or web evidence inside this contract.
-- Using old conclusions, mock results, or unverified findings as support.
+- Using stale or fabricated evidence, or unverified findings as support.
 - Running experiments, reporting metrics, or implying observed empirical performance.
 - Fixing one final operational definition of hallucination beyond the brief's current wording.
 - Fixing one final trajectory representation, alignment scheme, or preprocessing pipeline.
