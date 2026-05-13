@@ -3,6 +3,8 @@
 **Date:** 2026-05-13
 **Target Doc:** `docs/TRUSTED_RESEARCH_AUTOMATION_TARGET.md` Section 8
 
+> For operational usage, see [LITERATURE_LAYER_OPERATOR_GUIDE.md](LITERATURE_LAYER_OPERATOR_GUIDE.md).
+
 ---
 
 ## What This Is

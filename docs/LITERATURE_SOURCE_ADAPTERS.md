@@ -2,6 +2,8 @@
 
 **Date:** 2026-05-13
 
+> For operational usage, see [LITERATURE_LAYER_OPERATOR_GUIDE.md](LITERATURE_LAYER_OPERATOR_GUIDE.md).
+
 ---
 
 ## What This Is
