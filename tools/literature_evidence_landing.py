@@ -343,13 +343,30 @@ def build_candidates(run_dir: Path, json_output: bool) -> dict:
         print("raw_results.jsonl is empty or does not exist. Nothing to build.", file=sys.stderr)
         sys.exit(1)
 
-    # Compute normalized titles and canonical identities for all
+    # Read must_include from search_plan.yaml if available
+    must_include = []
+    plan_path = run_dir / "search_plan.yaml"
+    if plan_path.exists():
+        try:
+            plan_data = json.loads(plan_path.read_text(encoding="utf-8", errors="ignore"))
+            must_include = plan_data.get("must_include", [])
+        except Exception:
+            pass
+
+    # Compute normalized titles, canonical identities, and relevance for all
     enriched = []
     for idx, rec in enumerate(records):
         nt = _normalize_title(rec.get("title", ""))
         yr = str(rec.get("year", ""))
         identity = _canonical_identity(rec, nt, yr)
         stable_ids = _build_stable_ids(rec)
+
+        # Compute relevance scoring
+        relevance = _score_text_relevance(
+            rec.get("title", ""),
+            rec.get("abstract", ""),
+            must_include,
+        )
 
         enriched.append({
             "original": rec,
@@ -361,6 +378,7 @@ def build_candidates(run_dir: Path, json_output: bool) -> dict:
             "is_duplicate": False,
             "duplicate_of": "",
             "raw_index": idx,
+            "relevance": relevance,
         })
 
     # Deterministic dedup: later entries marked duplicate of first seen
@@ -395,6 +413,7 @@ def build_candidates(run_dir: Path, json_output: bool) -> dict:
     output_records = []
     for entry in enriched:
         rec = entry["original"]
+        relevance = entry["relevance"]
         output = {
             "candidate_id": entry["candidate_id"],
             "title": rec.get("title", ""),
@@ -410,6 +429,10 @@ def build_candidates(run_dir: Path, json_output: bool) -> dict:
             "abstract": rec.get("abstract", ""),
             "venue": rec.get("venue", ""),
             "notes": rec.get("notes", ""),
+            "relevance_score": relevance["relevance_score"],
+            "relevance_label": relevance["relevance_label"],
+            "relevance_reasons": relevance["relevance_reasons"],
+            "relevance_flags": relevance["relevance_flags"],
         }
         output_records.append(output)
 
@@ -523,47 +546,176 @@ def _print_validate_candidates_human(result: dict) -> None:
             print(f"  - {w}")
 
 
+# ---- Relevance scoring ----
+
+_HALLUCINATION_GROUP = frozenset([
+    "hallucination", "hallucinations", "confabulation", "factuality", "factual",
+    "truthfulness", "untruthful", "misinformation", "faithfulness", "faithful",
+    "hallucinate", "hallucinated", "fabrication", "inaccurate", "inaccuracy",
+])
+
+_LLM_GROUP = frozenset([
+    "llm", "llms", "large language model", "language model", "foundation model",
+    "generative ai", "generative model", "neural language model", "transformer",
+    "chatgpt", "gpt", "bert", "llama", "mistral",
+])
+
+_INTERNAL_STATE_GROUP = frozenset([
+    "hidden state", "hidden states", "internal state", "internal states",
+    "activation", "activations", "representation", "representations",
+    "layer", "layerwise", "trajectory", "embedding", "embeddings",
+    "neural activation", "model state", "latent", "intermediate representation",
+])
+
+_TOKEN_GROUP = frozenset([
+    "token", "tokens", "token-level", "per-token", "decoding step",
+    "generation step", "logit", "logits", "token probability", "token uncertainty",
+    "token-level detection", "word-level",
+])
+
+_DETECTION_GROUP = frozenset([
+    "detect", "detection", "detector", "anomaly", "outlier", "uncertainty",
+    "confidence", "estimation", "monitor", "monitoring", "identification",
+    "classification", "recognition",
+])
+
+_NEGATIVE_GROUP = frozenset([
+    "metaverse", "geriatric", "agriculture", "forecasting", "self-adaptive",
+    "personal agents", "prompt engineering", "medical", "healthcare",
+    "robotics decision-making", "autonomous systems", "sensor network",
+    "smart city", "edge computing", "iot", "internet of things",
+])
+
+
+def _score_text_relevance(title: str, abstract: str, must_include: list[str]) -> dict:
+    """Deterministic keyword/concept relevance scoring. No model, no semantic inference."""
+    text = f"{title} {abstract}".lower()
+
+    score = 0
+    reasons = []
+    flags = []
+
+    # Positive scoring
+    hallucination_hits = sum(1 for term in _HALLUCINATION_GROUP if term in text)
+    if hallucination_hits > 0:
+        score += 3
+        reasons.append(f"hallucination_group matched ({hallucination_hits} terms)")
+
+    llm_hits = sum(1 for term in _LLM_GROUP if term in text)
+    if llm_hits > 0:
+        score += 2
+        reasons.append(f"llm_group matched ({llm_hits} terms)")
+
+    internal_hits = sum(1 for term in _INTERNAL_STATE_GROUP if term in text)
+    if internal_hits > 0:
+        score += 3
+        reasons.append(f"internal_state_group matched ({internal_hits} terms)")
+
+    token_hits = sum(1 for term in _TOKEN_GROUP if term in text)
+    if token_hits > 0:
+        score += 2
+        reasons.append(f"token_group matched ({token_hits} terms)")
+
+    detection_hits = sum(1 for term in _DETECTION_GROUP if term in text)
+    if detection_hits > 0:
+        score += 2
+        reasons.append(f"detection_group matched ({detection_hits} terms)")
+
+    # must_include term matching
+    must_hits = 0
+    for term in must_include:
+        if term.lower() in text:
+            must_hits += 1
+    if must_hits > 0:
+        bonus = min(must_hits, 3)
+        score += bonus
+        reasons.append(f"must_include matched ({must_hits}/{len(must_include)})")
+
+    # Negative scoring
+    negative_hits = sum(1 for term in _NEGATIVE_GROUP if term in text)
+    if negative_hits > 0:
+        penalty = negative_hits * 2
+        score -= penalty
+        reasons.append(f"negative_terms penalized (-{penalty})")
+        flags.append(f"negative_match_{negative_hits}")
+
+    # Determine label
+    has_core = hallucination_hits > 0 or internal_hits > 0
+    has_support = llm_hits > 0 or detection_hits > 0
+
+    if score >= 7 and has_core and has_support:
+        label = "high"
+    elif score >= 4:
+        label = "medium"
+    else:
+        label = "low"
+
+    return {
+        "relevance_score": score,
+        "relevance_label": label,
+        "relevance_reasons": reasons,
+        "relevance_flags": flags,
+    }
+
+
+def _compute_ranking_score(relevance: dict, metadata_score: int, year_int: int) -> tuple[int, int, int]:
+    """Combine relevance + metadata + recency into a single ranking tuple (higher = better)."""
+    label_bonus = {"high": 100, "medium": 50, "low": 0}
+    rel_score = relevance["relevance_score"] + label_bonus.get(relevance["relevance_label"], 0)
+    return (rel_score, metadata_score, year_int)
+
+
 # ---- Top-K building ----
 
-def _score_candidate(rec: dict) -> tuple[int, int, str]:
-    """Score a canonical candidate. Returns (score, year_int, title_lower)."""
-    score = 0
-
+def _score_candidate(rec: dict) -> tuple[int, int, int, str]:
+    """Score a canonical candidate. Returns (ranking_score, rel_score, year_int, title_lower)."""
+    # Metadata completeness score (same as before)
+    meta_score = 0
     stable_ids = rec.get("stable_ids", {})
     has_stable = any(stable_ids.get(k) for k in ("doi", "arxiv_id", "semantic_scholar_id", "openalex_id"))
     if has_stable:
-        score += 2
+        meta_score += 2
     else:
-        score -= 1
+        meta_score -= 1
 
     if rec.get("abstract", "").strip():
-        score += 2
+        meta_score += 2
     else:
-        score -= 2
+        meta_score -= 2
 
     if rec.get("retrieved_at"):
-        score += 1
+        meta_score += 1
 
     source = rec.get("source", "")
     if source in ("arxiv", "openreview", "openalex"):
-        score += 1
+        meta_score += 1
 
     if rec.get("authors"):
-        score += 1
+        meta_score += 1
 
     if rec.get("venue"):
-        score += 1
+        meta_score += 1
 
     if source == "manual" and not rec.get("url", "").strip():
-        score -= 1
+        meta_score -= 1
 
     try:
         year_int = int(str(rec.get("year", "")).strip())
     except (ValueError, TypeError):
         year_int = 0
 
+    # Relevance scoring from candidate fields
+    relevance_label = rec.get("relevance_label", "low")
+    relevance_score = rec.get("relevance_score", 0)
+
+    ranking_score_tuple = _compute_ranking_score(
+        {"relevance_score": relevance_score, "relevance_label": relevance_label},
+        meta_score,
+        year_int,
+    )
+
     title_lower = rec.get("title", "").lower().strip()
-    return (score, year_int, title_lower)
+    return (ranking_score_tuple[0], relevance_score, year_int, title_lower)
 
 
 def build_top_k(run_dir: Path, k: int, json_output: bool) -> dict:
@@ -590,13 +742,28 @@ def build_top_k(run_dir: Path, k: int, json_output: bool) -> dict:
     canonical = [r for r in records if not r.get("duplicate_of")]
     duplicates = [r for r in records if r.get("duplicate_of")]
 
+    # Score all canonical candidates
     scored = []
     for rec in canonical:
-        score, year_int, title_lower = _score_candidate(rec)
-        scored.append((score, year_int, title_lower, rec))
+        ranking_score, rel_score, year_int, title_lower = _score_candidate(rec)
+        scored.append((ranking_score, rel_score, year_int, title_lower, rec))
 
-    scored.sort(key=lambda x: (-x[0], -x[1], x[2]))
-    top_k_records = scored[:k]
+    # Sort by ranking score (relevance + metadata + recency)
+    scored.sort(key=lambda x: (-x[0], -x[1], -x[2], x[3]))
+
+    # Split into high/medium/low by relevance label
+    high_rel = [(s, r, y, t, rec) for s, r, y, t, rec in scored if rec.get("relevance_label") == "high"]
+    med_rel = [(s, r, y, t, rec) for s, r, y, t, rec in scored if rec.get("relevance_label") == "medium"]
+    low_rel = [(s, r, y, t, rec) for s, r, y, t, rec in scored if rec.get("relevance_label") == "low"]
+
+    # Fill top_k: high first, then medium, then low only if not enough
+    top_k_records = []
+    for bucket in (high_rel, med_rel, low_rel):
+        for entry in bucket:
+            if len(top_k_records) < k:
+                top_k_records.append(entry)
+
+    filtered_low = [rec for _, _, _, _, rec in low_rel if rec not in [e[4] for e in top_k_records]]
 
     dup_of_counter: dict[str, int] = {}
     for rec in duplicates:
@@ -605,9 +772,11 @@ def build_top_k(run_dir: Path, k: int, json_output: bool) -> dict:
             dup_of_counter[canonical_id] = dup_of_counter.get(canonical_id, 0) + 1
 
     output_path = run_dir / "top_k.md"
-    _write_top_k_md(output_path, top_k_records, duplicates, dup_of_counter, len(canonical), len(records), k)
+    _write_top_k_md(output_path, top_k_records, filtered_low, duplicates, dup_of_counter, len(canonical), len(records), k)
 
     print(f"Built top_k={k} from {len(records)} total / {len(canonical)} canonical -> {output_path}")
+    print(f"  High relevance: {len(high_rel)}, Medium: {len(med_rel)}, Low: {len(low_rel)}")
+    print(f"  Selected: {len(top_k_records)}, Filtered low: {len(filtered_low)}")
 
     result = {
         "status": "built",
@@ -615,6 +784,10 @@ def build_top_k(run_dir: Path, k: int, json_output: bool) -> dict:
         "canonical": len(canonical),
         "duplicates": len(duplicates),
         "top_k": len(top_k_records),
+        "high_relevance": len(high_rel),
+        "medium_relevance": len(med_rel),
+        "low_relevance": len(low_rel),
+        "filtered_low": len(filtered_low),
         "output": str(output_path),
     }
     if json_output:
@@ -622,9 +795,9 @@ def build_top_k(run_dir: Path, k: int, json_output: bool) -> dict:
     return result
 
 
-def _write_top_k_md(path: Path, top_k_records: list, duplicates: list,
-                    dup_of_counter: dict[str, int], canonical_count: int,
-                    total_count: int, k: int) -> None:
+def _write_top_k_md(path: Path, top_k_records: list, filtered_low: list,
+                    duplicates: list, dup_of_counter: dict[str, int],
+                    canonical_count: int, total_count: int, k: int) -> None:
     lines = [
         "# Top-K Literature Evidence",
         "",
@@ -633,17 +806,19 @@ def _write_top_k_md(path: Path, top_k_records: list, duplicates: list,
         "## Search Summary",
         f"- Source file: candidates.jsonl",
         f"- Generated by: tools/literature_evidence_landing.py build-top-k",
-        "- Selection method: deterministic metadata completeness score",
+        "- Selection method: deterministic relevance scoring (keyword/concept matching) + metadata completeness + recency",
+        "- Relevance scoring: keyword/concept based only, not semantic judgment",
         f"- Total candidates: {total_count}",
         f"- Canonical candidates: {canonical_count}",
         f"- Duplicate records: {len(duplicates)}",
         f"- Selected top_k: {len(top_k_records)}",
+        f"- Filtered low-relevance: {len(filtered_low)}",
         "- Warning: This file is literature evidence summary, not a novelty verdict.",
         "",
         "## Candidate Papers",
     ]
 
-    for rank, (score, year_int, title_lower, rec) in enumerate(top_k_records, 1):
+    for rank, (ranking_score, rel_score, year_int, title_lower, rec) in enumerate(top_k_records, 1):
         stable_ids = rec.get("stable_ids", {})
         doi = stable_ids.get("doi", "") or ""
         arxiv_id = stable_ids.get("arxiv_id", "") or ""
@@ -671,6 +846,10 @@ def _write_top_k_md(path: Path, top_k_records: list, duplicates: list,
         else:
             method_note = ""
 
+        relevance_label = rec.get("relevance_label", "unknown")
+        relevance_score = rec.get("relevance_score", 0)
+        relevance_reasons = rec.get("relevance_reasons", [])
+
         lines.extend([
             "",
             f"### Paper {rank}",
@@ -686,6 +865,9 @@ def _write_top_k_md(path: Path, top_k_records: list, duplicates: list,
             f"fetched_or_manual: {fetched_or_manual}",
             f"full_text_available: {full_text_available}",
             f"evidence_strength: {evidence_strength}",
+            f"relevance_score: {relevance_score}",
+            f"relevance_label: {relevance_label}",
+            f"relevance_reasons: {', '.join(relevance_reasons) if relevance_reasons else 'none'}",
             "relevance_to_research_contract: not assessed by tool",
             f"method_or_finding_relevant_to_claim: {method_note}",
             "evidence_gap: full text not verified; relevance not manually assessed",
@@ -701,6 +883,24 @@ def _write_top_k_md(path: Path, top_k_records: list, duplicates: list,
             lines.append(f"  - {cid}: {cnt} duplicate(s)")
     else:
         lines.append("  - (none)")
+
+    # Filtered low-relevance candidates section
+    if filtered_low:
+        lines.extend([
+            "",
+            "## Filtered Low-Relevance Candidates",
+            f"- Total filtered: {len(filtered_low)}",
+            "- These papers were excluded from top-k due to low relevance score.",
+            "- They remain in candidates.jsonl for completeness.",
+        ])
+        for rec in filtered_low:
+            title = rec.get("title", "")
+            label = rec.get("relevance_label", "unknown")
+            score = rec.get("relevance_score", 0)
+            reasons = rec.get("relevance_reasons", [])
+            lines.append(f"  - [{label}, score={score}] {title}")
+            if reasons:
+                lines.append(f"    reasons: {', '.join(reasons)}")
 
     lines.extend([
         "",
@@ -721,7 +921,8 @@ def _write_top_k_md(path: Path, top_k_records: list, duplicates: list,
 # ---- Query variant generation ----
 
 def _generate_query_variants(topic: str, must_include: list[str], exclude: str = "") -> list[str]:
-    """Deterministic query variant generation from topic + must_include. No model, no network."""
+    """Deterministic query variant generation from topic + must_include. No model, no network.
+    Produces focused variants that combine core concept groups."""
     variants = []
     seen = set()
 
@@ -731,33 +932,51 @@ def _generate_query_variants(topic: str, must_include: list[str], exclude: str =
             seen.add(q.lower())
             variants.append(q)
 
+    # Core concept groups for this research domain
+    hallucination_terms = ["hallucination detection", "factuality detection", "truthfulness detection",
+                           "hallucination uncertainty"]
+    internal_terms = ["hidden states", "internal states", "activations", "representations",
+                      "representation trajectory", "layerwise representations"]
+    token_terms = ["token-level", "per-token", "token uncertainty", "generation step"]
+    detection_terms = ["anomaly detection", "outlier detection", "confidence estimation",
+                       "uncertainty estimation"]
+    model_terms = ["LLM", "language model"]
+
     # 1. Topic itself
     _add(topic)
 
-    # 2. Topic with all must_include terms
+    # 2. must_include terms combined
     if must_include:
-        _add(topic + " " + " ".join(must_include))
+        _add(" ".join(must_include))
 
-    # 3. Each must_include term + topic words
-    for term in must_include:
-        _add(f"{topic} {term}")
+    # 3. Core combinations: hallucination × internal × model
+    for h in hallucination_terms[:2]:
+        for i in internal_terms[:2]:
+            for m in model_terms[:1]:
+                _add(f"{m} {h} {i}")
 
-    # 4. Pair combinations of must_include terms
+    # 4. Token-level hallucination combinations
+    for t in token_terms[:2]:
+        for h in hallucination_terms[:2]:
+            _add(f"{t} {h} hidden states")
+
+    # 5. Detection/anomaly with internal states
+    for d in detection_terms[:2]:
+        for i in internal_terms[:2]:
+            _add(f"LLM hallucination {d} {i}")
+
+    # 6. Pair combinations of must_include terms (limited)
     for i, a in enumerate(must_include):
         for b in must_include[i + 1:]:
             _add(f"{a} {b}")
 
-    # 5. Shortened topic (first 4 words) + first must_include
+    # 7. Shortened topic + key terms
     topic_words = topic.split()
-    if len(topic_words) > 4 and must_include:
-        _add(" ".join(topic_words[:4]) + " " + must_include[0])
+    if len(topic_words) > 3 and must_include:
+        _add(" ".join(topic_words[:3]) + " hidden states")
 
-    # 6. must_include terms reordered
-    if len(must_include) >= 2:
-        _add(" ".join(reversed(must_include)) + " " + topic)
-
-    # Limit to 10
-    return variants[:10]
+    # Limit to 12 variants
+    return variants[:12]
 
 
 def build_search_plan(
@@ -3746,6 +3965,219 @@ def _self_test() -> bool:
         passed += 1
     except Exception as e:
         print(f"  [FAIL] D. run_dir 'research': {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test E: relevance scoring high (hallucination + LLM + hidden states)
+    try:
+        r = _score_text_relevance(
+            "LLM hallucination detection via hidden states",
+            "We propose a method for detecting hallucinations in large language models using hidden state representations",
+            ["hallucination detection", "hidden states"],
+        )
+        assert r["relevance_label"] == "high", f"Test E: expected high, got {r['relevance_label']}"
+        assert r["relevance_score"] >= 7, f"Test E: expected score >= 7, got {r['relevance_score']}"
+        assert len(r["relevance_reasons"]) >= 2, f"Test E: expected multiple reasons"
+        print("  [PASS] E. relevance scoring high for hallucination + LLM + hidden states")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] E. relevance high: {e}")
+        failed += 1
+
+    # Test F: relevance scoring low (metaverse/geriatric)
+    try:
+        r = _score_text_relevance(
+            "Metaverse applications for geriatric medicine",
+            "This paper explores virtual reality in elderly care",
+            ["hallucination detection", "hidden states"],
+        )
+        assert r["relevance_label"] == "low", f"Test F: expected low, got {r['relevance_label']}"
+        assert r["relevance_score"] < 4, f"Test F: expected score < 4, got {r['relevance_score']}"
+        assert len(r["relevance_flags"]) > 0, f"Test F: expected negative flags"
+        print("  [PASS] F. relevance scoring low for metaverse/geriatric")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] F. relevance low: {e}")
+        failed += 1
+
+    # Test G: build-candidates includes relevance fields
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "test_g"
+        run_dir.mkdir()
+        raw = [{"title": "Test paper", "source": "openalex", "url": "https://test.com",
+                "evidence_origin": "api_export", "year": 2024}]
+        _write_jsonl(run_dir / "raw_results.jsonl", raw)
+        plan = {"must_include": ["hallucination detection"]}
+        (run_dir / "search_plan.yaml").write_text(json.dumps(plan))
+        r = build_candidates(run_dir, json_output=False)
+        assert r["status"] == "built", f"Test G: expected built"
+        cands, _ = _parse_jsonl(run_dir / "candidates.jsonl")
+        assert len(cands) == 1, f"Test G: expected 1 candidate"
+        c = cands[0]
+        assert "relevance_score" in c, f"Test G: missing relevance_score"
+        assert "relevance_label" in c, f"Test G: missing relevance_label"
+        assert "relevance_reasons" in c, f"Test G: missing relevance_reasons"
+        assert "relevance_flags" in c, f"Test G: missing relevance_flags"
+        print("  [PASS] G. build-candidates includes relevance fields")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] G. build-candidates relevance: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test H: build-top-k ranks high-relevance above metadata-rich irrelevant
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "test_h"
+        run_dir.mkdir()
+        # High relevance paper (hallucination + hidden states)
+        high = {
+            "title": "LLM hallucination detection hidden states",
+            "source": "openalex", "url": "https://high.com", "year": 2024,
+            "evidence_origin": "api_export", "abstract": "detecting hallucinations using hidden states in LLMs",
+            "authors": ["Alice"], "venue": "TestVenue",
+            "stable_ids": {"openalex_id": "W123"},
+            "relevance_score": 10, "relevance_label": "high",
+            "relevance_reasons": ["hallucination_group matched", "llm_group matched", "internal_state_group matched"],
+            "relevance_flags": [],
+        }
+        # Metadata-rich but irrelevant paper
+        low = {
+            "title": "Metaverse for personal agents in smart cities",
+            "source": "openalex", "url": "https://low.com", "year": 2025,
+            "evidence_origin": "api_export", "abstract": "A comprehensive survey on metaverse applications",
+            "authors": ["Bob", "Carol", "Dave", "Eve"], "venue": "BigVenue",
+            "stable_ids": {"openalex_id": "W456"},
+            "relevance_score": 0, "relevance_label": "low",
+            "relevance_reasons": [],
+            "relevance_flags": ["negative_match_1"],
+        }
+        _write_jsonl(run_dir / "candidates.jsonl", [high, low])
+        r = build_top_k(run_dir, k=5, json_output=False)
+        assert r["status"] == "built", f"Test H: expected built"
+        topk_path = run_dir / "top_k.md"
+        content = topk_path.read_text()
+        # High relevance paper should appear before low relevance
+        high_pos = content.find("LLM hallucination detection hidden states")
+        low_pos = content.find("Metaverse for personal agents in smart cities")
+        assert high_pos > 0, f"Test H: high relevance paper not found in top_k"
+        assert high_pos < low_pos, f"Test H: high relevance paper should appear before low relevance"
+        print("  [PASS] H. build-top-k ranks high-relevance above irrelevant")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] H. build-top-k ranking: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test I: low-relevance appears in Filtered section
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "test_i"
+        run_dir.mkdir()
+        high = {
+            "title": "Hallucination detection in LLMs via hidden states",
+            "source": "openalex", "url": "https://high.com", "year": 2025,
+            "evidence_origin": "api_export", "abstract": "detecting hallucinations using internal representations",
+            "stable_ids": {"openalex_id": "W111"},
+            "relevance_score": 10, "relevance_label": "high",
+            "relevance_reasons": ["hallucination", "hidden states"], "relevance_flags": [],
+        }
+        low = {
+            "title": "Agricultural forecasting with IoT sensors",
+            "source": "openalex", "url": "https://low.com", "year": 2024,
+            "evidence_origin": "api_export", "abstract": "smart farming using edge computing",
+            "stable_ids": {"openalex_id": "W789"},
+            "relevance_score": 0, "relevance_label": "low",
+            "relevance_reasons": [], "relevance_flags": [],
+        }
+        _write_jsonl(run_dir / "candidates.jsonl", [high, low])
+        r = build_top_k(run_dir, k=1, json_output=False)
+        content = (run_dir / "top_k.md").read_text()
+        assert "Filtered Low-Relevance Candidates" in content, f"Test I: missing Filtered section"
+        assert "Agricultural forecasting" in content, f"Test I: low-rel paper not in Filtered section"
+        print("  [PASS] I. low-relevance candidate in Filtered section")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] I. filtered section: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test J: top_k.md contains "not a novelty verdict"
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "test_j"
+        run_dir.mkdir()
+        rec = {
+            "title": "Test paper", "source": "openalex", "url": "https://test.com",
+            "evidence_origin": "api_export", "year": 2024,
+            "stable_ids": {},
+            "relevance_score": 5, "relevance_label": "medium",
+            "relevance_reasons": [], "relevance_flags": [],
+        }
+        _write_jsonl(run_dir / "candidates.jsonl", [rec])
+        build_top_k(run_dir, k=5, json_output=False)
+        content = (run_dir / "top_k.md").read_text()
+        assert "not a novelty verdict" in content, f"Test J: missing novelty verdict warning"
+        print("  [PASS] J. top_k.md contains 'not a novelty verdict'")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] J. novelty verdict warning: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test K: top_k.md no forbidden novelty conclusions
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "test_k"
+        run_dir.mkdir()
+        rec = {
+            "title": "Test paper", "source": "openalex", "url": "https://test.com",
+            "evidence_origin": "api_export", "year": 2024,
+            "stable_ids": {},
+            "relevance_score": 5, "relevance_label": "medium",
+            "relevance_reasons": [], "relevance_flags": [],
+        }
+        _write_jsonl(run_dir / "candidates.jsonl", [rec])
+        build_top_k(run_dir, k=5, json_output=False)
+        content = (run_dir / "top_k.md").read_text()
+        forbidden = ["confirmed novel", "no prior work", "direct overlap none", "potentially novel"]
+        for term in forbidden:
+            # Allow in warning/forbidden context lines
+            for line in content.split("\n"):
+                if term in line.lower() and "not" in line.lower():
+                    continue
+                if term in line.lower():
+                    assert False, f"Test K: forbidden term '{term}' found outside warning: {line}"
+        print("  [PASS] K. top_k.md no forbidden novelty conclusions")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] K. forbidden terms: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test L: validate-candidates passes with relevance fields
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "test_l"
+        run_dir.mkdir()
+        raw = [{"title": "Test", "source": "openalex", "url": "https://t.com",
+                "evidence_origin": "api_export", "year": 2024}]
+        _write_jsonl(run_dir / "raw_results.jsonl", raw)
+        (run_dir / "search_plan.yaml").write_text(json.dumps({"must_include": ["test"]}))
+        build_candidates(run_dir, json_output=False)
+        r = validate_candidates(run_dir / "candidates.jsonl", json_output=False)
+        assert r["status"] in ("valid", "valid_with_warnings"), f"Test L: expected valid, got {r['status']}"
+        print("  [PASS] L. validate-candidates passes with relevance fields")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] L. validate-candidates: {e}")
         failed += 1
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
