@@ -32,17 +32,17 @@ The system is useful but incomplete. The primary gap is user experience: there i
 
 ### Skill Method Layer
 
-**Status: PARTIAL**
+**Status: MOSTLY COMPLETE (Phase 19 implemented)**
 
-- `stage_output_contract` exists in workflow config for `literature_search` and `novelty_check` — enforces role boundaries.
-- No reusable skill specs exist for all stages.
-- No `method_refinement` stage defined in workflow config.
+- `stage_output_contract` exists in workflow config for `literature_search`, `novelty_check`, and `method_refinement` — enforces role boundaries.
+- `method_refinement` stage added to `research_default.yaml` with full output contract defining 12 required sections, forbidden phrases, readiness gates, and next allowed actions.
+- No reusable skill specs exist for all stages beyond contracts.
 - Skill methodology is embedded in prompt text within workflow configs, not modularized.
 - The `idea-discovery` skill concept from ARIS is not implemented.
 
 ### Workflow Discipline Layer
 
-**Status: MOSTLY COMPLETE**
+**Status: MOSTLY COMPLETE (Phase 19 completed)**
 
 Completed:
 - `research_workflow.py` plan/prepare mechanism
@@ -139,8 +139,8 @@ Gaps:
 | literature evidence acquisition | OpenAlex pipeline complete, top_k exists | Yes | Insufficient (metadata only, no full text) | Single source, no full text | Multi-source (P20) |
 | literature_search | Trusted output exists | Yes | Bounded by OpenAlex only | Single source | Ready for current scope |
 | novelty_check | Trusted output exists, contract-enforced | Yes | Insufficient_evidence (OpenAlex only, no full text) | Needs broader search for strong claims | Ready for risk assessment |
-| method_refinement | **MISSING** | N/A | N/A | Not in workflow config | **Implement before experiment_plan** |
-| experiment_plan | Workflow config exists, no execution | N/A | N/A | Blocked by missing method_refinement | Wait for method_refinement |
+| method_refinement | Trusted output exists, contract-enforced, validator PASS | Yes | evidence-bounded (needs_more_literature_evidence) | readiness gate: needs_more_literature_evidence — blocked from experiment_plan | Ready — but experiment_plan blocked until more literature evidence |
+| experiment_plan | Workflow config exists, no execution | N/A | N/A | Blocked by needs_more_literature_evidence from method_refinement | Wait for more literature evidence |
 | implementation_plan | Workflow config exists | N/A | N/A | Blocked by experiment_plan | Wait |
 | experiment_bridge | Not in workflow config | N/A | N/A | Not designed yet | P1 |
 | result_judge | Workflow config exists | N/A | N/A | Blocked by experiment_bridge | Wait |
@@ -160,7 +160,7 @@ Gaps:
 | Paper parsing | Section 8.9 | Not implemented |
 | Literature material store | Section 8.10 | Partial (search_runs only) |
 | Manual acquisition workflow | Section 8.8 | Not implemented |
-| Method refinement stage | Section 12 | Not in workflow config |
+| Method refinement stage | Section 12 | IMPLEMENTED (Phase 19) |
 | Status tracking | Section 12.10 | Mostly complete (Phase 18A/B/C) |
 | Core workflow tests | Section 9 | Limited (LRQ-010) |
 | Codex MCP route | Section 10.7 | Not usable (self-test failures) |

@@ -1,7 +1,9 @@
 # One-Command Trusted Research Automation Roadmap
 
 **Date:** 2026-05-13
-**Phase 18A/B/C Status:** IMPLEMENTED — `tools/research_cli.py` provides `status`, `validate`, `repair-queue`, and `start --dry-run` commands. No model calls. No network calls. One-command `start --dry-run` plan shows 15 stages, 5 validators, 12 planned outputs, 10 stop conditions. Phase 18D (live start) remains future work.
+**Phase 18A/B/C Status:** IMPLEMENTED — `tools/research_cli.py` provides `status`, `validate`, `repair-queue`, and `start --dry-run` commands. No model calls. No network calls. One-command `start --dry-run` plan shows 17 stages (including method_refinement), 6 validators, 13 planned outputs, 10 stop conditions. Phase 18D (live start) remains future work.
+
+**Phase 19 Status:** IMPLEMENTED — generic method_refinement stage added to `research_default.yaml`. Trusted output generated via trusted_role_runner (deepseek-v4-pro, ledger call_74a3b9561c50). Validator PASS. Readiness gate: needs_more_literature_evidence. Next allowed: collect_more_literature. Dry-run plan updated to include method_refinement. experiment_plan blocked until more literature evidence collected.
 
 ---
 

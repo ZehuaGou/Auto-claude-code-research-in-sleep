@@ -153,6 +153,93 @@ stages:
            It must be re-evaluated when full-text evidence becomes available."
       12. Preserve uncertainty: use "no evidence found in searched sources" instead of "does not exist".
 
+  method_refinement:
+    role: method_refiner
+    description: 方法细化 — convert research idea into precise method specification before experiment planning
+    allow_insufficient_evidence_risk_assessment: true
+    allowed_input_files:
+      - research/current/input_normalization.md
+      - research/current/trusted_outputs/research_contract.md
+      - research/current/literature_notes.md
+      - research/current/trusted_outputs/literature_search.md
+      - research/current/trusted_outputs/novelty_check.md
+      - literature/search_runs/current/top_k.md
+      - docs/LITERATURE_REPAIR_QUEUE.md
+    forbidden_context:
+      - old conclusions
+      - old experimental results
+      - unverified novelty conclusions
+      - mock/dry-run artifact
+      - external_agent_direct output
+      - user preference shortcuts
+      - implementation code
+      - paper draft
+      - experiment outputs
+      - prior optimistic summaries
+      - generator trace
+    output_file: research/current/trusted_outputs/method_refinement.md
+    require_validate: true
+    stage_output_contract: |
+      ROLE BOUNDARY — method_refinement OUTPUT CONTRACT
+      You are method_refiner. Your task is to convert the research idea and evidence-bounded novelty
+      risk assessment into a precise method specification. This is NOT an experiment plan.
+      This is NOT a novelty proof. This is NOT a paper claim.
+
+      HARD CONSTRAINTS (violation = artifact rejected):
+      1. Document title MUST be "# Method Refinement — Generic Method Specification".
+      2. Do NOT use forbidden phrases as conclusions:
+         - "confirmed novel", "no prior work", "direct overlap none", "no direct overlap found"
+         - "definitely novel", "publishable novelty", "novelty proven"
+         - "this is novel", "proven novelty"
+      3. Do NOT recommend paper writing as the next action.
+      4. Required sections (all 12 must be present):
+         - Scope and Evidence Boundary
+         - Research Idea Under Refinement
+         - Method Object Definition
+         - Inputs and Outputs
+         - Proposed Mechanism
+         - Differentiator From Closest Prior Work
+         - Testable Hypotheses
+         - Non-Claims and Claim Boundaries
+         - Minimum Experiment Boundary
+         - Risks and Open Questions
+         - Readiness Gate for experiment_plan
+         - Next Allowed Action
+      5. Scope and Evidence Boundary MUST state:
+         - This is not an experiment plan.
+         - This is not a novelty proof.
+         - This is not a paper claim.
+         - It uses current trusted artifacts and evidence-bounded novelty_check only.
+         - Current evidence limitations remain active.
+      6. Research Idea Under Refinement: restate the idea from current artifacts without expanding claims.
+      7. Differentiator From Closest Prior Work section MUST:
+         - Use "proposed differentiator" or "apparent differentiator" — never "confirmed novel".
+         - Never say "no direct overlap found" or "direct overlap none" as conclusions.
+         - Compare against closest work from literature_search / novelty_check.
+         - Always qualify differentiator as apparent, not confirmed.
+      8. Non-Claims and Claim Boundaries section MUST include:
+         - No final novelty proof.
+         - No full-text verification.
+         - No claim of superiority.
+         - No claim of general solution.
+         - No claim that prior work lacks this idea.
+      9. Readiness Gate for experiment_plan MUST be one of:
+         - ready_for_experiment_plan_with_caution
+         - needs_method_revision
+         - needs_more_literature_evidence
+         - blocked
+         Must justify the label based on current evidence and method definition quality.
+      10. Next Allowed Action MUST be one of:
+          - continue_to_experiment_plan_with_caution
+          - revise_method_refinement
+          - collect_more_literature
+          - stop
+          Do NOT recommend paper writing.
+      11. End the document with a boundary statement:
+          "This artifact is a method specification only. It is not an experiment plan,
+           a novelty proof, or a paper claim. Do not advance to experiment_plan without
+           meeting the readiness gate criteria above."
+
   experiment_plan:
     role: experiment_auditor
     description: 实验计划 — design the experiment before writing any code
