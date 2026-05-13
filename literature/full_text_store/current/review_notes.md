@@ -91,7 +91,7 @@ Template for per-paper manual review. Fill in after reading the full text.
 - **Source file available?** yes (PDF only)
 - **Local source type:** pdf
 - **full_text_status:** likely_full_text
-- **Method summary:** PDF text extracted. Pending trusted review ingestion.
+- **Method summary:** Partial trusted review completed from bounded extracted-text summary; full human review still needed.
 - **Uses hidden states?** unknown
 - **Uses token-level sequence?** unknown
 - **Uses trajectory/dynamics?** unknown
@@ -121,7 +121,7 @@ Template for per-paper manual review. Fill in after reading the full text.
 
 ## Phase 21C — PDF Extraction + Alternative Acquisition (2026-05-13)
 
-**PDF extraction:** ftq_002 (Lookback Lens) and ftq_008 (Hallucination Detection with Internal Layers) now have extraction_status=extracted_text. Trusted review ingestion is still pending.
+**PDF extraction:** ftq_002 (Lookback Lens) and ftq_008 (Hallucination Detection with Internal Layers) now have extraction_status=extracted_text. Partial trusted review completed from bounded extracted-text summary; full human review still needed.
 
 **Alternative acquisition attempted:**
 - ftq_002 (Lookback Lens): ACQUIRED via ACL Anthology (open_pdf). DOI: 10.18653/v1/2024.emnlp-main.84. PDF extracted to raw_pdfs/2024.emnlp-main.84.pdf.
@@ -132,7 +132,7 @@ Template for per-paper manual review. Fill in after reading the full text.
 
 **Store status after Phase 21C:**
 - 4 source_acquired_unreviewed (arxiv_source)
-- 2 likely_full_text (ftq_002, ftq_008 — both PDF text extracted, pending trusted review ingestion)
+- 2 likely_full_text (ftq_002, ftq_008 — both PDF text extracted; partial trusted review completed from bounded extracted-text summary, full human review still needed)
 - 3 metadata_page_only
 - 1 landing_page_only
 

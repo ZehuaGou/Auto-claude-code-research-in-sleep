@@ -32,7 +32,7 @@
       "full_text_status": "likely_full_text",
       "acquisition_method": "open_pdf",
       "review_status": "pending",
-      "notes": "PDF text extracted; pending trusted review ingestion.",
+      "notes": "partial trusted review completed from bounded extracted-text summary; full human review still needed",
       "extraction_status": "extracted_text",
       "local_text_path": "literature\\full_text_store\\current\\extracted_text\\ftq_002.txt",
       "extraction_method": "pdf_text"
@@ -134,7 +134,7 @@
       "full_text_status": "likely_full_text",
       "acquisition_method": "arxiv_pdf",
       "review_status": "pending",
-      "notes": "PDF text extracted; pending trusted review ingestion.",
+      "notes": "partial trusted review completed from bounded extracted-text summary; full human review still needed",
       "extraction_status": "extracted_text",
       "local_text_path": "literature\\full_text_store\\current\\extracted_text\\ftq_008.txt",
       "extraction_method": "pdf_text"

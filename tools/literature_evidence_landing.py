@@ -6887,10 +6887,11 @@ def _build_trusted_review_summary(text: str) -> str:
     abstract_idx = lowered.find("abstract")
     intro_idx = lowered.find("introduction")
     start_idx = abstract_idx if abstract_idx >= 0 else 0
-    end_idx = intro_idx + 1400 if intro_idx >= 0 else start_idx + 2800
+    end_idx = intro_idx + 500 if intro_idx >= 0 else start_idx + 900
     chunks = [
-        "Abstract and early-section excerpt:",
-        _compact_trusted_review_excerpt(text[start_idx:end_idx], 2600),
+        "partial_review_input: bounded_extracted_text_summary_only",
+        "abstract_level_summary:",
+        _compact_trusted_review_excerpt(text[start_idx:end_idx], 700),
     ]
 
     keywords = [
@@ -6908,14 +6909,14 @@ def _build_trusted_review_summary(text: str) -> str:
         idx = lowered.find(keyword)
         if idx < 0:
             continue
-        span_start = max(0, idx - 300)
-        span_end = min(len(text), idx + 700)
-        excerpt = _compact_trusted_review_excerpt(text[span_start:span_end], 1000)
+        span_start = max(0, idx - 120)
+        span_end = min(len(text), idx + 220)
+        excerpt = _compact_trusted_review_excerpt(text[span_start:span_end], 260)
         excerpts.append(f"[{keyword}] {excerpt}")
-        if len(excerpts) >= 4:
+        if len(excerpts) >= 2:
             break
     if excerpts:
-        chunks.append("Keyword windows:")
+        chunks.append("method_relevant_keyword_windows:")
         chunks.extend(excerpts)
 
     return "\n".join(chunks).strip()
