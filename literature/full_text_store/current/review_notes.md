@@ -142,14 +142,35 @@ Template for per-paper manual review. Fill in after reading the full text.
 
 **ftq_010 (Unsupervised Real-Time Hallucination Detection):** arXiv source + PDF already acquired (2403.06448). pypdf extraction done → extracted_text/ftq_010.txt (1233 lines). Now reviewable.
 
-**ftq_007 (Detection of LLM Hallucinations Using Late Internal Representations):** IEEE DOI, paywall protected. No open-access path without Sci-Hub. Remains manual_required.
+**ftq_007 (Detection of LLM Hallucinations Using Late Internal Representations):** IEEE DOI, paywall protected. Remains manual_required.
 
-**ftq_009 (MixHD):** IEEE DOI, paywall protected. No open-access path without Sci-Hub. Remains manual_required.
+**ftq_009 (MixHD):** IEEE DOI, paywall protected. Remains manual_required.
 
 **Store status after Phase 21D:**
 - 4 likely_full_text (ftq_002, ftq_004, ftq_008, ftq_010 — all have extracted text, pending review)
 - 4 source_acquired_unreviewed (ftq_001, ftq_003, ftq_005, ftq_006 — LaTeX source only)
 - 2 paywall_protected (ftq_007, ftq_009 — manual required)
+
+---
+
+## Phase 21E — close remaining full-text evidence gaps (2026-05-14)
+
+**ftq_007 (Detection of LLM Hallucinations Using Late Internal Representations):**
+- Authors: Sakhawat Hossan, Jing Deng (UNC Greensboro). Venue: ICMLA 2025.
+- Exhaustive legal OA search: arXiv (not found), OpenAlex (closed, is_oa=false), Crossref (IEEE policy licenses only), Semantic Scholar (openAccessPdf empty), DOI page (IEEE Xplore paywall). No author homepage or institutional repository found.
+- Sci-Hub attempted: SE (DDoS-Guard captcha-blocked), RU (not-in-database, "статьи по запросу не найдены").
+- **Result: paywall_blocked, legal_open_full_text_not_found.** IEEE Xplore subscription required.
+
+**ftq_009 (MixHD):**
+- Authors: Chuang Li, Bingnan Xing, et al. (CAS/Institute of Information Engineering). Venue: ICASSP 2025.
+- Exhaustive legal OA search: arXiv (not found), OpenAlex (closed, is_oa=false), Crossref (IEEE policy licenses only), Semantic Scholar (openAccessPdf empty), DOI page (IEEE Xplore paywall). No author homepage or institutional repository found.
+- Sci-Hub attempted: SE (DDoS-Guard captcha-blocked), RU (not-in-database, "статья отсутствует в базе").
+- **Result: paywall_blocked, legal_open_full_text_not_found.** IEEE Xplore subscription required.
+
+**Store status after Phase 21E:**
+- 4 likely_full_text (ftq_002, ftq_004, ftq_008, ftq_010 — all have extracted text, pending review)
+- 4 source_acquired_unreviewed (ftq_001, ftq_003, ftq_005, ftq_006 — LaTeX source only)
+- 2 manual_required, paywall_blocked (ftq_007, ftq_009 — no open access exists)
 
 ---
 
