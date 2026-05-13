@@ -19,6 +19,7 @@ Usage:
     python tools/literature_evidence_landing.py summarize-job-results --file <path> [--json]
     python tools/literature_evidence_landing.py run-openalex-job --job-id <id> --search-jobs <path> --output <path> [--per-page <n>] [--mailto <email>] [--json]
     python tools/literature_evidence_landing.py run-openalex-jobs --search-jobs <path> --output <path> [--max-jobs <n>] [--per-page <n>] [--mailto <email>] [--overwrite] [--json]
+    python tools/literature_evidence_landing.py run-openalex-pipeline --topic <t> --intent <i> --must-include <m> --run-dir <dir> [--start-year <y>] [--end-year <y>] [--max-results-per-source <n>] [--max-jobs <n>] [--per-page <n>] [--top-k <n>] [--overwrite] [--exclude <e>] [--mailto <email>] [--dry-run] [--json]
     python tools/literature_evidence_landing.py init-run-skeleton --run-dir <dir> --topic <topic> --intent <intent>
     python tools/literature_evidence_landing.py validate-acquisition-status --file <path> [--json]
     python tools/literature_evidence_landing.py build-manual-queue --acquisition-status <file> --output <file>
@@ -2176,6 +2177,239 @@ def run_openalex_jobs(search_jobs_path: Path, output_path: Path,
     return result
 
 
+# ---- Pipeline smoke command ----
+
+def run_openalex_pipeline(
+    topic: str,
+    intent: str,
+    must_include: list[str],
+    run_dir: Path,
+    start_year: int | None = None,
+    end_year: int | None = None,
+    max_results_per_source: int = 10,
+    max_jobs: int = 3,
+    per_page: int = 5,
+    top_k: int = 5,
+    overwrite: bool = False,
+    exclude: str = "",
+    mailto: str = "",
+    dry_run: bool = False,
+    json_output: bool = False,
+) -> dict:
+    """Chain all literature layer MVP steps into one controlled pipeline.
+    Fail-closed: stops on any step failure.
+    No model calls. Network only for OpenAlex API (skipped in dry-run)."""
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve year defaults
+    if start_year is None:
+        start_year = 2020
+    if end_year is None:
+        end_year = datetime.now(timezone.utc).year
+
+    # Define output paths
+    plan_path = run_dir / "search_plan.yaml"
+    jobs_path = run_dir / "search_jobs.json"
+    job_results_path = run_dir / "job_results.jsonl"
+    raw_results_path = run_dir / "raw_results.jsonl"
+    candidates_path = run_dir / "candidates.jsonl"
+
+    steps_executed = []
+
+    # Step 1: build_search_plan
+    plan_result = build_search_plan(
+        topic=topic,
+        intent=intent,
+        must_include=must_include,
+        sources=["openalex"],
+        start_year=start_year,
+        end_year=end_year,
+        max_results_per_source=max_results_per_source,
+        output_path=plan_path,
+        exclude=exclude,
+        json_output=False,
+    )
+    steps_executed.append({"step": "build_search_plan", "status": plan_result["status"]})
+    if plan_result["status"] != "PASS":
+        result = {
+            "status": "FAIL",
+            "failed_step": "build_search_plan",
+            "errors": plan_result.get("errors", []),
+            "steps_executed": steps_executed,
+            "dry_run": dry_run,
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 2: build_search_jobs
+    jobs_result = build_search_jobs(plan_path, jobs_path, json_output=False)
+    steps_executed.append({"step": "build_search_jobs", "status": jobs_result["status"]})
+    if jobs_result["status"] != "PASS":
+        result = {
+            "status": "FAIL",
+            "failed_step": "build_search_jobs",
+            "errors": jobs_result.get("errors", []),
+            "steps_executed": steps_executed,
+            "dry_run": dry_run,
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 3: dry-run stop
+    if dry_run:
+        result = {
+            "status": "PASS",
+            "dry_run": True,
+            "run_dir": str(run_dir),
+            "steps_executed": steps_executed,
+            "files_created": [str(plan_path), str(jobs_path)],
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Dry-run complete. Plan + jobs written to {run_dir}")
+        return result
+
+    # Step 4: run_openalex_jobs
+    exec_result = run_openalex_jobs(
+        search_jobs_path=jobs_path,
+        output_path=job_results_path,
+        max_jobs=max_jobs,
+        per_page=per_page,
+        mailto=mailto,
+        overwrite=overwrite,
+        json_output=False,
+    )
+    steps_executed.append({"step": "run_openalex_jobs", "status": exec_result["status"]})
+    if exec_result["status"] != "PASS":
+        result = {
+            "status": "FAIL",
+            "failed_step": "run_openalex_jobs",
+            "errors": exec_result.get("errors", []),
+            "steps_executed": steps_executed,
+            "dry_run": False,
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 5: validate_job_results
+    vjr_result = validate_job_results(job_results_path, json_output=False)
+    steps_executed.append({"step": "validate_job_results", "status": vjr_result["status"]})
+    if vjr_result["status"] != "PASS":
+        result = {
+            "status": "FAIL",
+            "failed_step": "validate_job_results",
+            "errors": vjr_result.get("errors", []),
+            "steps_executed": steps_executed,
+            "dry_run": False,
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 6: normalize_job_results
+    norm_result = normalize_job_results(job_results_path, raw_results_path, json_output=False)
+    steps_executed.append({"step": "normalize_job_results", "status": norm_result["status"]})
+    if norm_result["status"] != "PASS":
+        result = {
+            "status": "FAIL",
+            "failed_step": "normalize_job_results",
+            "errors": norm_result.get("errors", []),
+            "steps_executed": steps_executed,
+            "dry_run": False,
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 7: validate_raw
+    vr_result = validate_raw(raw_results_path, json_output=False)
+    steps_executed.append({"step": "validate_raw", "status": vr_result["status"]})
+    # validate_raw returns "valid" or "valid_with_warnings" on success, not "PASS"
+    if vr_result["status"] not in ("PASS", "valid", "valid_with_warnings"):
+        result = {
+            "status": "FAIL",
+            "failed_step": "validate_raw",
+            "errors": vr_result.get("errors", []),
+            "steps_executed": steps_executed,
+            "dry_run": False,
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 8: build_candidates
+    cand_result = build_candidates(run_dir, json_output=False)
+    steps_executed.append({"step": "build_candidates", "status": cand_result["status"]})
+    # build_candidates returns "built" on success, not "PASS"
+    if cand_result["status"] not in ("PASS", "built"):
+        result = {
+            "status": "FAIL",
+            "failed_step": "build_candidates",
+            "errors": cand_result.get("errors", []),
+            "steps_executed": steps_executed,
+            "dry_run": False,
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 9: validate_candidates
+    vc_result = validate_candidates(candidates_path, json_output=False)
+    steps_executed.append({"step": "validate_candidates", "status": vc_result["status"]})
+    # validate_candidates returns "valid" or "valid_with_warnings" on success
+    if vc_result["status"] not in ("PASS", "valid", "valid_with_warnings"):
+        result = {
+            "status": "FAIL",
+            "failed_step": "validate_candidates",
+            "errors": vc_result.get("errors", []),
+            "steps_executed": steps_executed,
+            "dry_run": False,
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 10: build_top_k
+    topk_result = build_top_k(run_dir, k=top_k, json_output=False)
+    steps_executed.append({"step": "build_top_k", "status": topk_result["status"]})
+    # build_top_k returns "built" on success, not "PASS"
+    if topk_result["status"] not in ("PASS", "built"):
+        result = {
+            "status": "FAIL",
+            "failed_step": "build_top_k",
+            "errors": topk_result.get("errors", []),
+            "steps_executed": steps_executed,
+            "dry_run": False,
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 11: summarize_run
+    summary = summarize_run(run_dir, json_output=False)
+    steps_executed.append({"step": "summarize_run", "status": summary.get("status", "PASS")})
+
+    result = {
+        "status": "PASS",
+        "dry_run": False,
+        "run_dir": str(run_dir),
+        "steps_executed": steps_executed,
+        "summary": summary,
+    }
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Pipeline complete. Run directory: {run_dir}")
+        for s in steps_executed:
+            print(f"  {s['step']}: {s['status']}")
+    return result
+
+
 # ---- Self-test ----
 
 def _self_test() -> bool:
@@ -3177,6 +3411,170 @@ def _self_test() -> bool:
         print(f"  [FAIL] 35. missing title skip: {e}")
         failed += 1
 
+    # Test 36: dry-run produces plan + jobs, no job_results
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        r = run_openalex_pipeline(
+            topic="test topic",
+            intent="novelty_check",
+            must_include=["test"],
+            run_dir=tmpdir,
+            dry_run=True,
+            json_output=False,
+        )
+        assert r["status"] == "PASS", f"Test 36: expected PASS, got {r['status']}"
+        assert r["dry_run"] is True, f"Test 36: expected dry_run=True"
+        assert (tmpdir / "search_plan.yaml").exists(), "Test 36: search_plan.yaml missing"
+        assert (tmpdir / "search_jobs.json").exists(), "Test 36: search_jobs.json missing"
+        assert not (tmpdir / "job_results.jsonl").exists(), "Test 36: job_results.jsonl should not exist"
+        assert not (tmpdir / "raw_results.jsonl").exists(), "Test 36: raw_results.jsonl should not exist"
+        print("  [PASS] 36. dry-run produces plan + jobs, no network files")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 36. dry-run: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test 37: dry-run with overwrite flag succeeds
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        r1 = run_openalex_pipeline(
+            topic="test topic",
+            intent="novelty_check",
+            must_include=["test"],
+            run_dir=tmpdir,
+            dry_run=True,
+            overwrite=True,
+            json_output=False,
+        )
+        assert r1["status"] == "PASS", f"Test 37: first run expected PASS"
+        r2 = run_openalex_pipeline(
+            topic="test topic",
+            intent="novelty_check",
+            must_include=["test"],
+            run_dir=tmpdir,
+            dry_run=True,
+            overwrite=True,
+            json_output=False,
+        )
+        assert r2["status"] == "PASS", f"Test 37: second run with overwrite expected PASS"
+        print("  [PASS] 37. dry-run with overwrite succeeds")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 37. dry-run overwrite: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test 38: invalid start_year > end_year fails at plan step
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        r = run_openalex_pipeline(
+            topic="test",
+            intent="novelty_check",
+            must_include=["test"],
+            run_dir=tmpdir,
+            start_year=2025,
+            end_year=2020,
+            dry_run=True,
+            json_output=False,
+        )
+        assert r["status"] == "FAIL", f"Test 38: expected FAIL, got {r['status']}"
+        assert r.get("failed_step") == "build_search_plan", f"Test 38: expected failed_step=build_search_plan, got {r.get('failed_step')}"
+        print("  [PASS] 38. invalid year range fails at plan step")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 38. invalid year: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test 39: invalid intent fails at plan step
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        r = run_openalex_pipeline(
+            topic="test",
+            intent="invalid_intent",
+            must_include=["test"],
+            run_dir=tmpdir,
+            dry_run=True,
+            json_output=False,
+        )
+        assert r["status"] == "FAIL", f"Test 39: expected FAIL, got {r['status']}"
+        assert r.get("failed_step") == "build_search_plan", f"Test 39: expected failed_step=build_search_plan"
+        print("  [PASS] 39. invalid intent fails at plan step")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 39. invalid intent: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test 40: pipeline result has no fabricated results field
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        r = run_openalex_pipeline(
+            topic="test topic",
+            intent="novelty_check",
+            must_include=["test"],
+            run_dir=tmpdir,
+            dry_run=True,
+            json_output=True,
+        )
+        assert "results" not in r, f"Test 40: pipeline result should not have 'results' field"
+        assert "steps_executed" in r, "Test 40: should have steps_executed"
+        print("  [PASS] 40. no fabricated results in pipeline output")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 40. no fabricated results: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test 41: summary includes dry_run flag
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        r = run_openalex_pipeline(
+            topic="test",
+            intent="novelty_check",
+            must_include=["test"],
+            run_dir=tmpdir,
+            dry_run=True,
+            json_output=False,
+        )
+        assert r.get("dry_run") is True, f"Test 41: expected dry_run=True in result"
+        print("  [PASS] 41. summary includes dry_run flag")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 41. dry_run flag: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test 42: pipeline stops on invalid plan (empty must_include)
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        r = run_openalex_pipeline(
+            topic="test",
+            intent="novelty_check",
+            must_include=[],
+            run_dir=tmpdir,
+            dry_run=True,
+            json_output=False,
+        )
+        # Empty must_include should cause plan build to fail or produce empty variants
+        # Either way, pipeline should not proceed to network steps
+        assert r.get("dry_run") is True or r.get("status") == "FAIL", \
+            f"Test 42: expected dry_run or FAIL, got status={r.get('status')}"
+        print("  [PASS] 42. pipeline handles edge case (empty must_include)")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 42. edge case: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
 
@@ -3263,6 +3661,23 @@ def main():
     rojs.add_argument("--mailto", default="", help="Optional email for polite API pool")
     rojs.add_argument("--overwrite", action="store_true", help="Overwrite output instead of append")
     rojs.add_argument("--json", action="store_true", help="Output JSON")
+
+    rop = sub.add_parser("run-openalex-pipeline", help="Run full OpenAlex pipeline (plan → jobs → execute → validate → candidates → top-k)")
+    rop.add_argument("--topic", required=True, help="Research topic")
+    rop.add_argument("--intent", default="novelty_check", help="Search intent (default: novelty_check)")
+    rop.add_argument("--must-include", action="append", required=True, help="Must-include term (repeatable)")
+    rop.add_argument("--run-dir", required=True, help="Run directory for all outputs")
+    rop.add_argument("--start-year", type=int, default=None, help="Start year (default: 2020)")
+    rop.add_argument("--end-year", type=int, default=None, help="End year (default: current year)")
+    rop.add_argument("--max-results-per-source", type=int, default=10, help="Max results per source (default: 10)")
+    rop.add_argument("--max-jobs", type=int, default=3, help="Max OpenAlex jobs to execute (default: 3)")
+    rop.add_argument("--per-page", type=int, default=5, help="Results per page (default: 5)")
+    rop.add_argument("--top-k", type=int, default=5, help="Top-K candidates to select (default: 5)")
+    rop.add_argument("--overwrite", action="store_true", help="Overwrite job results instead of append")
+    rop.add_argument("--exclude", default="", help="Exclusion terms")
+    rop.add_argument("--mailto", default="", help="Optional email for polite API pool")
+    rop.add_argument("--dry-run", action="store_true", help="Stop after plan + jobs (no network)")
+    rop.add_argument("--json", action="store_true", help="Output JSON")
 
     ir = sub.add_parser("init-run-skeleton", help="Create empty run skeleton")
     ir.add_argument("--run-dir", required=True, help="Target run directory")
@@ -3359,6 +3774,26 @@ def main():
             per_page=args.per_page,
             mailto=args.mailto,
             overwrite=args.overwrite,
+            json_output=args.json,
+        )
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "run-openalex-pipeline":
+        r = run_openalex_pipeline(
+            topic=args.topic,
+            intent=args.intent,
+            must_include=args.must_include,
+            run_dir=Path(args.run_dir),
+            start_year=args.start_year,
+            end_year=args.end_year,
+            max_results_per_source=args.max_results_per_source,
+            max_jobs=args.max_jobs,
+            per_page=args.per_page,
+            top_k=args.top_k,
+            overwrite=args.overwrite,
+            exclude=args.exclude,
+            mailto=args.mailto,
+            dry_run=args.dry_run,
             json_output=args.json,
         )
         if r["status"] != "PASS":

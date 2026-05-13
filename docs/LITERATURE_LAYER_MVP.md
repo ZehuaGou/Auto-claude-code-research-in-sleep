@@ -17,7 +17,7 @@ A schema-level MVP skeleton for the Literature Search & Acquisition Layer. It pr
 - Acquisition status schema validation
 - Manual acquisition queue building
 - Run summarization (no network calls)
-- Self-tests (16 tests, tempfile-based, no network)
+- Self-tests (42 tests, tempfile-based, no network)
 
 This is **not** a full implementation. It has no real search execution, no PDF download, no PDF parsing, no citation dedup/ranking. It only defines the data contracts and validates them.
 
@@ -251,7 +251,7 @@ Reports: `search_plan_present`, `search_plan_valid`, `search_jobs_present`, `sea
 
 ### --self-test
 
-Runs 24 tempfile-based self-tests covering all commands including query planning, search job expansion, and source adapter interface.
+Runs 42 tempfile-based self-tests covering all commands including query planning, search job expansion, source adapter interface, and pipeline smoke command.
 
 ```bash
 python tools/literature_evidence_landing.py --self-test

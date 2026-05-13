@@ -243,6 +243,47 @@ search_jobs.json
   → validate-raw
 ```
 
+#### run-openalex-pipeline
+
+Run the full OpenAlex pipeline from topic to top-k:
+
+```bash
+python tools/literature_evidence_landing.py run-openalex-pipeline \
+  --topic "LLM hallucination detection hidden states" \
+  --intent novelty_check \
+  --must-include "hallucination detection" \
+  --must-include "hidden states" \
+  --run-dir tmp/my_run \
+  --start-year 2020 \
+  --end-year 2026 \
+  --max-results-per-source 10 \
+  --max-jobs 3 \
+  --per-page 5 \
+  --top-k 5 \
+  --json
+```
+
+Pipeline steps (fail-closed):
+1. `build_search_plan` → search_plan.yaml
+2. `build_search_jobs` → search_jobs.json
+3. (dry-run stops here)
+4. `run_openalex_jobs` → job_results.jsonl
+5. `validate_job_results` → check job_results.jsonl
+6. `normalize_job_results` → raw_results.jsonl
+7. `validate_raw` → check raw_results.jsonl
+8. `build_candidates` → candidates.jsonl
+9. `validate_candidates` → check candidates.jsonl
+10. `build_top_k` → top_k.md
+11. `summarize_run` → final summary
+
+Options:
+- `--dry-run`: Stop after plan + jobs (no network)
+- `--overwrite`: Overwrite job results instead of append
+- `--mailto`: Optional email for OpenAlex polite pool
+- `--exclude`: Exclusion terms for query planning
+
+Any step failure stops the pipeline and returns JSON with `failed_step` and `errors`.
+
 ---
 
 ## Rules for Future Adapters
