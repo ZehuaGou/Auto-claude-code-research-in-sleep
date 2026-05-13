@@ -6701,6 +6701,21 @@ def validate_fulltext_store(store_path: Path, json_output: bool = False) -> dict
             if not item.get("local_markdown_path"):
                 warnings.append(f"extracted_markdown item {qid} has no local_markdown_path")
 
+        # Provenance and safety flag checks
+        provenance = item.get("provenance", "")
+        if method == "manual_local" and not provenance:
+            warnings.append(f"manual_local item {qid} has no provenance field")
+        usage_scope = item.get("usage_scope", "")
+        if method == "manual_local" and usage_scope not in ("trusted_review_candidate", ""):
+            errors.append(f"manual_local item {qid} has unexpected usage_scope: {usage_scope}")
+        if item.get("should_commit_raw") is True:
+            errors.append(f"should_commit_raw is true for {qid} — raw artifacts must not be committed")
+        if item.get("should_commit_extracted_full_text") is True:
+            errors.append(f"should_commit_extracted_full_text is true for {qid} — extracted text must not be committed")
+        if method == "manual_local" and provenance == "user_supplied_local_file":
+            if item.get("provenance_verified") is not False:
+                warnings.append(f"manual_local item {qid} should have provenance_verified=false until human review")
+
     # Check manifest/queue consistency
     queue_path = store_path / "full_text_queue.json"
     if queue_path.exists():
@@ -7330,14 +7345,15 @@ def ingest_manual_fulltext(
     local_file: Path,
     json_output: bool = False,
 ) -> dict:
-    """Ingest a local file (PDF or text) into the full-text store for a specific queue_id.
+    """Ingest a local file (PDF, text, or markdown) into the full-text store.
 
-    For .txt files: copies directly to extracted_text/{queue_id}.txt
+    For .txt/.md files: copies directly to extracted_text/{queue_id}.txt
     For .pdf files: extracts text via pypdf/pymupdf and saves to extracted_text/{queue_id}.txt
-    Updates manifest.json and full_text_queue.json.
+    Updates manifest.json, full_text_queue.json, and review_notes.md.
     """
     manifest_path = store_path / "manifest.json"
     queue_path = store_path / "full_text_queue.json"
+    review_notes_path = store_path / "review_notes.md"
 
     if not manifest_path.exists():
         return {"status": "FAIL", "error": f"manifest.json not found in {store_path}"}
@@ -7364,13 +7380,11 @@ def ingest_manual_fulltext(
     suffix = local_file.suffix.lower()
     extracted_path = extracted_dir / f"{queue_id}.txt"
 
-    if suffix == ".txt":
-        # Copy text file directly
+    if suffix in (".txt", ".md"):
         import shutil
         shutil.copy2(str(local_file), str(extracted_path))
         extraction_method = "manual_text_copy"
     elif suffix == ".pdf":
-        # Try pypdf first, then pymupdf
         extracted_text = None
         try:
             import pypdf
@@ -7411,17 +7425,36 @@ def ingest_manual_fulltext(
 
         extracted_path.write_text(extracted_text, encoding="utf-8")
     else:
-        return {"status": "FAIL", "error": f"Unsupported file type: {suffix}. Use .txt or .pdf"}
+        return {"status": "FAIL", "error": f"Unsupported file type: {suffix}. Use .txt, .md, or .pdf"}
 
-    # Update manifest item
+    # Update manifest item with provenance fields
     rel_path = str(extracted_path.relative_to(store_path)).replace("\\", "/")
     target_item["full_text_status"] = "likely_full_text"
     target_item["extraction_status"] = "extracted_text"
     target_item["extraction_method"] = extraction_method
     target_item["local_text_path"] = rel_path
-    target_item["notes"] = f"manual_local ingestion from {local_file.name}"
+    target_item["acquisition_method"] = "manual_local"
+    target_item["provenance"] = "user_supplied_local_file"
+    target_item["provenance_verified"] = False
+    target_item["usage_scope"] = "trusted_review_candidate"
+    target_item["should_commit_raw"] = False
+    target_item["should_commit_extracted_full_text"] = False
+    target_item["notes"] = "user supplied local full text; pending trusted review"
 
-    # Save manifest
+    # Update manifest summary
+    m_summary = manifest.get("summary", {})
+    status_counts = {}
+    extract_counts = {}
+    for item in manifest.get("items", []):
+        fts = item.get("full_text_status", "unknown")
+        ets = item.get("extraction_status", "unknown")
+        status_counts[fts] = status_counts.get(fts, 0) + 1
+        extract_counts[ets] = extract_counts.get(ets, 0) + 1
+    m_summary.update(status_counts)
+    m_summary.update(extract_counts)
+    m_summary["total_items"] = len(manifest.get("items", []))
+    manifest["summary"] = m_summary
+
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # Update queue
@@ -7431,12 +7464,17 @@ def ingest_manual_fulltext(
             qi["extraction_status"] = "extracted_text"
             qi["extraction_method"] = extraction_method
             qi["local_text_path"] = rel_path
-            qi["notes"] = f"manual_local ingestion from {local_file.name}"
+            qi["acquisition_method"] = "manual_local"
+            qi["provenance"] = "user_supplied_local_file"
+            qi["provenance_verified"] = False
+            qi["usage_scope"] = "trusted_review_candidate"
+            qi["should_commit_raw"] = False
+            qi["should_commit_extracted_full_text"] = False
+            qi["notes"] = "user supplied local full text; pending trusted review"
             break
 
     # Update queue summary
-    summary = queue.get("summary", {})
-    # Recount from items
+    q_summary = queue.get("summary", {})
     status_counts = {}
     extract_counts = {}
     for qi in queue.get("items", []):
@@ -7444,12 +7482,33 @@ def ingest_manual_fulltext(
         ets = qi.get("extraction_status", "unknown")
         status_counts[fts] = status_counts.get(fts, 0) + 1
         extract_counts[ets] = extract_counts.get(ets, 0) + 1
-    summary.update(status_counts)
-    summary.update(extract_counts)
-    summary["total_items"] = len(queue.get("items", []))
-    queue["summary"] = summary
+    q_summary.update(status_counts)
+    q_summary.update(extract_counts)
+    q_summary["total_items"] = len(queue.get("items", []))
+    queue["summary"] = q_summary
 
     queue_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Update review_notes.md (append, do not write original content)
+    review_entry = (
+        f"\n---\n\n## Paper: {queue_id} — manual_local ingest\n\n"
+        f"- **Source file:** {local_file.name}\n"
+        f"- **Extraction method:** {extraction_method}\n"
+        f"- **Provenance:** user_supplied_local_file\n"
+        f"- **Provenance verified:** no (pending human verification)\n"
+        f"- **Usage scope:** trusted_review_candidate\n"
+        f"- **Should commit raw:** no\n"
+        f"- **Should commit extracted text:** no\n"
+        f"- **Date:** manual_local ingest\n\n"
+        f"**Pending trusted review.** Do not treat as verified evidence.\n"
+    )
+    if review_notes_path.exists():
+        existing = review_notes_path.read_text(encoding="utf-8")
+        # Avoid duplicate entries
+        if f"{queue_id} — manual_local ingest" not in existing:
+            review_notes_path.write_text(existing + review_entry, encoding="utf-8")
+    else:
+        review_notes_path.write_text(f"# Full-text Review Notes\n{review_entry}", encoding="utf-8")
 
     return {
         "status": "PASS",
@@ -7458,6 +7517,7 @@ def ingest_manual_fulltext(
         "extraction_method": extraction_method,
         "extracted_path": rel_path,
         "full_text_status": "likely_full_text",
+        "provenance": "user_supplied_local_file",
     }
 
 
@@ -7666,7 +7726,8 @@ def main():
     imf = sub.add_parser("ingest-manual-fulltext", help="Ingest a local file into the full-text store")
     imf.add_argument("--store", required=True, help="Path to full-text store directory")
     imf.add_argument("--queue-id", required=True, help="Queue ID of the paper to update")
-    imf.add_argument("--local-file", required=True, help="Path to local file (.txt or .pdf)")
+    imf.add_argument("--local-file", required=False, help="Path to local file (.txt, .md, or .pdf)")
+    imf.add_argument("--file", dest="local_file", required=False, help="Alias for --local-file")
     imf.add_argument("--json", action="store_true", help="Output JSON")
 
     parser.add_argument("--self-test", action="store_true", help="Run self-tests")
@@ -7917,6 +7978,9 @@ def main():
         if r["status"] != "PASS":
             sys.exit(1)
     elif args.command == "ingest-manual-fulltext":
+        if not args.local_file:
+            print("error: --local-file or --file is required", file=sys.stderr)
+            sys.exit(1)
         r = ingest_manual_fulltext(
             store_path=Path(args.store),
             queue_id=args.queue_id,

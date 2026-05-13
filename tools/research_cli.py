@@ -4,7 +4,7 @@ Research CLI — Unified status, validation, and repair queue entrypoint.
 
 Usage:
     python tools/research_cli.py status [--json]
-    python tools/research_cli.py validate [--json]
+    python tools/research_cli.py validate [--json] [--system-only] [--strict-case]
     python tools/research_cli.py repair-queue [--json]
     python tools/research_cli.py start --idea '...' --mode novelty_risk --dry-run [--json]
     python tools/research_cli.py continue --stage <stage> --dry-run [--json]
@@ -21,6 +21,105 @@ from pathlib import Path
 from typing import Any, Optional
 
 ROOT = Path(__file__).parent.parent.resolve()
+WORKFLOW_CONFIG = ROOT / "configs" / "workflows" / "research_default.yaml"
+
+
+# ─────────────────────────────────────────────────────────
+# Workflow config loader (lightweight YAML-like parser)
+# ─────────────────────────────────────────────────────────
+def load_workflow_config() -> dict[str, Any]:
+    """Load research_default.yaml and return stage configs keyed by stage name.
+
+    Uses a lightweight parser that handles the specific structure of the
+    workflow config: nested YAML with lists and block scalars.
+    """
+    if not WORKFLOW_CONFIG.exists():
+        return {}
+
+    text = WORKFLOW_CONFIG.read_text(encoding="utf-8")
+    stages: dict[str, Any] = {}
+    current_stage: str | None = None
+    current_section: str | None = None
+    in_block_scalar = False
+    block_lines: list[str] = []
+    block_indent = 0
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+
+        # Handle block scalar (stage_output_contract: |)
+        if in_block_scalar:
+            if stripped and not line.startswith(" " * block_indent) and not line.startswith("\t"):
+                # End of block scalar
+                if current_stage and current_section:
+                    stages[current_stage][current_section] = "\n".join(block_lines).strip()
+                in_block_scalar = False
+                block_lines = []
+            else:
+                block_lines.append(line.rstrip())
+                continue
+
+        # Skip empty lines and comments
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        # Top-level "stages:" marker
+        if stripped == "stages:":
+            continue
+
+        # Stage name (2-space indent, ends with colon)
+        if line.startswith("  ") and not line.startswith("    ") and stripped.endswith(":") and not stripped.startswith("-"):
+            stage_name = stripped[:-1].strip()
+            current_stage = stage_name
+            stages[current_stage] = {}
+            current_section = None
+            continue
+
+        # Stage property (4-space indent)
+        if current_stage and line.startswith("    ") and not line.startswith("      "):
+            if ":" in stripped:
+                key = stripped.split(":")[0].strip()
+                val = stripped.split(":", 1)[1].strip()
+
+                if val == "|":
+                    # Block scalar start
+                    current_section = key
+                    in_block_scalar = True
+                    block_indent = len(line) - len(line.lstrip())
+                    block_lines = []
+                elif val.startswith("[") and val.endswith("]"):
+                    # Inline list
+                    items = [x.strip().strip('"').strip("'") for x in val[1:-1].split(",") if x.strip()]
+                    stages[current_stage][key] = items
+                elif val == "true":
+                    stages[current_stage][key] = True
+                elif val == "false":
+                    stages[current_stage][key] = False
+                elif val.startswith('"') and val.endswith('"'):
+                    stages[current_stage][key] = val[1:-1]
+                elif val.startswith("'") and val.endswith("'"):
+                    stages[current_stage][key] = val[1:-1]
+                elif val:
+                    stages[current_stage][key] = val
+                else:
+                    current_section = key
+                    stages[current_stage][key] = None
+            continue
+
+        # List item under a property (6-space indent, starts with -)
+        if current_stage and current_section and line.startswith("      ") and stripped.startswith("- "):
+            item = stripped[2:].strip().strip('"').strip("'")
+            if stages[current_stage].get(current_section) is None:
+                stages[current_stage][current_section] = []
+            if isinstance(stages[current_stage][current_section], list):
+                stages[current_stage][current_section].append(item)
+            continue
+
+    # Flush last block scalar if any
+    if in_block_scalar and current_stage and current_section:
+        stages[current_stage][current_section] = "\n".join(block_lines).strip()
+
+    return stages
 
 
 # ─────────────────────────────────────────────────────────
@@ -536,22 +635,17 @@ def cmd_status(json_output: bool = False) -> None:
         _print_status_text(status)
 
 
-def cmd_validate(json_output: bool = False) -> None:
-    """Run validation checks. Exit 0 if system is healthy (no validator failures).
+def cmd_validate(json_output: bool = False, system_only: bool = False, strict_case: bool = False) -> None:
+    """Run validation checks.
 
-    Exit 1 only on SYSTEM failures (validator errors, missing outputs).
-    Case-level blocks (e.g., needs_more_literature_evidence) are reported
-    as warnings, not failures — they indicate the case isn't ready, not
-    that the system is broken.
+    Modes:
+      default:        Exit 0 if system healthy (even if case blocked).
+      --system-only:  Only check system engineering health (validators, tools).
+      --strict-case:  Exit 1 if current case is blocked (not just system failure).
     """
     status = build_status()
 
-    if json_output:
-        print(json.dumps(status, indent=2))
-    else:
-        _print_status_text(status)
-
-    # System-level failures: validator errors or allowed_next_stage=false
+    # Compute system health
     system_failures = []
     for stage, v in status.get("validators", {}).items():
         if v.get("validation_status") == "parsed":
@@ -561,22 +655,63 @@ def cmd_validate(json_output: bool = False) -> None:
         elif v.get("validation_status") == "error":
             system_failures.append(f"{stage}: validator error — {v.get('reason', 'unknown')[:100]}")
 
+    system_healthy = len(system_failures) == 0
+    case_blocked = status.get("blocked", False)
+    blockers = status.get("blockers", [])
+
+    # Build enriched output
+    validate_result = {
+        "schema_version": "research_cli_validate_v1",
+        "mode": "system_only" if system_only else ("strict_case" if strict_case else "default"),
+        "system_health": "healthy" if system_healthy else "degraded",
+        "system_failures": system_failures,
+        "case_readiness": "blocked" if case_blocked else "ready",
+        "case_blockers": blockers,
+        "exit_reason": None,
+    }
+
+    if json_output:
+        # Merge validate_result into status for JSON output
+        output = {**status, "validate_result": validate_result}
+        print(json.dumps(output, indent=2))
+    else:
+        _print_status_text(status)
+
+    # Determine exit code
     if system_failures:
-        print("\n[FAIL] System failures (validator errors):")
-        for sf in system_failures:
-            print(f"  - {sf}")
+        validate_result["exit_reason"] = "system_failure"
+        if not json_output:
+            print("\n[FAIL] System failures (validator errors):")
+            for sf in system_failures:
+                print(f"  - {sf}")
         sys.exit(1)
 
-    # Case-level blocks are warnings, not failures
-    blockers = status.get("blockers", [])
-    if blockers:
-        print("\n[WARN] Case not ready (not a system failure):")
-        for b in blockers:
-            print(f"  - {b}")
-        # Exit 0 — system is healthy, case just isn't ready
+    if system_only:
+        validate_result["exit_reason"] = None
+        if not json_output:
+            print("\n[PASS] System healthy (--system-only).")
         sys.exit(0)
 
-    print("\n[PASS] System healthy, no blocking issues.")
+    if case_blocked and strict_case:
+        validate_result["exit_reason"] = "case_blocked"
+        if not json_output:
+            print("\n[FAIL] Case blocked (--strict-case):")
+            for b in blockers:
+                print(f"  - {b}")
+        sys.exit(1)
+
+    if case_blocked:
+        validate_result["exit_reason"] = None
+        if not json_output:
+            print("\n[WARN] Case not ready (not a system failure):")
+            for b in blockers:
+                print(f"  - {b}")
+        sys.exit(0)
+
+    validate_result["exit_reason"] = None
+    if not json_output:
+        print("\n[PASS] System healthy, no blocking issues.")
+    sys.exit(0)
     sys.exit(0)
 
 
@@ -1003,6 +1138,7 @@ def build_continue_plan(target_stage: str, json_output: bool = False) -> dict[st
     status = build_status()
     completed = status.get("completed_stages", [])
     next_allowed = status.get("next_allowed_stage")
+    wf_config = load_workflow_config()
 
     # Check if target stage is behind current stage (already completed)
     if target_stage in completed:
@@ -1033,18 +1169,29 @@ def build_continue_plan(target_stage: str, json_output: bool = False) -> dict[st
     for i in range(start_idx, target_idx + 1):
         stage = STAGE_ORDER[i]
         is_completed = stage in completed
+        resolved = _resolve_stage_from_config(stage, wf_config)
 
         step = {
             "stage_id": stage,
             "status": "completed" if is_completed else "will_execute",
-            "execution_type": _stage_execution_type(stage),
-            "would_run_command": _stage_command(stage),
-            "planned_inputs": _stage_inputs(stage),
-            "planned_outputs": _stage_outputs(stage),
-            "validator_after": _stage_validator(stage),
-            "mutation_type": _stage_mutation_type(stage),
+            "source": "workflow_config" if stage in wf_config else "hardcoded_fallback",
+            "role": resolved["role"],
+            "output_file": resolved["output_file"],
+            "allowed_input_files": resolved["allowed_input_files"],
+            "missing_inputs": resolved["missing_inputs"],
+            "forbidden_context_count": len(resolved["forbidden_context"]),
+            "require_validate": resolved["require_validate"],
+            "has_output_contract": resolved["has_output_contract"],
+            "execution_type": resolved["execution_type"],
+            "would_run_command": resolved["would_run_command"],
+            "validator_after": resolved["validator_after"],
+            "mutation_type": resolved["mutation_type"],
         }
         execution_steps.append(step)
+
+        # Warn about missing inputs
+        if resolved["missing_inputs"]:
+            warnings.append(f"{stage}: {len(resolved['missing_inputs'])} missing input(s): {', '.join(resolved['missing_inputs'][:3])}")
 
     # Check if we need method_refinement before experiment_plan
     if target_stage == "experiment_plan" and "method_refinement" not in completed:
@@ -1057,6 +1204,7 @@ def build_continue_plan(target_stage: str, json_output: bool = False) -> dict[st
         "will_mutate": False,
         "will_call_model": False,
         "will_call_network": False,
+        "workflow_config_loaded": bool(wf_config),
         "current_status_summary": {
             "current_stage": status.get("current_stage"),
             "completed_stages": completed,
@@ -1070,139 +1218,75 @@ def build_continue_plan(target_stage: str, json_output: bool = False) -> dict[st
     return plan
 
 
-def _stage_execution_type(stage: str) -> str:
-    """Return execution type for a stage."""
-    mapping = {
-        "raw_user_input": "file_write",
-        "input_normalization": "trusted_model",
-        "research_contract": "trusted_model",
-        "literature_notes": "no_model",
-        "literature_search": "trusted_model",
-        "novelty_check": "trusted_model",
-        "method_refinement": "trusted_model",
-        "idea_pivot": "trusted_model",
-        "experiment_plan": "trusted_model",
-        "implementation_plan": "trusted_model",
-        "result_judge": "trusted_model",
-        "paper_writing": "trusted_model",
+def _resolve_stage_from_config(stage: str, wf_config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve stage details from workflow config, with hardcoded fallback.
+
+    Returns dict with keys: role, output_file, allowed_input_files,
+    forbidden_context, require_validate, has_output_contract,
+    execution_type, mutation_type, missing_inputs.
+    """
+    fallback = {
+        "raw_user_input": {"role": None, "output_file": "research/current/raw_user_input.md", "execution_type": "file_write", "mutation_type": "research_artifact"},
+        "input_normalization": {"role": "input_normalizer", "output_file": "research/current/input_normalization.md", "execution_type": "trusted_model", "mutation_type": "trusted_output"},
+        "research_contract": {"role": "contract_reviewer", "output_file": "research/current/trusted_outputs/research_contract.md", "execution_type": "trusted_model", "mutation_type": "trusted_output"},
+        "literature_notes": {"role": None, "output_file": "research/current/literature_notes.md", "execution_type": "no_model", "mutation_type": "research_artifact"},
+        "literature_search": {"role": "literature_scout", "output_file": "research/current/trusted_outputs/literature_search.md", "execution_type": "trusted_model", "mutation_type": "trusted_output"},
+        "novelty_check": {"role": "novelty_checker", "output_file": "research/current/trusted_outputs/novelty_check.md", "execution_type": "trusted_model", "mutation_type": "trusted_output"},
+        "method_refinement": {"role": "method_refiner", "output_file": "research/current/trusted_outputs/method_refinement.md", "execution_type": "trusted_model", "mutation_type": "trusted_output"},
+        "idea_pivot": {"role": "idea_pivoter", "output_file": "research/current/trusted_outputs/idea_pivot.md", "execution_type": "trusted_model", "mutation_type": "trusted_output"},
+        "experiment_plan": {"role": "experiment_auditor", "output_file": "research/current/trusted_outputs/experiment_plan.md", "execution_type": "trusted_model", "mutation_type": "trusted_output"},
+        "implementation_plan": {"role": "experiment_implementer", "output_file": "research/current/trusted_outputs/implementation_plan.md", "execution_type": "trusted_model", "mutation_type": "trusted_output"},
+        "result_judge": {"role": "result_judge", "output_file": "research/current/trusted_outputs/result_judge.md", "execution_type": "trusted_model", "mutation_type": "trusted_output"},
+        "paper_writing": {"role": "paper_writer", "output_file": "research/current/trusted_outputs/paper_draft.md", "execution_type": "trusted_model", "mutation_type": "trusted_output"},
     }
-    return mapping.get(stage, "unknown")
 
+    fb = fallback.get(stage, {})
+    cfg = wf_config.get(stage, {})
 
-def _stage_command(stage: str) -> str:
-    """Return the command that would execute for a stage."""
-    commands = {
-        "raw_user_input": "write research/current/raw_user_input.md",
-        "input_normalization": "python tools/trusted_role_runner.py --role input_normalizer ...",
-        "research_contract": "python tools/trusted_role_runner.py --role contract_reviewer ...",
-        "literature_notes": "python tools/research_workflow.py prepare literature_notes ...",
-        "literature_search": "python tools/trusted_role_runner.py --role literature_scout ...",
-        "novelty_check": "python tools/trusted_role_runner.py --role novelty_checker ...",
-        "method_refinement": "python tools/trusted_role_runner.py --role method_refiner ...",
-        "idea_pivot": "python tools/trusted_role_runner.py --role idea_pivoter ...",
-        "experiment_plan": "python tools/trusted_role_runner.py --role experiment_planner ...",
-        "implementation_plan": "python tools/trusted_role_runner.py --role implementation_planner ...",
-        "result_judge": "python tools/trusted_role_runner.py --role result_judge ...",
-        "paper_writing": "python tools/trusted_role_runner.py --role paper_writer ...",
+    # Prefer workflow config values
+    role = cfg.get("role") or fb.get("role")
+    output_file = cfg.get("output_file") or fb.get("output_file")
+    allowed_input_files = cfg.get("allowed_input_files") or []
+    forbidden_context = cfg.get("forbidden_context") or []
+    require_validate = cfg.get("require_validate", False)
+    has_output_contract = bool(cfg.get("stage_output_contract"))
+    execution_type = fb.get("execution_type", "trusted_model" if role else "unknown")
+    mutation_type = fb.get("mutation_type", "none")
+
+    # Check which allowed_input_files are missing
+    missing_inputs = []
+    for f in allowed_input_files:
+        if not (ROOT / f).exists():
+            missing_inputs.append(f)
+
+    # Build would_run_command from role
+    if role:
+        would_run_command = f"python tools/trusted_role_runner.py --role {role} ..."
+    elif stage == "raw_user_input":
+        would_run_command = f"write {output_file}"
+    elif stage == "literature_notes":
+        would_run_command = "python tools/research_workflow.py prepare literature_notes ..."
+    else:
+        would_run_command = "unknown"
+
+    # Build validator_after from role
+    validator_after = None
+    if role and require_validate:
+        validator_after = f"validate_model_invocation --role {role}"
+
+    return {
+        "role": role,
+        "output_file": output_file,
+        "allowed_input_files": allowed_input_files,
+        "forbidden_context": forbidden_context,
+        "require_validate": require_validate,
+        "has_output_contract": has_output_contract,
+        "execution_type": execution_type,
+        "mutation_type": mutation_type,
+        "would_run_command": would_run_command,
+        "validator_after": validator_after,
+        "missing_inputs": missing_inputs,
     }
-    return commands.get(stage, "unknown")
-
-
-def _stage_inputs(stage: str) -> list[str]:
-    """Return input files for a stage."""
-    inputs = {
-        "raw_user_input": [],
-        "input_normalization": ["research/current/raw_user_input.md"],
-        "research_contract": ["research/current/input_normalization.md"],
-        "literature_notes": ["literature/search_runs/current/top_k.md"],
-        "literature_search": [
-            "research/current/input_normalization.md",
-            "research/current/trusted_outputs/research_contract.md",
-            "research/current/literature_notes.md",
-            "literature/search_runs/current/top_k.md",
-        ],
-        "novelty_check": [
-            "research/current/input_normalization.md",
-            "research/current/trusted_outputs/research_contract.md",
-            "research/current/literature_notes.md",
-            "research/current/trusted_outputs/literature_search.md",
-            "literature/search_runs/current/top_k.md",
-            "docs/LITERATURE_REPAIR_QUEUE.md",
-        ],
-        "method_refinement": [
-            "research/current/input_normalization.md",
-            "research/current/trusted_outputs/research_contract.md",
-            "research/current/literature_notes.md",
-            "research/current/trusted_outputs/literature_search.md",
-            "research/current/trusted_outputs/novelty_check.md",
-            "literature/search_runs/current/top_k.md",
-            "docs/LITERATURE_REPAIR_QUEUE.md",
-        ],
-        "idea_pivot": [
-            "research/current/input_normalization.md",
-            "research/current/trusted_outputs/research_contract.md",
-            "research/current/literature_notes.md",
-            "research/current/trusted_outputs/literature_search.md",
-            "research/current/trusted_outputs/novelty_check.md",
-            "research/current/trusted_outputs/method_refinement.md",
-            "literature/search_runs/current/top_k.md",
-            "docs/LITERATURE_REPAIR_QUEUE.md",
-        ],
-        "experiment_plan": [
-            "research/current/input_normalization.md",
-            "research/current/trusted_outputs/research_contract.md",
-            "research/current/literature_notes.md",
-            "research/current/trusted_outputs/literature_search.md",
-            "research/current/trusted_outputs/novelty_check.md",
-            "research/current/trusted_outputs/method_refinement.md",
-        ],
-    }
-    return inputs.get(stage, [])
-
-
-def _stage_outputs(stage: str) -> list[str]:
-    """Return output files for a stage."""
-    outputs = {
-        "raw_user_input": ["research/current/raw_user_input.md"],
-        "input_normalization": ["research/current/input_normalization.md"],
-        "research_contract": ["research/current/trusted_outputs/research_contract.md"],
-        "literature_notes": ["research/current/literature_notes.md"],
-        "literature_search": ["research/current/trusted_outputs/literature_search.md"],
-        "novelty_check": ["research/current/trusted_outputs/novelty_check.md"],
-        "method_refinement": ["research/current/trusted_outputs/method_refinement.md"],
-        "idea_pivot": ["research/current/trusted_outputs/idea_pivot.md"],
-        "experiment_plan": ["research/current/trusted_outputs/experiment_plan.md"],
-    }
-    return outputs.get(stage, [])
-
-
-def _stage_validator(stage: str) -> str | None:
-    """Return validator command for a stage, or None."""
-    validators = {
-        "input_normalization": "validate_model_invocation --role input_normalizer",
-        "research_contract": "validate_model_invocation --role contract_reviewer",
-        "literature_search": "validate_model_invocation --role literature_scout",
-        "novelty_check": "validate_model_invocation --role novelty_checker",
-        "method_refinement": "validate_model_invocation --role method_refiner",
-        "idea_pivot": "validate_model_invocation --role idea_pivoter",
-    }
-    return validators.get(stage)
-
-
-def _stage_mutation_type(stage: str) -> str:
-    """Return mutation type for a stage."""
-    types = {
-        "raw_user_input": "research_artifact",
-        "input_normalization": "trusted_output",
-        "research_contract": "trusted_output",
-        "literature_notes": "research_artifact",
-        "literature_search": "trusted_output",
-        "novelty_check": "trusted_output",
-        "method_refinement": "trusted_output",
-        "idea_pivot": "trusted_output",
-        "experiment_plan": "trusted_output",
-    }
-    return types.get(stage, "none")
 
 
 # ─────────────────────────────────────────────────────────
@@ -1237,6 +1321,7 @@ def _print_continue_plan_text(plan: dict) -> None:
     print(f"=== Continue Dry-Run Plan ({plan['schema_version']}) ===")
     print(f"Target stage: {plan['target_stage']}")
     print(f"Safety:   will_mutate={plan['will_mutate']} will_call_model={plan['will_call_model']} will_call_network={plan['will_call_network']}")
+    print(f"Config:   workflow_config_loaded={plan.get('workflow_config_loaded', False)}")
     print()
 
     cs = plan.get("current_status_summary", {})
@@ -1251,8 +1336,14 @@ def _print_continue_plan_text(plan: dict) -> None:
     for i, step in enumerate(plan["execution_steps"], 1):
         status_mark = "*" if step["status"] == "completed" else ">"
         exec_type = step.get("execution_type", "?")
-        mut = step.get("mutation_type", "none")
-        print(f"  {i:2d}. [{exec_type}] {step['stage_id']}  ({mut})  {status_mark}")
+        src = step.get("source", "?")
+        role = step.get("role") or "none"
+        missing = step.get("missing_inputs", [])
+        contract = "contract" if step.get("has_output_contract") else ""
+        validate = "validate" if step.get("require_validate") else ""
+        flags = " ".join(f for f in [contract, validate] if f)
+        missing_str = f" MISSING:{len(missing)}" if missing else ""
+        print(f"  {i:2d}. [{exec_type}] {step['stage_id']}  role={role}  ({src}){missing_str}  {flags}  {status_mark}")
     print()
     print("  Legend: * = already completed, > = will execute")
     print()
@@ -1820,32 +1911,36 @@ def self_test() -> bool:
             and result31.get("schema_version") == "research_cli_continue_plan_v1"
             and result31.get("target_stage") == "experiment_plan"
             and result31.get("dry_run") is True
-            and result31.get("will_mutate") is False):
-        print("  [PASS] 31. build_continue_plan returns valid plan for experiment_plan")
+            and result31.get("will_mutate") is False
+            and result31.get("workflow_config_loaded") is True):
+        print("  [PASS] 31. build_continue_plan returns valid plan with workflow config")
         passed += 1
     else:
         print(f"  [FAIL] 31. build_continue_plan for experiment_plan, got: {result31}")
         failed += 1
 
-    # Test 32: build_continue_plan execution_steps are all will_execute (current case is blocked)
+    # Test 32: build_continue_plan steps have config-sourced fields
     steps32 = result31.get("execution_steps", [])
-    statuses32 = [s["status"] for s in steps32]
-    # Current case has method_refinement completed but experiment_plan not, so
-    # continue to experiment_plan should include idea_pivot and experiment_plan as will_execute
-    if all(s == "will_execute" for s in statuses32):
-        print("  [PASS] 32. build_continue_plan steps are all will_execute for blocked case")
+    all_have_role = all("role" in s for s in steps32)
+    all_have_output = all("output_file" in s for s in steps32)
+    all_have_inputs = all("allowed_input_files" in s for s in steps32)
+    all_have_source = all("source" in s for s in steps32)
+    if all_have_role and all_have_output and all_have_inputs and all_have_source:
+        print("  [PASS] 32. build_continue_plan steps have config-sourced fields (role, output_file, allowed_input_files, source)")
         passed += 1
     else:
-        print(f"  [FAIL] 32. expected all will_execute, got: {statuses32}")
+        print(f"  [FAIL] 32. missing config fields in steps")
         failed += 1
 
     # Test 33: build_continue_plan for experiment_plan has idea_pivot and experiment_plan in steps
     stage_ids33 = [s["stage_id"] for s in steps32]
-    if "idea_pivot" in stage_ids33 and "experiment_plan" in stage_ids33:
-        print("  [PASS] 33. build_continue_plan includes idea_pivot and experiment_plan steps")
+    statuses32 = [s["status"] for s in steps32]
+    if ("idea_pivot" in stage_ids33 and "experiment_plan" in stage_ids33
+            and all(s == "will_execute" for s in statuses32)):
+        print("  [PASS] 33. build_continue_plan includes idea_pivot and experiment_plan steps (all will_execute)")
         passed += 1
     else:
-        print(f"  [FAIL] 33. expected idea_pivot and experiment_plan in steps, got: {stage_ids33}")
+        print(f"  [FAIL] 33. expected idea_pivot and experiment_plan will_execute, got: {stage_ids33} / {statuses32}")
         failed += 1
 
     # Test 34: build_continue_plan plan has safety flags False
@@ -1898,6 +1993,114 @@ def self_test() -> bool:
         print(f"  [FAIL] 36. cmd_continue should exit 1 for empty stage, got: {exit_code36}")
         failed += 1
 
+    # Test 37: load_workflow_config returns stages with expected keys
+    wf = load_workflow_config()
+    if ("literature_search" in wf
+            and "role" in wf["literature_search"]
+            and "allowed_input_files" in wf["literature_search"]
+            and "output_file" in wf["literature_search"]
+            and "stage_output_contract" in wf["literature_search"]):
+        print("  [PASS] 37. load_workflow_config returns stages with expected keys")
+        passed += 1
+    else:
+        print(f"  [FAIL] 37. load_workflow_config, keys: {list(wf.get('literature_search', {}).keys())}")
+        failed += 1
+
+    # Test 38: _resolve_stage_from_config uses workflow config for literature_search
+    resolved = _resolve_stage_from_config("literature_search", wf)
+    if (resolved["role"] == "literature_scout"
+            and len(resolved["allowed_input_files"]) > 0
+            and resolved["has_output_contract"] is True
+            and resolved["output_file"] == "research/current/trusted_outputs/literature_search.md"):
+        print("  [PASS] 38. _resolve_stage_from_config uses workflow config for literature_search")
+        passed += 1
+    else:
+        print(f"  [FAIL] 38. resolved: {resolved}")
+        failed += 1
+
+    # Test 39: _resolve_stage_from_config falls back for raw_user_input (not in config)
+    resolved39 = _resolve_stage_from_config("raw_user_input", wf)
+    if (resolved39["role"] is None
+            and resolved39["execution_type"] == "file_write"
+            and resolved39["output_file"] == "research/current/raw_user_input.md"):
+        print("  [PASS] 39. _resolve_stage_from_config falls back for raw_user_input")
+        passed += 1
+    else:
+        print(f"  [FAIL] 39. resolved: {resolved39}")
+        failed += 1
+
+    # Test 40: load_workflow_config loads idea_pivot with expanded inputs
+    if ("idea_pivot" in wf
+            and "full_text_review" in str(wf["idea_pivot"].get("allowed_input_files", []))
+            and "manifest.json" in str(wf["idea_pivot"].get("allowed_input_files", []))):
+        print("  [PASS] 40. load_workflow_config idea_pivot has expanded inputs")
+        passed += 1
+    else:
+        idea_inputs = wf.get("idea_pivot", {}).get("allowed_input_files", [])
+        print(f"  [FAIL] 40. idea_pivot inputs: {idea_inputs}")
+        failed += 1
+
+    # Test 41: validate --system-only exits 0 when system healthy
+    old_stdout41 = sys.stdout
+    old_stderr41 = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    exit_code41 = 0
+    try:
+        cmd_validate(json_output=False, system_only=True, strict_case=False)
+    except SystemExit as e:
+        exit_code41 = e.code
+    finally:
+        sys.stdout = old_stdout41
+        sys.stderr = old_stderr41
+    if exit_code41 == 0:
+        print("  [PASS] 41. validate --system-only exits 0 when system healthy")
+        passed += 1
+    else:
+        print(f"  [FAIL] 41. validate --system-only should exit 0, got: {exit_code41}")
+        failed += 1
+
+    # Test 42: validate --strict-case exits 0 when case NOT blocked (idea_pivot available)
+    old_stdout42 = sys.stdout
+    old_stderr42 = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    exit_code42 = 0
+    try:
+        cmd_validate(json_output=False, system_only=False, strict_case=True)
+    except SystemExit as e:
+        exit_code42 = e.code
+    finally:
+        sys.stdout = old_stdout42
+        sys.stderr = old_stderr42
+    # Case is not blocked (idea_pivot is available), so --strict-case should exit 0
+    if exit_code42 == 0:
+        print("  [PASS] 42. validate --strict-case exits 0 when case not blocked")
+        passed += 1
+    else:
+        print(f"  [FAIL] 42. validate --strict-case should exit 0 (case not blocked), got: {exit_code42}")
+        failed += 1
+
+    # Test 43: validate default exits 0 even when case blocked
+    old_stdout43 = sys.stdout
+    old_stderr43 = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    exit_code43 = 0
+    try:
+        cmd_validate(json_output=False, system_only=False, strict_case=False)
+    except SystemExit as e:
+        exit_code43 = e.code
+    finally:
+        sys.stdout = old_stdout43
+        sys.stderr = old_stderr43
+    if exit_code43 == 0:
+        print("  [PASS] 43. validate default exits 0 even when case blocked")
+        passed += 1
+    else:
+        print(f"  [FAIL] 43. validate default should exit 0, got: {exit_code43}")
+        failed += 1
+
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
 
@@ -1913,6 +2116,7 @@ def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: python tools/research_cli.py <command> [options] [--json]")
         print("Commands: status, validate, repair-queue, start, continue")
+        print("Validate usage: python tools/research_cli.py validate [--system-only] [--strict-case] [--json]")
         print("Start usage: python tools/research_cli.py start --idea '...' --mode novelty_risk --dry-run [--json]")
         print("Continue usage: python tools/research_cli.py continue --stage <stage> --dry-run [--json]")
         sys.exit(1)
@@ -1923,7 +2127,9 @@ def main() -> None:
     if cmd == "status":
         cmd_status(json_output=json_output)
     elif cmd == "validate":
-        cmd_validate(json_output=json_output)
+        system_only = "--system-only" in sys.argv[2:]
+        strict_case = "--strict-case" in sys.argv[2:]
+        cmd_validate(json_output=json_output, system_only=system_only, strict_case=strict_case)
     elif cmd == "repair-queue":
         cmd_repair_queue(json_output=json_output)
     elif cmd == "start":

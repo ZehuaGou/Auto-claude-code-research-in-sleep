@@ -355,7 +355,11 @@ stages:
       - research/current/trusted_outputs/literature_search.md
       - research/current/trusted_outputs/novelty_check.md
       - research/current/trusted_outputs/method_refinement.md
+      - research/current/trusted_outputs/full_text_review.md
       - literature/search_runs/current/top_k.md
+      - literature/full_text_store/current/manifest.json
+      - literature/full_text_store/current/full_text_queue.json
+      - literature/full_text_store/current/review_notes.md
       - docs/LITERATURE_REPAIR_QUEUE.md
     forbidden_context:
       - old conclusions
@@ -373,43 +377,54 @@ stages:
     require_validate: true
     stage_output_contract: |
       ROLE BOUNDARY — idea_pivot OUTPUT CONTRACT
-      You are idea_pivoter. Your task is to propose an evidence-grounded alternative research
-      direction when the current idea is blocked. This is NOT a novelty proof.
+      You are idea_pivoter. Your task is to propose 5-10 evidence-grounded alternative research
+      directions when the current idea is blocked. This is NOT a novelty proof.
       This is NOT an experiment plan. This is NOT a paper claim.
 
       HARD CONSTRAINTS (violation = artifact rejected):
-      1. Document title MUST be "# Idea Pivot — Evidence-Grounded Alternative Direction".
+      1. Document title MUST be "# Idea Pivot — Evidence-Grounded Alternative Directions".
       2. Do NOT use forbidden phrases as conclusions:
          - "confirmed novel", "no prior work", "direct overlap none"
          - "definitely novel", "publishable novelty", "novelty proven"
       3. Do NOT recommend paper writing as the next action.
-      4. Required sections:
+      4. Do NOT use "ready_for_experiment_plan" or claim the pivot is ready for experiment_plan.
+      5. Required sections:
          - Why the Current Idea Is Blocked
          - Evidence-Grounded Pivot Rationale
-         - Proposed Alternative Direction
-         - How the Pivot Addresses the Block
-         - Remaining Risks for the Pivot
+         - Proposed Alternative Directions (5-10 pivots)
+         - Ranking and Selection Guidance
          - Next Allowed Action
-      5. Why the Current Idea Is Blocked MUST:
+      6. Why the Current Idea Is Blocked MUST:
          - Reference the specific blocker (e.g., high_risk_overlap, needs_more_literature_evidence)
          - Explain what evidence caused the block
          - Be grounded in actual artifacts, not hypotheticals
-      6. Evidence-Grounded Pivot Rationale MUST:
-         - Use evidence from literature_search, novelty_check, and/or full_text_review
-         - Explain what gaps or opportunities the pivot exploits
-         - NOT be a random new idea — must be derived from evidence
-      7. Proposed Alternative Direction MUST:
-         - Restate as a clear, specific research idea (not a vague topic)
-         - Explain what is different from the blocked idea
-         - Be specific enough to feed back into input_normalization
-      8. Next Allowed Action MUST be one of:
-         - restart_with_pivoted_idea
-         - stop
-         Do NOT recommend experiment_plan or paper_writing.
-      9. End the document with a boundary statement:
-         "This artifact proposes an evidence-grounded alternative direction.
-          It is not a novelty proof, an experiment plan, or a paper claim.
-          To proceed, feed the Proposed Alternative Direction into a new workflow run."
+      7. Evidence-Grounded Pivot Rationale MUST:
+         - Use evidence from literature_search, novelty_check, full_text_review, and/or review_notes
+         - Explain what gaps or opportunities the pivots exploit
+         - NOT be random new ideas — must be derived from evidence
+      8. Proposed Alternative Directions MUST contain 5-10 pivots, each with ALL of:
+         a. core_idea: Clear, specific research idea (not a vague topic)
+         b. evidence_basis: Which specific evidence/literature gaps support this pivot
+         c. collision_point_avoided: What specific overlap/block does this pivot avoid
+         d. difference_from_closest_prior_work: How it differs from the nearest existing work
+         e. difference_from_current_blocked_idea: How it differs from the blocked idea
+         f. risk_level: high / medium / low (based on overlap risk and evidence availability)
+         g. feasibility: assessment of practical feasibility (data, compute, expertise)
+         h. minimal_experiment_boundary: smallest experiment that would validate the idea
+         i. required_literature_follow_up: what additional literature search is needed
+         j. worth_new_research_contract: yes / no — whether this warrants a new research_contract
+      9. Ranking and Selection Guidance MUST:
+         - Rank pivots by combined score of (evidence strength, low collision, feasibility)
+         - Identify top 1-2 recommended pivots with justification
+         - Note which pivots are high-risk but potentially high-reward
+      10. Next Allowed Action MUST be one of:
+          - restart_with_pivoted_idea
+          - stop
+          Do NOT recommend experiment_plan or paper_writing.
+      11. End the document with a boundary statement:
+          "This artifact proposes evidence-grounded alternative directions.
+           It is not a novelty proof, an experiment plan, or a paper claim.
+           To proceed, select a pivot and feed it into a new workflow run."
 
   experiment_plan:
     role: experiment_auditor
