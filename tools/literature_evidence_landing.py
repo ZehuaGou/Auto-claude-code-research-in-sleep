@@ -1428,6 +1428,23 @@ def summarize_run(run_dir: Path, json_output: bool) -> dict:
 
 # ---- Source adapter job result validation ----
 
+def _find_forbidden_verdict_fields(obj, path: str = "") -> list[str]:
+    """Recursively find NOVELTY_VERDICT_FIELDS in any nested dict/list structure.
+    Returns list of paths where forbidden fields are found."""
+    found = []
+    if isinstance(obj, dict):
+        for key in obj:
+            current_path = f"{path}.{key}" if path else key
+            if key in NOVELTY_VERDICT_FIELDS:
+                found.append(current_path)
+            found.extend(_find_forbidden_verdict_fields(obj[key], current_path))
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            current_path = f"{path}[{i}]"
+            found.extend(_find_forbidden_verdict_fields(item, current_path))
+    return found
+
+
 def validate_job_results_dict(records: list[dict]) -> dict:
     """Validate a list of source_job_result_v1 records in memory. No file I/O, no network."""
     errors = []
@@ -1520,10 +1537,10 @@ def validate_job_results_dict(records: list[dict]) -> dict:
             if not err or not str(err).strip():
                 errors.append(f"{prefix}: status={status} but error is empty")
 
-        # No novelty verdict fields allowed anywhere in the record
-        for field in NOVELTY_VERDICT_FIELDS:
-            if field in rec:
-                errors.append(f"{prefix}: novelty verdict field not allowed: {field}")
+        # No novelty verdict fields allowed anywhere in the record (recursive)
+        forbidden_paths = _find_forbidden_verdict_fields(rec, prefix)
+        for fp in forbidden_paths:
+            errors.append(f"{prefix}: novelty verdict field not allowed at: {fp}")
 
     status_out = "PASS" if not errors else "FAIL"
     return {"status": status_out, "errors": errors, "total_jobs": len(records)}
@@ -2450,6 +2467,117 @@ def _self_test() -> bool:
         passed += 1
     except Exception as e:
         print(f"  [FAIL] 24. init-run-skeleton job_results: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 25: validate-job-results success with nested paper field confirmed_novel → FAIL
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        jr_path = tmp_dir / "job_results.jsonl"
+        rec = {
+            "schema_version": "source_job_result_v1",
+            "job_id": "job_openalex_nested1",
+            "source": "openalex",
+            "query": "test",
+            "status": "success",
+            "http_status": 200,
+            "retrieved_at": "2026-05-13",
+            "raw_record_count": 1,
+            "records": [{
+                "source": "openalex", "title": "Paper A", "authors": ["A"],
+                "year": 2024, "url": "https://openalex.org/W1", "doi": "",
+                "arxiv_id": "", "semantic_scholar_id": "", "openalex_id": "W1",
+                "abstract": "Test", "venue": "", "retrieved_at": "2026-05-13",
+                "evidence_origin": "api_export", "notes": "",
+                "confirmed_novel": True,
+            }],
+            "error": "",
+            "notes": "",
+        }
+        _write_jsonl(jr_path, [rec])
+        r = validate_job_results(jr_path, json_output=False)
+        assert r["status"] == "FAIL", f"Test 25: Expected FAIL, got {r['status']}"
+        assert any("confirmed_novel" in e and "records[0]" in e for e in r["errors"]), \
+            f"Test 25: Expected nested confirmed_novel error, got {r['errors']}"
+        print("  [PASS] 25. validate-job-results nested paper confirmed_novel → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 25. nested confirmed_novel: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 26: validate-job-results with nested metadata no_prior_work → FAIL
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        jr_path = tmp_dir / "job_results.jsonl"
+        rec = {
+            "schema_version": "source_job_result_v1",
+            "job_id": "job_openalex_nested2",
+            "source": "openalex",
+            "query": "test",
+            "status": "success",
+            "http_status": 200,
+            "retrieved_at": "2026-05-13",
+            "raw_record_count": 1,
+            "records": [{
+                "source": "openalex", "title": "Paper B", "authors": ["B"],
+                "year": 2024, "url": "https://openalex.org/W2", "doi": "",
+                "arxiv_id": "", "semantic_scholar_id": "", "openalex_id": "W2",
+                "abstract": "Test", "venue": "", "retrieved_at": "2026-05-13",
+                "evidence_origin": "api_export", "notes": "",
+                "metadata": {"no_prior_work": True, "confidence": 0.9},
+            }],
+            "error": "",
+            "notes": "",
+        }
+        _write_jsonl(jr_path, [rec])
+        r = validate_job_results(jr_path, json_output=False)
+        assert r["status"] == "FAIL", f"Test 26: Expected FAIL, got {r['status']}"
+        assert any("no_prior_work" in e and "metadata" in e for e in r["errors"]), \
+            f"Test 26: Expected nested metadata no_prior_work error, got {r['errors']}"
+        print("  [PASS] 26. validate-job-results nested metadata no_prior_work → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 26. nested metadata no_prior_work: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 27: normalize-job-results with nested forbidden verdict field → FAIL, no output
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        jr_path = tmp_dir / "job_results.jsonl"
+        raw_out = tmp_dir / "raw_results.jsonl"
+        rec = {
+            "schema_version": "source_job_result_v1",
+            "job_id": "job_openalex_nested3",
+            "source": "openalex",
+            "query": "test",
+            "status": "success",
+            "http_status": 200,
+            "retrieved_at": "2026-05-13",
+            "raw_record_count": 1,
+            "records": [{
+                "source": "openalex", "title": "Paper C", "authors": ["C"],
+                "year": 2024, "url": "https://openalex.org/W3", "doi": "10.1234/c",
+                "arxiv_id": "", "semantic_scholar_id": "", "openalex_id": "W3",
+                "abstract": "Test", "venue": "", "retrieved_at": "2026-05-13",
+                "evidence_origin": "api_export", "notes": "",
+                "potentially_novel": True,
+            }],
+            "error": "",
+            "notes": "",
+        }
+        _write_jsonl(jr_path, [rec])
+        r = normalize_job_results(jr_path, raw_out, json_output=False)
+        assert r["status"] == "FAIL", f"Test 27: Expected FAIL, got {r['status']}"
+        assert not raw_out.exists(), f"Test 27: output file should NOT exist on FAIL"
+        print("  [PASS] 27. normalize-job-results nested forbidden verdict → FAIL, no output")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 27. normalize nested forbidden: {e}")
         failed += 1
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
