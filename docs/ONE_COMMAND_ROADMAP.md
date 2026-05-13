@@ -7,6 +7,8 @@
 
 **Phase 20 Status:** IMPLEMENTED — arXiv and Crossref source adapters added to `literature_evidence_landing.py`. Multi-source pipeline (`run-multisource-pipeline`) executes all three sources (arXiv, Crossref, OpenAlex) with cross-source dedup. 70 self-tests pass. Live evidence: 155 records from 31 successful jobs (3 sources), 73 canonical candidates, 10 top-k selected. Evidence promoted to `literature/search_runs/current/`. Semantic Scholar deferred.
 
+**Phase 20B Status:** IMPLEMENTED — forbidden-token `confirmed_novel` removed from top_k generator. Trusted stages refreshed via trusted_role_runner: literature_search (deepseek-v4-flash, call_1aa9746795ae), novelty_check (deepseek-v4-pro, call truncated but file written), method_refinement (deepseek-v4-pro, needs_more_literature_evidence). experiment_plan remains blocked. Full-text verification of closest prior work (ICR Probe, INSIDE, Unsupervised Real-Time Detection) required before readiness gate can advance.
+
 ---
 
 ## 1. Goal

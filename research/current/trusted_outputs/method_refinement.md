@@ -6,7 +6,7 @@ route_expected_backend: openai_compatible_api
 route_expected_model: deepseek-v4-pro
 actual_backend: deepseek
 actual_model: deepseek-v4-pro
-ledger_call_id: call_74a3b9561c50
+ledger_call_id: call_5c762b8a3e74
 codex_used: False
 codex_thread_id: 
 fallback_used: False
@@ -17,12 +17,12 @@ allowed_next_stage: True
 status: completed
 routing_source: trusted_role_runner
 isolation_mode: context_manifest
-task_id: wf_method_refinement_8a1ed5b1
+task_id: wf_method_refinement_017e1157
 context_manifest: D:\Code\Python\Auto-claude-code-research-in-sleep\tmp\wf_method_refinement_manifest.json
 allowed_input_files: ["research\\current\\input_normalization.md", "research\\current\\trusted_outputs\\research_contract.md", "research\\current\\literature_notes.md", "research\\current\\trusted_outputs\\literature_search.md", "research\\current\\trusted_outputs\\novelty_check.md", "literature\\search_runs\\current\\top_k.md", "docs\\LITERATURE_REPAIR_QUEUE.md"]
 forbidden_context: ["old conclusions", "old experimental results", "unverified novelty conclusions", "mock/dry-run artifact", "external_agent_direct output", "user preference shortcuts", "implementation code", "paper draft", "experiment outputs", "prior optimistic summaries", "generator trace"]
 forbidden_context_checked: true
-context_hash: fb4e59066c120b91f8c70f20fb2456458ec152dbced52e1c18af6460421d10c4
+context_hash: 618b19f354146625df828d82445ad4b2ac7ba2a2a576d1cd6d76e956358c93da
 prompt_file: 
 response_file: 
 source_boundary: workflow_method_refinement_minimal_allowed_inputs_only
@@ -33,126 +33,143 @@ error:
 
 # Method Refinement — Generic Method Specification
 
-## 1. Scope and Evidence Boundary
-- This is not an experiment plan.
-- This is not a novelty proof.
-- This is not a paper claim.
-- It uses current trusted artifacts and the evidence-bounded novelty_check only.
-- The evidence base is limited to OpenAlex metadata/abstracts only; no full‑text verification.
-- Current evidence limitations remain active, including unverified abstracts, single‑source coverage, and absence of trajectory‑specific queries.
+## Scope and Evidence Boundary
 
-## 2. Research Idea Under Refinement
-The candidate idea proposes detecting hallucination (factually incorrect or ungrounded generation) in large language models by treating the token‑level hidden state trajectory as an anomaly detection target.  
-A reference distribution of hidden‑state trajectories is built from known‑truthful generations. Trajectories from hallucinated outputs are then scored for deviation from this reference using trajectory‑level anomaly detection methods (distance‑, density‑, or reconstruction‑based). The hypothesis is that hallucination causes detectable trajectory‑level deviations, allowing the method to identify potentially hallucinated content.
+- This is **not an experiment plan**.
+- This is **not a novelty proof**.
+- This is **not a paper claim**.
+- It uses **current trusted artifacts** and the **evidence‑bounded novelty_check** only.
+- Current evidence limitations remain active: only metadata/abstracts reviewed; no full‑text verification; keyword‑based relevance, not semantic; Semantic Scholar omitted; only OpenAlex examined in the novelty_check (despite other sources in literature_search).
 
-This restatement does not expand claims; it remains bounded by the input_normalization and research_contract documents.
+## Research Idea Under Refinement
 
-## 3. Method Object Definition
-The method under refinement is a **trajectory‑level hallucination detector** that operates solely on token‑wise hidden‑state sequences produced by a large language model during autoregressive generation.  
-It does not use output text directly, logits, or attention maps. The detector includes:
-- A trajectory extraction and representation procedure.
-- A reference‑distribution construction mechanism (trained or defined on truthful trajectories).
-- An anomaly scoring function that quantifies how atypical a test trajectory is relative to that reference.
-- A decision threshold (or continuous score) that maps anomaly scores to a hallucination indication.
+**Can hallucination in large language models be detected as an anomaly in token‑level hidden state trajectories?**
 
-## 4. Inputs and Outputs
-**Inputs**
-- A sequence of hidden state vectors \(\{h_1, h_2, \dots, h_T\}\) for the generated tokens (one vector per output token, from one or more specified layers of the LLM).
-- Optionally: metadata about the generation (e.g., prompt, generation length, sampling temperature) to support conditioning or normalization.
+The idea is to frame hallucination detection as a trajectory‑level anomaly detection problem:
 
-**Outputs**
-- A continuous anomaly score \(s \in \mathbb{R}\) representing trajectory atypicality.
-- Interpretation: higher scores indicate greater likelihood of hallucination (to be validated by correlation with human labels or ground‑truth hallucination annotations).
+1. Extract the hidden state vector at each generated token (the “trajectory”).
+2. Build a reference distribution from trajectories of well‑grounded (truthful) generations.
+3. For a new generation, compute how anomalous its trajectory is with respect to that reference – using distance‑based, density‑based, or reconstruction‑based anomaly detection.
+4. Use the anomaly score (or a threshold on it) to flag probable hallucinations.
 
-## 5. Proposed Mechanism
-The detector is constructed in three stages:
+This restatement does not expand claims beyond the input_normalization and research_contract; it remains a candidate framing.
 
-1. **Trajectory representation**  
-   - Each generation is represented as a sequence of hidden states (possibly truncated/padded to a fixed length, or embedded into a fixed‑dimensional summary via a learned sequence encoder like an LSTM/Transformer).  
-   - Alignment decisions (e.g., time warping) or position‑wise aggregation are applied to handle variable‑length outputs.
+## Method Object Definition
 
-2. **Reference distribution building**  
-   - A set of known‑truthful generations (verified by human annotations, knowledge‑grounded corpora, or controlled tasks) is collected.  
-   - Trajectories from this set are used to fit an anomaly detection model:  
-     - *Distance‑based*: compute pairwise distances (e.g., dynamic time warping distance) to define a typical distance profile or a cluster centroid; anomaly score = distance to centroid or average distance to k‑nearest neighbours.  
-     - *Density‑based*: train a density estimator (e.g., Gaussian mixture model on trajectory embeddings) and compute likelihood of test trajectory.  
-     - *Reconstruction‑based*: train an autoencoder on truthful trajectories; anomaly score = reconstruction error.
+The method is defined abstractly as a **generic trajectory‑anomaly detection framework** for LLM hidden states. It does **not** commit to a single anomaly algorithm or dataset. Instead it specifies:
 
-3. **Anomaly scoring and thresholding**  
-   - For a test generation, extract the trajectory, compute the anomaly score using the chosen method.  
-   - A threshold can be calibrated on a validation set to balance precision/recall (though threshold‑free evaluation via AUC is also envisioned).
+- **Trajectory**: a sequence \(\mathbf{h}_1, \mathbf{h}_2, \dots, \mathbf{h}_T\) where \(\mathbf{h}_t\) is the hidden state (or a chosen layer’s output) at token position \(t\).
+- **Reference distribution**: a model (e.g., set of truthful trajectories, a parametric density, an autoencoder) that captures typical non‑hallucinated trajectory variation.
+- **Anomaly score function** \(a(\tau; \mathcal{D}_{\text{ref}})\) that measures how atypical a test trajectory \(\tau\) is relative to the reference.
+- **Decision**: an optional threshold on \(a\) to classify a generation as hallucinated.
 
-The mechanism does not commit to a specific anomaly detection algorithm but requires that the choice be sensitive to trajectory‑level patterns, not just single‑token statistics.
+The specification must be resolvable to a concrete design later, but currently it remains at the conceptual method‑object level.
 
-## 6. Differentiator From Closest Prior Work
+## Inputs and Outputs
 
-The **apparent differentiator** of the current method specification is the explicit treatment of the full token‑level hidden‑state sequence as a *trajectory* and the application of *trajectory‑ (sequence‑) level anomaly detection methods*, as opposed to the prevalent single‑vector, last‑token, or probe‑based approaches found in the introduced evidence.
+**Inputs** (assumed to be available in a later concrete study):
+- LLM with per‑token hidden states accessible (white‑box setting).
+- A set of *truthful/well‑grounded* generations with corresponding hidden state trajectories (to form the reference).
+- A set of *hallucinated* generations (for evaluation).
+- Operational definition of hallucination labels (binary or typed).
 
-Comparisons against closest prior works (from novelty_check):
-- **INSIDE** (Chen et al., 2024) uses internal‑state features but does not operate on the full temporal sequence; likely aggregates or uses selected token states. The proposed method focuses on the sequence dynamics.
-- **Semantic Entropy Probes** (Kossen et al., 2024) trains probes on internal representations, typically single‑vector per generation. No trajectory‑level anomaly scoring is involved.
-- **LLMs Know More Than They Show** (Orgad et al., 2024) analyses intrinsic representations but does not frame hallucination detection as trajectory anomaly detection.
-- **MixHD** (Li et al., 2025) and **Prompt‑Guided Internal States** (Zhang et al., 2024) use last‑token or prompt‑specific single hidden states. The trajectory notion is absent.
-- **Lookback Lens** (Chuang et al., 2024) uses attention maps, not hidden‑state sequences; a different signal.
+**Outputs** (of the method when applied):
+- An anomaly score for each test trajectory.
+- A binary (or multi‑class) hallucination flag if a threshold is chosen.
+- Per‑token or per‑segment contributions to the anomaly score (optional, for interpretability).
 
-The differentiator is qualified as **apparent** because:
-- Full texts have not been verified; existing papers could describe trajectory‑like usage in their methodology.
-- The literature search was incomplete (OpenAlex‑only, metadata‑only).
-- No direct comparison was performed.
+Note: the reference distribution itself is a learned/constructed output from the truthful set.
 
-## 7. Testable Hypotheses
-If the method is later instantiated with a concrete trajectory representation and anomaly detection algorithm, the following hypotheses can be tested:
+## Proposed Mechanism
 
-- H1: The distribution of trajectory‑level anomaly scores for hallucinated generations is statistically different from that of truthful generations (e.g., Mann‑Whitney U test, AUC > 0.5).
-- H2: A trajectory‑based detector outperforms a detector that uses only the last‑token hidden state (or the mean pooled state) on a common hallucination‑detection benchmark, holding other factors constant.
-- H3: The chosen trajectory representation (e.g., DTW distance) captures hallucination‑relevant structural differences beyond length or token‑position artefacts (testable by controlling for length and token position as confounders).
+The mechanism is a pipeline:
 
-These hypotheses are framed as testable but await a fully specified experimental setup.
+1. **Extraction** – run the LLM on a prompt, record the hidden state vector at each generated token from one or more layers (e.g., a late layer). Store as a matrix \(\mathbf{H} \in \mathbb{R}^{T \times d}\).
+2. **Trajectory representation** – convert variable‑length sequences into a fixed‑form representation. Options include: padding/truncation to a maximum length with positional alignment, dynamic time warping (DTW) barycenters, summary statistics (mean, variance) over token positions, or learning an embedding via a recurrent autoencoder.
+3. **Reference construction** – from the set of truthful trajectories compute a reference model \(p(\tau)\) or a set of prototypes. Examples: fit a Gaussian mixture model on pooled (or aligned) representations, train an autoencoder to reconstruct truthful trajectories (reconstruction error serves as anomaly score), or keep the raw set and use \(k\)-nearest neighbor density.
+4. **Anomaly scoring** – for a new trajectory \(\tau\), compute a score \(a(\tau)\) that quantifies departure from the reference. Candidate families:  
+   - *Distance‑based*: DTW distance to the nearest reference trajectory.  
+   - *Density‑based*: negative log‑likelihood under the reference density, local outlier factor (LOF).  
+   - *Reconstruction‑based*: reconstruction error from an autoencoder trained only on truthful trajectories.
+5. **Thresholding (optional)** – a cutoff on \(a\) determines “hallucination”, tuned on a validation set.
 
-## 8. Non‑Claims and Claim Boundaries
-- **No final novelty proof.**  
-- **No full‑text verification** of prior art has been performed.  
-- **No claim of superiority** over existing methods.  
-- **No claim of general solution** that works across all models, domains, or hallucination types.  
-- **No claim that prior work lacks this idea**—absence of evidence in the current limited search does not imply absence of prior work.
+The mechanism does not prescribe a specific algorithm; it sets the abstract components that any concrete realisation must supply.
 
-## 9. Minimum Experiment Boundary
-Any experiment plan derived from this method specification must at minimum:
-- Define a concrete trajectory representation (including length handling, alignment, and possibly layer selection).
-- Choose a specific anomaly detection algorithm and reference‑distribution construction.
-- Use a dataset with curated ground‑truth hallucination labels (not just synthetic length‑based proxies).
-- Control for confounds: generation length, prompt complexity, decoding temperature.
-- Compare against at least one single‑vector baseline (e.g., last‑token anomaly score or probe).
-- Report evaluation in a threshold‑free manner (e.g., AUC) to avoid cherry‑picking of operating points.
+## Differentiator From Closest Prior Work
 
-## 10. Risks and Open Questions
-**Risks**
-- **Confound capture**: The anomaly score may detect output length, token position, or prompt difficulty rather than hallucination, especially if not carefully controlled.
-- **Reference‑distribution instability**: Truthful trajectories may vary widely across domains or prompts, making a single reference distribution ineffective.
-- **Insufficient signal**: Hidden states might not encode hallucination in a way that is detectable at the trajectory level; token‑level noise could obscure systematic deviations.
-- **Method overlap**: Full‑text examination may reveal prior work that already uses trajectory‑level anomaly detection on hidden states, reducing the apparent differentiator to a replication.
+The **apparent differentiator** of this method specification is the **explicit framing as a trajectory‑level anomaly detection problem with a built reference distribution, variable‑length trajectory handling, and unsupervised anomaly scoring on the full token sequence** – while prior work in the retrieved evidence predominantly uses classification, probing, or single‑token/aggregated features, not a “reference vs. anomalous trajectory” paradigm.
 
-**Open Questions**
-- How should variable‑length trajectories be aligned or embedded without destroying temporal information?
-- Do different types of hallucination (factual, contextual) require distinct trajectory representations or detectors?
-- What is the optimal layer or combination of layers to extract hidden states for trajectory analysis?
-- How does the choice of decoding strategy (greedy vs. sampling) affect trajectory consistency and detectability?
-- Is a static reference distribution sufficient, or must it be conditioned on the prompt or domain?
-- Can the method operate in a zero‑shot setting with no access to hallucination labels for threshold calibration?
+- **Closest work**: INSIDE (2024) uses internal states for hallucination detection but as a probe/classifier, not an unsupervised anomaly detector on full trajectories. ICR Probe (2025) tracks hidden state dynamics, but its abstract suggests probe‑based classification, not anomaly scoring. Unsupervised Real‑Time Hallucination Detection (2024) is unsupervised, but whether it operates on full trajectories or per‑token aggregates is unknown from the abstract.
+- **Apparent difference**: In the proposed method, the anomaly score is derived from the whole sequence’s deviation from a *reference distribution of truthful trajectories*, which is not attested in the available abstracts. This contrasts with methods that train a discriminator on labeled “hallucination vs. truth” (supervised) or that use per‑token logit differences.
+- **Qualifier**: This differentiator is **apparent only**. Full‑text verification is absent; the ICR Probe or other papers may already implement a trajectory‑level anomaly formulation that would eliminate this difference. The evidence does **not** confirm that the differentiator holds. It is not claimed as novelty.
 
-## 11. Readiness Gate for experiment_plan
-**needs_more_literature_evidence**
+No claim is made that prior work “lacks this idea”; the assessment is limited to available metadata and abstracts.
 
-**Justification**  
-- The current evidence base (OpenAlex metadata only, no full‑text) is too shallow to confirm that the trajectory‑level anomaly framing is not already present in the literature.  
-- Key implementation choices (trajectory representation, alignment method) depend on whether prior art has already addressed them; committing to a method specification for experiments without that knowledge risks duplicating existing work or missing critical baselines.  
-- Several open questions (Section 10) cannot be resolved without a broader search that includes full‑text analysis and queries specifically targeting trajectory anomaly detection on LLM representations.  
-- Therefore, the method specification cannot yet credibly support an experiment plan with the required differentiation and rigorous control.
+## Testable Hypotheses
 
-## 12. Next Allowed Action
+If the method were implemented, the following hypotheses would become‑testable:
+
+1. **H1 – Separation hypothesis**: For a fixed LLM and domain, the anomaly scores of hallucinated trajectories are statistically significantly higher than those of truthful trajectories (e.g., measured by AUC > 0.5).
+2. **H2 – Trajectory alignment matters**: A method that ignores token position (e.g., pooling all hidden states into a single vector) yields lower discriminative power than a method that preserves sequential order (e.g., DTW or RNN‑based autoencoder).
+3. **H3 – Hallucination type specificity**: Factual hallucinations produce different trajectory‑anomaly signatures than contextual inconsistency hallucinations; a single anomaly detector may fail to capture both.
+4. **H4 – Robustness to confounds**: The anomaly score is not solely driven by output length, token frequency, or decoding temperature; removing those confounds (via stratification or baselines) does not eliminate the hallucination signal.
+5. **H5 – Reference stability**: A reference distribution built on one set of prompts (domain A) maintains reasonable anomaly detection on a different set of prompts (domain B) if the model and decoding strategy are held constant.
+6. **H6 – Post‑hoc vs. real‑time**: The anomaly score computed after generation is complete (post‑hoc) dominates per‑token rolling scores in detection accuracy, but per‑token scores offer earlier detection.
+
+These hypotheses are presented as design specifications for a future experiment; they are not claimed to be true.
+
+## Non‑Claims and Claim Boundaries
+
+- **No final novelty proof**. The method specification does not establish the idea as novel.
+- **No full‑text verification**. All comparisons rely on abstracts and metadata; full‑text may reveal prior trajectory‑level anomaly approaches.
+- **No claim of superiority**. The method is not claimed to outperform existing hallucination detection techniques.
+- **No claim of general solution**. The specification does not guarantee the method works across all models, domains, or definitions of hallucination.
+- **No claim that prior work lacks this idea**. The current evidence only indicates that trajectory‑level anomaly formulation is not visible in retrieved abstracts; it is not a proof of absence.
+
+## Minimum Experiment Boundary
+
+Should the method advance to experiment_plan, the following minimal components must be secured:
+
+- Access to an LLM that exposes per‑token hidden states (e.g., an open‑source transformer).
+- A dataset with reliable hallucination labels (e.g., factual QA where answer correctness can be verified).
+- A concrete choice of trajectory representation (e.g., last‑layer states, aligned with padding/truncation) and anomaly detection algorithm (e.g., autoencoder reconstruction error).
+- A protocol for constructing the reference distribution (e.g., from a dedicated truthful subset).
+- Evaluation metrics: at minimum AUC of anomaly scores vs. hallucination labels, and false positive/negative rates at a chosen threshold.
+- Control baselines: (a) a per‑token classifier using the same hidden states, (b) a model‑agnostic baseline (e.g., output logit entropy), (c) a randomised anomaly score.
+
+This boundary prevents speculation; it does not constitute an experiment plan.
+
+## Risks and Open Questions
+
+**Risks from current evidence (novelty_check & literature_search):**
+
+- Medium‑to‑high overlap: internal‑state hallucination detection is already well‑represented; the trajectory‑level claim may be incremental rather than a gap.
+- Low confidence possible gap on trajectory‑level anomaly: the evidence is too weak to distinguish; full‑texts of ICR Probe and unsupervised real‑time detection could close the gap.
+- The method may collapse into detecting length, token frequency, or decoding noise rather than hallucination (research_contract failure condition).
+- The needed reference distribution may not be stable across domains, leading to poor transfer.
+
+**Open questions (from input_normalization and contract):**
+
+- How should variable‑length trajectories be aligned or represented? (padding, DTW, recurrent autoencoders, pooling).
+- Do different hallucination types produce distinguishable trajectory patterns?
+- How does model size, architecture, or decoding strategy affect trajectory behaviour and detectability?
+- Can the method operate at inference time (streaming detection) or only post‑hoc?
+- Is the reference distribution stable enough across prompts and domains?
+- What is the impact of input length, generation length, and sampling temperature on trajectory statistics?
+- How should a “truthful” trajectory set be curated to avoid label noise?
+- Would a fully synthetic setup (controlled fact perturbations) generalise to natural hallucination conditions?
+
+## Readiness Gate for experiment_plan
+
+**Readiness label: `needs_more_literature_evidence`**
+
+**Justification**: The method specification’s apparent differentiator depends on the trajectory‑level anomaly formulation not being present in prior work. However, the current evidence is limited to metadata and abstracts; critical papers (ICR Probe, INSIDE, unsupervised real‑time) have not been full‑text verified. The novelty_check verdict is “low_confidence_possible_gap” and overall “insufficient_evidence”. Advancing to experiment_plan under these conditions risks building on an increment that may already exist in the literature. Therefore, the minimum requirement is to collect and review the full text of the closest prior works to either confirm or refute the apparent gap.
+
+## Next Allowed Action
+
 **collect_more_literature**
 
-*(Do not proceed to experiment_plan. Expand literature search to include arXiv, Semantic Scholar, Crossref; pursue full‑text verification for top candidates; and add dedicated queries for “trajectory anomaly detection LLM hidden states”. After evidence expansion, revisit method refinement and reassess readiness.)*
+(This action entails obtaining full‑texts of the top‑k papers, especially ICR Probe, INSIDE, and Unsupervised Real‑Time Hallucination Detection, and re‑running the novelty_check stage with the enriched evidence. No experiment_plan step should be taken until the readiness gate is satisfied.)
 
 ---
 

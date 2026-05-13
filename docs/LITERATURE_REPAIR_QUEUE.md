@@ -36,6 +36,7 @@ No issue may be silently ignored. Every issue must be recorded in the table belo
 | LRQ-014 | Full-text acquisition and parsing missing | 2026-05-13 | high | repair_queue | Implement manual acquisition queue + parser MVP | open | yes for strong novelty claims and paper writing | Evidence is metadata-only. Target doc Section 8.8-8.9 requires full-text. |
 | LRQ-015 | Status tracking layer incomplete | 2026-05-13 | high | near_term_mvp | Implement unified status summary in research_cli.py | partial — research_cli.py status/validate/repair-queue done; full autonomous tracking remains | yes for user-friendly automation | Phase 18A/B implemented status/validate/repair-queue in research_cli.py. Full status history and integrated /status slash command remain future work. |
 | LRQ-016 | Semantic Scholar adapter deferred | 2026-05-13 | medium | repair_queue | Add Semantic Scholar adapter with aggressive rate-limit handling | open | no for current scope, yes for broader coverage | Deferred from Phase 20 due to aggressive rate limits. arXiv + Crossref + OpenAlex sufficient for MVP. |
+| LRQ-017 | Forbidden-token false positive in top_k limitation text | 2026-05-13 | high | fix_now | Removed confirmed_novel from generated limitation wording | fixed in Phase 20B | yes — can trigger boundary/contamination false positive | Replaced with safe wording in literature_evidence_landing.py top_k generator. |
 
 ---
 

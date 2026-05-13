@@ -1032,7 +1032,7 @@ def _write_top_k_md(path: Path, top_k_records: list, filtered_low: list,
         "- Papers may be misclassified if keywords appear in non-relevant context (e.g., domain application descriptions).",
         "- Strong domain negatives (pharmaceutical, supply chain, geriatric, etc.) cap relevance at medium unless title contains internal state terms.",
         "- Multi-version papers (arXiv + conference) are merged by normalized title matching.",
-        "- This is not a novelty verdict. confirmed_novel must not be inferred from metadata completeness alone.",
+        "- This is not a novelty verdict. Metadata completeness alone is not evidence of research originality.",
         "- If validator returns valid_with_gaps, novelty_check must be cautious or require manual confirmation.",
     ])
 

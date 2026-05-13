@@ -6,7 +6,7 @@ route_expected_backend: openai_compatible_api
 route_expected_model: deepseek-v4-pro
 actual_backend: deepseek
 actual_model: deepseek-v4-pro
-ledger_call_id: call_fc99bd2156be
+ledger_call_id: call_38274b614799
 codex_used: False
 codex_thread_id: 
 fallback_used: False
@@ -17,12 +17,12 @@ allowed_next_stage: True
 status: completed
 routing_source: trusted_role_runner
 isolation_mode: context_manifest
-task_id: wf_novelty_check_5b631de7
-context_manifest: tmp\wf_novelty_check_manifest.json
+task_id: wf_novelty_check_9f41cd0b
+context_manifest: D:\Code\Python\Auto-claude-code-research-in-sleep\tmp\wf_novelty_check_manifest.json
 allowed_input_files: ["research\\current\\input_normalization.md", "research\\current\\trusted_outputs\\research_contract.md", "research\\current\\literature_notes.md", "research\\current\\trusted_outputs\\literature_search.md", "literature\\search_runs\\current\\top_k.md", "docs\\LITERATURE_REPAIR_QUEUE.md"]
 forbidden_context: ["old novelty conclusions", "unverified experiment results", "other candidates", "user preference", "generator trace", "previous optimistic summaries", "external_agent_direct output", "mock/dry-run artifact"]
 forbidden_context_checked: true
-context_hash: 1e07a5fc02277a41aca13372c0bc6582471e22599340d283d34ed7db9e82d4fa
+context_hash: 59d144dce05fbf97059f1f9b43c4c62639287bf7d60d0764db60f9b495292928
 prompt_file: 
 response_file: 
 source_boundary: workflow_novelty_check_minimal_allowed_inputs_only
@@ -34,73 +34,83 @@ error:
 # Novelty Check — Evidence-Bounded Risk Assessment
 
 ## Scope and Evidence Boundary
-- **This is not a final novelty proof.**
-- Evidence source: **OpenAlex only** (no arXiv, Crossref, Semantic Scholar).
-- Evidence type: **metadata and abstracts only**; no full texts verified.
-- No experiments conducted; no new data generated.
-- This assessment is **bounded strictly by the retrieved and documented literature evidence** (top‑k = 10 papers from a single API pipeline, relevance scored deterministically).
-- Absence of evidence in the searched sources does **not** establish absence of prior work.
 
-## Closest Prior Work and Overlap Risks
+**This is not a final novelty proof.**  
+This assessment is bounded by evidence derived **only from OpenAlex** sources. The search pipeline included arXiv and Crossref records, but these were **not examined** in this novelty check per the stage contract. Semantic Scholar was deferred.  
 
-Each listed work exhibits a **risk of overlap** with the candidate idea, primarily in the use of internal LLM states for hallucination detection.  
-**No explicit trajectory‑level formulation was visible in the retrieved abstracts.**  
-This does **not** establish that such a formulation is absent; it only reflects the current search boundary.
+- Only metadata and abstracts were reviewed; **no full‑text verification** was performed.  
+- No experiments were conducted.  
+- No claims of novelty are being made; only risk labels are assigned.
 
-| Paper | Apparent Relation to Candidate Idea | Overlap Risk | Evidence Limitation |
-|-------|--------------------------------------|--------------|---------------------|
-| **INSIDE** (Chen et al., 2024) | Internal‑state features used for hallucination detection. | **High** – internal‑state based detection. | Abstract only; unknown if trajectory sequences are used. |
-| **Semantic Entropy Probes** (Kossen et al., 2024) | Trains probes on internal representations (likely single‑token). | **High** – probe‑based detection using internal states. | Abstract does not describe probe input beyond “representations”. |
-| **LLMs Know More Than They Show** (Orgad et al., 2024) | Analysis of intrinsic representations for hallucination detection. | **High** – focuses on internal representations. | Abstract does not detail sequence‑level analysis. |
-| **Prompt‑Guided Internal States** (Zhang et al., 2024) | Prompt‑specific internal state analysis for detection. | **High** – uses single hidden states. | No evidence of trajectory modeling. |
-| **MixHD** (Li et al., 2025) | Combines internal state (last token) and output probability. | **Medium** – uses internal state but last‑token only; not sequence. | Abstract lacks method depth. |
-| **Unsupervised Real‑Time Hallucination Detection** (Su et al., 2024) | Unsupervised detection using internal states. | **Medium** – internal state based; real‑time suggests single‑step inference. | Trajectory details not in abstract. |
-| **Lookback Lens** (Chuang et al., 2024) | Attention‑map‑based detection of contextual hallucinations. | **Low‑Medium** – attention maps are not hidden‑state trajectories, but attention patterns may indirectly reflect trajectory dynamics. | Abstract only; method may not use hidden states. |
-| **HaluGNN** (Kong et al., 2025) | Graph neural network on text features, not hidden states. | **Low** – not internal‑state based. | Different signal; no overlap risk for hidden‑state trajectory detection. |
-| **SelfCheckGPT** (Manakul et al., 2023) | Black‑box consistency checking; zero‑resource hallucination detection. | **Low for internal‑state methods, but relevant as prior art in hallucination detection.** | No internal state access; black‑box alternative. |
-| **Semantic Entropy** (Farquhar et al., 2024) | Probabilistic approach using multiple generations, no hidden states. | **Low for internal‑state methods, but relevant as prior art.** | No hidden‑state trajectory used. |
-
-**Overall Note on Retrieval**  
-The literature search was not exhaustive; other databases and full‑text analyses could reveal trajectory‑level approaches that were invisible at the abstract level. The phrase “no explicit trajectory‑level formulation was visible in the retrieved abstracts” should not be misinterpreted as evidence of novelty. **This does not establish absence of direct overlap.**
-
-## Risk Labels
-
-| Dimension | Risk Label | Rationale |
-|-----------|------------|-----------|
-| **Internal‑state hallucination detection** | **medium_risk_overlap** | Multiple papers use internal states for detection; the general concept is well‑populated. |
-| **Token‑level detection** | **high_risk_overlap** | Most existing works operate on token‑level or last‑token hidden states; token‑level usage is pervasive. |
-| **Trajectory‑level anomaly framing** | **low_confidence_possible_gap** | No evidence in retrieved abstracts of treating the full sequence of hidden states as a trajectory for anomaly detection, but evidence base is too shallow to confirm a gap. |
-| **Unsupervised/real‑time detection** | **medium_risk_overlap** | At least one paper (Su et al.) explicitly addresses unsupervised real‑time detection using internal states. |
-| **Black‑box alternatives** | **medium_risk_overlap** | Hallucination detection without internal states (SelfCheckGPT, semantic entropy) already exists; the task domain is not novel. |
-
-## Evidence‑Bounded Assessment
-
-Based on the incomplete evidence (OpenAlex abstracts/metadata only, no full‑text verification):
-
-- The candidate idea’s **internal‑state hallucination detection** component falls into a well‑studied area → **medium_risk_overlap**.
-- The specific **trajectory‑level anomaly framing** (treating the full token‑level hidden state sequence as a trajectory and using anomaly detection methods) was not observed in the limited evidence → **low_confidence_possible_gap**.
-  - This gap is tentative because:  
-    * The search was restricted to one source (OpenAlex).  
-    * Abstracts may omit implementation details; full texts could reveal trajectory‑based methods.  
-    * Trajectory anomaly detection is a known technique; prior work may exist outside the LLM‑hallucination intersection.  
-- Therefore, overall novelty confidence is **insufficient_evidence**. A stronger claim cannot be supported until a broader, full‑text‑verified literature review is completed.
-
-## Required Repairs Before Stronger Claim
-
-1. **Expand search sources**: include arXiv, Semantic Scholar, Crossref, and possibly Google Scholar.  
-2. **Full‑text verification**: obtain and analyse full papers for all top‑k candidates and for any additional trajectory‑related matches.  
-3. **Precise operationalisation of “trajectory”**: define the exact trajectory representation, alignment, and distance measure, then search for that specific formulation in the literature (not only broad keywords).  
-4. **Search for trajectory anomaly detection applied to LLM hidden states** using dedicated queries (e.g., “trajectory anomaly detection LLM”, “hidden state sequence outlier”).  
-5. **Comparative analysis**: directly compare the candidate idea’s trajectory‑based method (once fully specified) with the closest internal‑state methods to isolate the novel component.  
-6. **Assess overlap beyond the “hallucination detection” domain**: evaluate whether trajectory‑level anomaly detection on neural network hidden states has been done in other safety or reliability contexts.
-
-## Allowed Next Stage Recommendation
-
-**continue_to_method_refinement_only**
-
-The evidence shows a crowded internal‑state hallucination detection field with a potential but unconfirmed gap for trajectory‑level anomaly framing. Before any experiment planning, the method must be sharply refined to distinguish it from existing single‑vector or last‑token approaches and to define the trajectory representation in a way that can be meaningfully compared against prior art. Moving forward with high caution is not yet justified because the very novelty of the trajectory framing remains unverified.
+The scope is deliberately narrow: the candidate idea proposes framing hallucination detection as an **anomaly detection problem over token‑level hidden state trajectories** (full sequences). The assessment compares that idea against prior work identified through OpenAlex.
 
 ---
 
-This artifact is an evidence‑bounded risk assessment, not a novelty proof.  
-It must be re‑evaluated when full‑text evidence becomes available.
+## Closest Prior Work and Overlap Risks
+
+All items listed below were retrieved from OpenAlex only. For each, the apparent relation, risk type, and evidence limitation are described. The required phrase **“No explicit trajectory‑level formulation was visible in the retrieved abstracts”** is included; the absence of this phrasing in any single entry is not a positive finding.  
+
+**This does not establish absence of direct overlap.** The evidence is limited to abstracts; full-text methods may differ.
+
+1. **Lookback Lens: Detecting and Mitigating Contextual Hallucinations in Large Language Models Using Only Attention Maps**  
+   - *Year:* 2024 (EMNLP)  
+   - *Apparent relation:* Uses internal model signals (attention maps) to detect contextual hallucinations. This overlaps with the general idea of using internal state‑derived information for hallucination detection.  
+   - *Risk type:* Partial overlap – the signal modality (attention maps, not hidden state sequences) is different, but the high‑level approach of extracting discriminative features from the model’s internals is similar.  
+   - *Evidence limitation:* Abstract only; it is unknown whether the method implicitly captures trajectory‑like patterns.  
+   - *Trajectory‑level formulation:* No explicit trajectory‑level formulation was visible in the retrieved abstracts.
+
+2. **LLMs Know More Than They Show: On the Intrinsic Representation of LLM Hallucinations**  
+   - *Year:* 2024 (arXiv preprint; OpenAlex record)  
+   - *Apparent relation:* Demonstrates that hidden representations encode hallucination‑related information; uses probing classifiers. This is closely related to the premise that internal states contain detectable hallucination signals.  
+   - *Risk type:* High overlap for the “internal‑state hallucination detection” dimension; however, the method is classification‑based, not unsupervised anomaly detection over full trajectories.  
+   - *Evidence limitation:* No full text; the probing approach may not consider sequence‑level patterns.  
+   - *Trajectory‑level formulation:* No explicit trajectory‑level formulation was visible in the retrieved abstracts.
+
+3. **MixHD: A Method for Detecting Hallucinations Based on the Internal State and Output Probability of Large Language Models**  
+   - *Year:* 2025 (ICASSP)  
+   - *Apparent relation:* Combines internal state features with output probabilities for hallucination detection. This shares the use of hidden states but as part of a multi‑modal feature set, not a pure trajectory anomaly detector.  
+   - *Risk type:* Medium overlap for internal‑state signal usage; no evidence it handles full token‑state sequences as a trajectory.  
+   - *Evidence limitation:* Abstract only; the role of temporal/sequential information is unclear.  
+   - *Trajectory‑level formulation:* No explicit trajectory‑level formulation was visible in the retrieved abstracts.
+
+4. **Unsupervised Real‑Time Hallucination Detection based on the Internal States of Large Language Models**  
+   - *Year:* 2024 (arXiv preprint; OpenAlex record)  
+   - *Apparent relation:* Proposes unsupervised, real‑time detection using internal states. This aligns strongly with the candidate’s framing of unsupervised anomaly detection.  
+   - *Risk type:* High risk of overlap – unsupervised detection from internal states is already claimed; whether it uses trajectory‑level patterns (vs. per‑token or aggregate features) cannot be determined from the abstract.  
+   - *Evidence limitation:* Abstract only; critical details about state representation (single token vs. sequence) are missing.  
+   - *Trajectory‑level formulation:* No explicit trajectory‑level formulation was visible in the retrieved abstracts.
+
+**Summary qualification:** All four papers demonstrate that internal‑state signals are usable for hallucination detection. None of the available abstracts describe a method that builds a reference distribution of full token‑level hidden state trajectories and applies standard anomaly detection (e.g., LOF, autoencoder, DTW) to those trajectories. This does not rule out such formulations in the full text.
+
+---
+
+## Risk Labels
+
+Each dimension of the candidate idea is assigned a risk label based on the OpenAlex‑only evidence:
+
+- **Internal‑state hallucination detection:** `medium_risk_overlap`  
+  *Rationale:* Multiple OpenAlex papers explicitly detect hallucination from internal states (e.g., probing, classifier, unsupervised). The idea that internal states carry hallucination signals is not novel within the evidence boundary.
+
+- **Token‑level detection:** `medium_risk_overlap`  
+  *Rationale:* Token‑level features are implicitly used in many internal‑state methods (e.g., probing at token positions). While the candidate’s emphasis is on trajectories, token‑level hidden‑state analysis is already present.
+
+- **Trajectory‑level anomaly framing:** `low_confidence_possible_gap`  
+  *Rationale:* No OpenAlex abstract describes a framework that treats the full sequence of hidden states as a trajectory and applies unsupervised anomaly detection to detect hallucinations. The evidence is insufficient to confirm this gap, but within the constrained search it appears the idea may be distinct. However, full‑text work could reveal prior trajectory formulations.
+
+- **Unsupervised/real‑time detection:** `high_risk_overlap`  
+  *Rationale:* Paper 10 explicitly claims unsupervised and real‑time hallucination detection using internal states. If trajectory‑level is not novel, this combination is at very high risk of overlap.
+
+- **Black‑box alternatives:** `low_confidence_possible_gap`  
+  *Rationale:* The candidate idea is inherently white‑box (requires hidden states). Black‑box methods (e.g., output probability only) are not directly overlapping; however, they are not the focus of this check and no strong evidence of overlap was found in the OpenAlex set.
+
+---
+
+## Evidence‑Bounded Assessment
+
+After reviewing the available OpenAlex evidence (abstracts only, no full‑text), the following required conclusions are drawn:
+
+- **Internal‑state hallucination detection:** `medium_risk_overlap`  
+- **Trajectory‑level anomaly framing:** `low_confidence_possible_gap`  
+- **Overall novelty confidence:** `insufficient_evidence`
+
+The combination of these labels reflects the fact that while the core concept of using internal states to detect hallucination is well‑represented, the specific formulation as a *trajectory‑level anomaly detection problem* appears not to be demonstrated in the retrieved abstracts. However

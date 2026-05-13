@@ -143,7 +143,7 @@ Gaps:
 | literature evidence acquisition | Multi-source pipeline complete (arXiv+Crossref+OpenAlex), top_k exists | Yes | Improved (3 sources, metadata only, no full text) | No full text, Semantic Scholar deferred | Multi-source done (Phase 20) |
 | literature_search | Trusted output exists | Yes | Bounded by OpenAlex only | Single source | Ready for current scope |
 | novelty_check | Trusted output exists, contract-enforced | Yes | Insufficient_evidence (OpenAlex only, no full text) | Needs broader search for strong claims | Ready for risk assessment |
-| method_refinement | Trusted output exists, contract-enforced, validator PASS | Yes | evidence-bounded (needs_more_literature_evidence) | readiness gate: needs_more_literature_evidence — blocked from experiment_plan | Ready — but experiment_plan blocked until more literature evidence |
+| method_refinement | Trusted output refreshed (Phase 20B), contract-enforced, validator PASS | Yes | evidence-bounded (needs_more_literature_evidence, multi-source) | readiness gate: needs_more_literature_evidence — blocked from experiment_plan | Refreshed with multi-source evidence; full-text verification of closest prior work needed |
 | experiment_plan | Workflow config exists, no execution | N/A | N/A | Blocked by needs_more_literature_evidence from method_refinement | Wait for more literature evidence |
 | implementation_plan | Workflow config exists | N/A | N/A | Blocked by experiment_plan | Wait |
 | experiment_bridge | Not in workflow config | N/A | N/A | Not designed yet | P1 |
