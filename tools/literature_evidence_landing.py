@@ -14,6 +14,9 @@ Usage:
     python tools/literature_evidence_landing.py validate-search-plan --file <path> [--json]
     python tools/literature_evidence_landing.py build-search-jobs --plan <path> --output <path> [--json]
     python tools/literature_evidence_landing.py validate-search-jobs --file <path> [--json]
+    python tools/literature_evidence_landing.py validate-job-results --file <path> [--json]
+    python tools/literature_evidence_landing.py normalize-job-results --input <path> --output <path> [--json]
+    python tools/literature_evidence_landing.py summarize-job-results --file <path> [--json]
     python tools/literature_evidence_landing.py init-run-skeleton --run-dir <dir> --topic <topic> --intent <intent>
     python tools/literature_evidence_landing.py validate-acquisition-status --file <path> [--json]
     python tools/literature_evidence_landing.py build-manual-queue --acquisition-status <file> --output <file>
@@ -32,7 +35,8 @@ import tempfile
 from pathlib import Path
 
 ALLOWED_SOURCES = frozenset([
-    "arxiv", "semantic_scholar", "openalex", "crossref", "openreview", "webfetch", "manual"
+    "arxiv", "semantic_scholar", "openalex", "crossref", "unpaywall",
+    "openreview", "conference_site", "author_homepage", "github", "webfetch", "manual"
 ])
 ALLOWED_ORIGINS = frozenset([
     "websearch", "webfetch", "manual", "api_export"
@@ -57,6 +61,10 @@ VALID_PARSE_STATUSES = frozenset([
 
 VALID_PARSE_QUALITIES = frozenset([
     "high", "medium", "low", "unknown"
+])
+
+VALID_JOB_RESULT_STATUSES = frozenset([
+    "success", "empty", "failed", "rate_limited", "auth_failed", "blocked"
 ])
 
 
@@ -816,7 +824,8 @@ def build_search_plan(
 
 # Novelty verdict fields that must NOT appear in a search plan
 NOVELTY_VERDICT_FIELDS = frozenset([
-    "verdict", "novelty_verdict", "confirmed_novel", "already_done", "likely_incremental"
+    "verdict", "novelty_verdict", "confirmed_novel", "already_done",
+    "likely_incremental", "potentially_novel", "no_prior_work"
 ])
 
 
@@ -1134,6 +1143,7 @@ def init_run_skeleton(run_dir: Path, topic: str, intent: str) -> dict:
     # Empty JSONL files
     (run_dir / "raw_results.jsonl").write_text("", encoding="utf-8")
     (run_dir / "candidates.jsonl").write_text("", encoding="utf-8")
+    (run_dir / "job_results.jsonl").write_text("", encoding="utf-8")
 
     # Template top_k.md
     (run_dir / "top_k.md").write_text(
@@ -1151,7 +1161,8 @@ def init_run_skeleton(run_dir: Path, topic: str, intent: str) -> dict:
     )
 
     created = [
-        "search_plan.yaml", "search_jobs.json", "raw_results.jsonl", "candidates.jsonl",
+        "search_plan.yaml", "search_jobs.json", "job_results.jsonl",
+        "raw_results.jsonl", "candidates.jsonl",
         "top_k.md", "acquisition_status.json", "manual_acquisition_queue.md"
     ]
 
@@ -1345,6 +1356,30 @@ def summarize_run(run_dir: Path, json_output: bool) -> dict:
         except Exception:
             pass
 
+    # Job results
+    job_results_path = run_dir / "job_results.jsonl"
+    job_results_present = job_results_path.exists()
+    job_results_valid = False
+    job_result_count = 0
+    successful_job_result_count = 0
+    failed_job_result_count = 0
+    total_raw_records_from_job_results = 0
+    if job_results_present:
+        try:
+            jr_records, jr_parse_errors = _parse_jsonl(job_results_path)
+            if not jr_parse_errors:
+                vr_jr = validate_job_results_dict(jr_records)
+                job_results_valid = vr_jr["status"] == "PASS"
+                job_result_count = len(jr_records)
+                for rec in jr_records:
+                    if rec.get("status") == "success":
+                        successful_job_result_count += 1
+                        total_raw_records_from_job_results += rec.get("raw_record_count", 0)
+                    elif rec.get("status") in ("failed", "rate_limited", "auth_failed", "blocked"):
+                        failed_job_result_count += 1
+        except Exception:
+            pass
+
     # Determine status
     if not plan_present:
         status = "FAIL"
@@ -1369,6 +1404,12 @@ def summarize_run(run_dir: Path, json_output: bool) -> dict:
         "search_job_count": search_job_count,
         "planned_job_count": planned_job_count,
         "executed_job_count": executed_job_count,
+        "job_results_present": job_results_present,
+        "job_results_valid": job_results_valid,
+        "job_result_count": job_result_count,
+        "successful_job_result_count": successful_job_result_count,
+        "failed_job_result_count": failed_job_result_count,
+        "total_raw_records_from_job_results": total_raw_records_from_job_results,
         "raw_result_count": raw_count,
         "candidate_count": cand_count,
         "top_k_present": top_k_populated,
@@ -1382,6 +1423,316 @@ def summarize_run(run_dir: Path, json_output: bool) -> dict:
 
     if json_output:
         print(json.dumps(result, indent=2))
+    return result
+
+
+# ---- Source adapter job result validation ----
+
+def validate_job_results_dict(records: list[dict]) -> dict:
+    """Validate a list of source_job_result_v1 records in memory. No file I/O, no network."""
+    errors = []
+
+    if not isinstance(records, list):
+        return {"status": "FAIL", "errors": ["job_results must be a list"]}
+
+    if len(records) == 0:
+        return {"status": "PASS", "errors": [], "total_jobs": 0}
+
+    for idx, rec in enumerate(records):
+        prefix = f"job_results[{idx}]"
+
+        if not isinstance(rec, dict):
+            errors.append(f"{prefix}: must be a dict")
+            continue
+
+        # schema_version
+        if rec.get("schema_version") != "source_job_result_v1":
+            errors.append(f"{prefix}: schema_version must be 'source_job_result_v1', got '{rec.get('schema_version')}'")
+
+        # job_id non-empty
+        if not rec.get("job_id") or not str(rec["job_id"]).strip():
+            errors.append(f"{prefix}: job_id is empty")
+
+        # source in ALLOWED_SOURCES (which now covers VALID_PLAN_SOURCES + webfetch)
+        source = rec.get("source", "")
+        if not source:
+            errors.append(f"{prefix}: source is empty")
+        elif source not in ALLOWED_SOURCES:
+            errors.append(f"{prefix}: source '{source}' not in allowed list: {sorted(ALLOWED_SOURCES)}")
+
+        # query non-empty
+        if not rec.get("query") or not str(rec["query"]).strip():
+            errors.append(f"{prefix}: query is empty")
+
+        # status validation
+        status = rec.get("status", "")
+        if not status:
+            errors.append(f"{prefix}: status is empty")
+        elif status not in VALID_JOB_RESULT_STATUSES:
+            errors.append(f"{prefix}: status '{status}' not in {sorted(VALID_JOB_RESULT_STATUSES)}")
+
+        # retrieved_at non-empty
+        if not rec.get("retrieved_at") or not str(rec["retrieved_at"]).strip():
+            errors.append(f"{prefix}: retrieved_at is empty")
+
+        # raw_record_count must equal len(records)
+        raw_record_count = rec.get("raw_record_count")
+        record_list = rec.get("records", [])
+        if not isinstance(record_list, list):
+            errors.append(f"{prefix}: records must be a list")
+            record_list = []
+        if not isinstance(raw_record_count, int):
+            errors.append(f"{prefix}: raw_record_count must be an integer")
+        elif raw_record_count != len(record_list):
+            errors.append(f"{prefix}: raw_record_count ({raw_record_count}) != len(records) ({len(record_list)})")
+
+        # http_status: optional, but if present must be integer
+        http_status = rec.get("http_status")
+        if http_status is not None and not isinstance(http_status, int):
+            errors.append(f"{prefix}: http_status must be an integer if present")
+
+        # Status-specific rules
+        if status == "success":
+            if isinstance(raw_record_count, int) and raw_record_count == 0:
+                errors.append(f"{prefix}: status=success but raw_record_count=0")
+            err = rec.get("error", "")
+            if err:
+                errors.append(f"{prefix}: status=success but error is non-empty: '{err}'")
+            # Validate each record has required fields
+            for ri, record in enumerate(record_list):
+                if not isinstance(record, dict):
+                    errors.append(f"{prefix}: records[{ri}] must be a dict")
+                    continue
+                for field in ("source", "title", "year", "url", "evidence_origin"):
+                    if not record.get(field):
+                        errors.append(f"{prefix}: records[{ri}] missing required field: {field}")
+        elif status == "empty":
+            if isinstance(raw_record_count, int) and raw_record_count != 0:
+                errors.append(f"{prefix}: status=empty but raw_record_count != 0")
+            if record_list:
+                errors.append(f"{prefix}: status=empty but records is non-empty")
+        elif status in ("failed", "rate_limited", "auth_failed", "blocked"):
+            if isinstance(raw_record_count, int) and raw_record_count != 0:
+                errors.append(f"{prefix}: status={status} but raw_record_count != 0")
+            if record_list:
+                errors.append(f"{prefix}: status={status} but records is non-empty")
+            err = rec.get("error", "")
+            if not err or not str(err).strip():
+                errors.append(f"{prefix}: status={status} but error is empty")
+
+        # No novelty verdict fields allowed anywhere in the record
+        for field in NOVELTY_VERDICT_FIELDS:
+            if field in rec:
+                errors.append(f"{prefix}: novelty verdict field not allowed: {field}")
+
+    status_out = "PASS" if not errors else "FAIL"
+    return {"status": status_out, "errors": errors, "total_jobs": len(records)}
+
+
+def validate_job_results(file_path: Path, json_output: bool) -> dict:
+    """Validate a job_results.jsonl file. No network, no model."""
+    if not file_path.exists():
+        result = {"status": "FAIL", "errors": ["file not found"], "total_jobs": 0}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    records, parse_errors = _parse_jsonl(file_path)
+    if parse_errors:
+        result = {"status": "FAIL", "errors": [e.get("message", str(e)) for e in parse_errors], "total_jobs": 0}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    result = validate_job_results_dict(records)
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Status: {result['status']}")
+        print(f"Total jobs: {result['total_jobs']}")
+        if result["errors"]:
+            print(f"Errors ({len(result['errors'])}):")
+            for e in result["errors"][:10]:
+                print(f"  - {e}")
+    return result
+
+
+def normalize_job_results(input_path: Path, output_path: Path, json_output: bool) -> dict:
+    """Convert successful job results into raw_results.jsonl records.
+    Fail-closed: validates job_results first, then validates converted records.
+    No network, no model."""
+    # Step 1: validate job_results
+    if not input_path.exists():
+        result = {"status": "FAIL", "errors": ["input file not found"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    records, parse_errors = _parse_jsonl(input_path)
+    if parse_errors:
+        result = {"status": "FAIL", "errors": [e.get("message", str(e)) for e in parse_errors]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    vr = validate_job_results_dict(records)
+    if vr["status"] != "PASS":
+        result = {"status": "FAIL", "errors": vr["errors"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 2: extract success records into raw format
+    raw_records = []
+    for rec in records:
+        if rec.get("status") != "success":
+            continue
+        for paper in rec.get("records", []):
+            raw = {
+                "source": paper.get("source", ""),
+                "title": paper.get("title", ""),
+                "authors": paper.get("authors", []),
+                "year": paper.get("year", ""),
+                "url": paper.get("url", ""),
+                "doi": paper.get("doi", ""),
+                "arxiv_id": paper.get("arxiv_id", ""),
+                "semantic_scholar_id": paper.get("semantic_scholar_id", ""),
+                "openalex_id": paper.get("openalex_id", ""),
+                "abstract": paper.get("abstract", ""),
+                "venue": paper.get("venue", ""),
+                "retrieved_at": paper.get("retrieved_at", ""),
+                "evidence_origin": paper.get("evidence_origin", "api_export"),
+                "notes": paper.get("notes", ""),
+            }
+            raw_records.append(raw)
+
+    if not raw_records:
+        result = {"status": "FAIL", "errors": ["no success records to normalize"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 3: validate converted raw records
+    raw_errors, raw_warnings, _ = _validate_records(raw_records)
+    if raw_errors:
+        result = {"status": "FAIL", "errors": [f"converted raw records invalid: {e}" for e in raw_errors[:5]]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 4: write output
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(output_path, raw_records)
+
+    result = {
+        "status": "PASS",
+        "output": str(output_path),
+        "total_job_results": len(records),
+        "success_job_results": sum(1 for r in records if r.get("status") == "success"),
+        "normalized_records": len(raw_records),
+        "warnings": len(raw_warnings),
+    }
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Status: PASS")
+        print(f"Normalized {len(raw_records)} record(s) from {result['success_job_results']} success job(s) -> {output_path}")
+    return result
+
+
+def summarize_job_results(file_path: Path, json_output: bool) -> dict:
+    """Summarize job_results.jsonl. No network, no model, no novelty judgment."""
+    if not file_path.exists():
+        result = {
+            "status": "FAIL",
+            "total_jobs": 0, "success_count": 0, "empty_count": 0,
+            "failed_count": 0, "rate_limited_count": 0, "auth_failed_count": 0,
+            "blocked_count": 0, "total_raw_records": 0, "sources": {}, "errors": ["file not found"],
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    records, parse_errors = _parse_jsonl(file_path)
+    if parse_errors:
+        result = {
+            "status": "FAIL",
+            "total_jobs": 0, "success_count": 0, "empty_count": 0,
+            "failed_count": 0, "rate_limited_count": 0, "auth_failed_count": 0,
+            "blocked_count": 0, "total_raw_records": 0, "sources": {},
+            "errors": [e.get("message", str(e)) for e in parse_errors],
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Validate schema
+    vr = validate_job_results_dict(records)
+    if vr["status"] != "PASS":
+        result = {
+            "status": "FAIL",
+            "total_jobs": len(records), "success_count": 0, "empty_count": 0,
+            "failed_count": 0, "rate_limited_count": 0, "auth_failed_count": 0,
+            "blocked_count": 0, "total_raw_records": 0, "sources": {},
+            "errors": vr["errors"],
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Count statuses
+    counts = {s: 0 for s in VALID_JOB_RESULT_STATUSES}
+    total_raw = 0
+    sources: dict[str, dict] = {}
+
+    for rec in records:
+        status = rec.get("status", "")
+        if status in counts:
+            counts[status] += 1
+        total_raw += rec.get("raw_record_count", 0)
+
+        src = rec.get("source", "unknown")
+        if src not in sources:
+            sources[src] = {"jobs": 0, "success": 0, "failed": 0, "raw_records": 0}
+        sources[src]["jobs"] += 1
+        if status == "success":
+            sources[src]["success"] += 1
+            sources[src]["raw_records"] += rec.get("raw_record_count", 0)
+        elif status in ("failed", "rate_limited", "auth_failed", "blocked"):
+            sources[src]["failed"] += 1
+
+    # Status logic
+    if counts["success"] > 0 or counts["empty"] > 0:
+        status = "PASS"
+    elif counts["failed"] > 0 or counts["rate_limited"] > 0 or counts["auth_failed"] > 0 or counts["blocked"] > 0:
+        status = "WARN"
+    else:
+        status = "PASS"
+
+    result = {
+        "status": status,
+        "total_jobs": len(records),
+        "success_count": counts["success"],
+        "empty_count": counts["empty"],
+        "failed_count": counts["failed"],
+        "rate_limited_count": counts["rate_limited"],
+        "auth_failed_count": counts["auth_failed"],
+        "blocked_count": counts["blocked"],
+        "total_raw_records": total_raw,
+        "sources": sources,
+        "errors": [],
+    }
+
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Status: {status}")
+        print(f"Total jobs: {len(records)}")
+        print(f"Success: {counts['success']}, Empty: {counts['empty']}, Failed: {counts['failed']}")
+        print(f"Rate limited: {counts['rate_limited']}, Auth failed: {counts['auth_failed']}, Blocked: {counts['blocked']}")
+        print(f"Total raw records: {total_raw}")
+        for src, info in sorted(sources.items()):
+            print(f"  {src}: {info['jobs']} jobs, {info['success']} success, {info['raw_records']} records")
     return result
 
 
@@ -1842,6 +2193,267 @@ def _self_test() -> bool:
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    # Test 17: validate-job-results valid success result → PASS
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        jr_path = tmp_dir / "job_results.jsonl"
+        rec = {
+            "schema_version": "source_job_result_v1",
+            "job_id": "job_openalex_abc12345",
+            "source": "openalex",
+            "query": "LLM hallucination detection",
+            "status": "success",
+            "http_status": 200,
+            "retrieved_at": "2026-05-13",
+            "raw_record_count": 1,
+            "records": [{
+                "source": "openalex", "title": "Test Paper", "authors": ["A"],
+                "year": 2024, "url": "https://openalex.org/W123", "doi": "",
+                "arxiv_id": "", "semantic_scholar_id": "", "openalex_id": "W123",
+                "abstract": "Test abstract", "venue": "", "retrieved_at": "2026-05-13",
+                "evidence_origin": "api_export", "notes": "",
+            }],
+            "error": "",
+            "notes": "",
+        }
+        _write_jsonl(jr_path, [rec])
+        r = validate_job_results(jr_path, json_output=False)
+        assert r["status"] == "PASS", f"Test 17: Expected PASS, got {r['status']}: {r['errors']}"
+        print("  [PASS] 17. validate-job-results valid success result → PASS")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 17. validate-job-results success: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 18: validate-job-results success with raw_record_count mismatch → FAIL
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        jr_path = tmp_dir / "job_results.jsonl"
+        rec = {
+            "schema_version": "source_job_result_v1",
+            "job_id": "job_openalex_badcount",
+            "source": "openalex",
+            "query": "test",
+            "status": "success",
+            "http_status": 200,
+            "retrieved_at": "2026-05-13",
+            "raw_record_count": 5,
+            "records": [{"source": "openalex", "title": "T", "year": 2024, "url": "x", "evidence_origin": "api_export"}],
+            "error": "",
+            "notes": "",
+        }
+        _write_jsonl(jr_path, [rec])
+        r = validate_job_results(jr_path, json_output=False)
+        assert r["status"] == "FAIL", f"Test 18: Expected FAIL, got {r['status']}"
+        assert any("raw_record_count" in e for e in r["errors"]), f"Test 18: Expected count mismatch error, got {r['errors']}"
+        print("  [PASS] 18. validate-job-results success with raw_record_count mismatch → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 18. raw_record_count mismatch: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 19: validate-job-results failed result with empty error → FAIL
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        jr_path = tmp_dir / "job_results.jsonl"
+        rec = {
+            "schema_version": "source_job_result_v1",
+            "job_id": "job_arxiv_failnoerr",
+            "source": "arxiv",
+            "query": "test",
+            "status": "failed",
+            "retrieved_at": "2026-05-13",
+            "raw_record_count": 0,
+            "records": [],
+            "error": "",
+            "notes": "",
+        }
+        _write_jsonl(jr_path, [rec])
+        r = validate_job_results(jr_path, json_output=False)
+        assert r["status"] == "FAIL", f"Test 19: Expected FAIL, got {r['status']}"
+        assert any("error is empty" in e for e in r["errors"]), f"Test 19: Expected empty error msg, got {r['errors']}"
+        print("  [PASS] 19. validate-job-results failed with empty error → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 19. failed empty error: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 20: validate-job-results rate_limited with error and zero records → PASS
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        jr_path = tmp_dir / "job_results.jsonl"
+        rec = {
+            "schema_version": "source_job_result_v1",
+            "job_id": "job_semantic_scholar_rl",
+            "source": "semantic_scholar",
+            "query": "test",
+            "status": "rate_limited",
+            "http_status": 429,
+            "retrieved_at": "2026-05-13",
+            "raw_record_count": 0,
+            "records": [],
+            "error": "rate limit exceeded",
+            "notes": "",
+        }
+        _write_jsonl(jr_path, [rec])
+        r = validate_job_results(jr_path, json_output=False)
+        assert r["status"] == "PASS", f"Test 20: Expected PASS, got {r['status']}: {r['errors']}"
+        print("  [PASS] 20. validate-job-results rate_limited with error and zero records → PASS")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 20. rate_limited: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 21: normalize-job-results valid success → writes raw_results.jsonl
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        jr_path = tmp_dir / "job_results.jsonl"
+        raw_out = tmp_dir / "raw_results.jsonl"
+        rec = {
+            "schema_version": "source_job_result_v1",
+            "job_id": "job_openalex_norm",
+            "source": "openalex",
+            "query": "test query",
+            "status": "success",
+            "http_status": 200,
+            "retrieved_at": "2026-05-13",
+            "raw_record_count": 2,
+            "records": [
+                {
+                    "source": "openalex", "title": "Paper A", "authors": ["Author A"],
+                    "year": 2024, "url": "https://openalex.org/W1", "doi": "10.1234/a",
+                    "arxiv_id": "", "semantic_scholar_id": "", "openalex_id": "W1",
+                    "abstract": "Abstract A", "venue": "Conf A", "retrieved_at": "2026-05-13",
+                    "evidence_origin": "api_export", "notes": "",
+                },
+                {
+                    "source": "openalex", "title": "Paper B", "authors": ["Author B"],
+                    "year": 2023, "url": "https://openalex.org/W2", "doi": "",
+                    "arxiv_id": "2301.00001", "semantic_scholar_id": "", "openalex_id": "W2",
+                    "abstract": "Abstract B", "venue": "", "retrieved_at": "2026-05-13",
+                    "evidence_origin": "api_export", "notes": "",
+                },
+            ],
+            "error": "",
+            "notes": "",
+        }
+        _write_jsonl(jr_path, [rec])
+        r = normalize_job_results(jr_path, raw_out, json_output=False)
+        assert r["status"] == "PASS", f"Test 21: Expected PASS, got {r['status']}: {r.get('errors', '')}"
+        assert raw_out.exists(), "Test 21: output file should exist"
+        assert r["normalized_records"] == 2, f"Test 21: Expected 2 normalized, got {r['normalized_records']}"
+        # Verify output passes validate_raw
+        vr = validate_raw(raw_out, json_output=False)
+        assert vr["status"] in ("valid", "valid_with_warnings"), f"Test 21: raw should validate, got {vr['status']}"
+        print("  [PASS] 21. normalize-job-results valid success → writes raw_results.jsonl")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 21. normalize-job-results success: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 22: normalize-job-results invalid job_results → FAIL and no output file
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        jr_path = tmp_dir / "job_results.jsonl"
+        raw_out = tmp_dir / "raw_results.jsonl"
+        rec = {
+            "schema_version": "WRONG",
+            "job_id": "job_bad",
+            "source": "arxiv",
+            "query": "test",
+            "status": "success",
+            "retrieved_at": "2026-05-13",
+            "raw_record_count": 0,
+            "records": [],
+            "error": "",
+            "notes": "",
+        }
+        _write_jsonl(jr_path, [rec])
+        r = normalize_job_results(jr_path, raw_out, json_output=False)
+        assert r["status"] == "FAIL", f"Test 22: Expected FAIL, got {r['status']}"
+        assert not raw_out.exists(), f"Test 22: output file should NOT exist on FAIL"
+        print("  [PASS] 22. normalize-job-results invalid → FAIL and no output file")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 22. normalize-job-results invalid: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 23: summarize-job-results counts success/failed/rate_limited correctly
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        jr_path = tmp_dir / "job_results.jsonl"
+        recs = [
+            {
+                "schema_version": "source_job_result_v1",
+                "job_id": "job_oa_ok", "source": "openalex", "query": "q1",
+                "status": "success", "http_status": 200, "retrieved_at": "2026-05-13",
+                "raw_record_count": 3, "records": [{"source":"openalex","title":"T","year":2024,"url":"u","evidence_origin":"api_export"}] * 3,
+                "error": "", "notes": "",
+            },
+            {
+                "schema_version": "source_job_result_v1",
+                "job_id": "job_arxiv_fail", "source": "arxiv", "query": "q2",
+                "status": "failed", "retrieved_at": "2026-05-13",
+                "raw_record_count": 0, "records": [],
+                "error": "connection timeout", "notes": "",
+            },
+            {
+                "schema_version": "source_job_result_v1",
+                "job_id": "job_ss_rl", "source": "semantic_scholar", "query": "q3",
+                "status": "rate_limited", "http_status": 429, "retrieved_at": "2026-05-13",
+                "raw_record_count": 0, "records": [],
+                "error": "rate limited", "notes": "",
+            },
+        ]
+        _write_jsonl(jr_path, recs)
+        r = summarize_job_results(jr_path, json_output=False)
+        assert r["status"] == "PASS", f"Test 23: Expected PASS, got {r['status']}"
+        assert r["total_jobs"] == 3, f"Test 23: Expected 3 jobs, got {r['total_jobs']}"
+        assert r["success_count"] == 1, f"Test 23: Expected 1 success, got {r['success_count']}"
+        assert r["failed_count"] == 1, f"Test 23: Expected 1 failed, got {r['failed_count']}"
+        assert r["rate_limited_count"] == 1, f"Test 23: Expected 1 rate_limited, got {r['rate_limited_count']}"
+        assert r["total_raw_records"] == 3, f"Test 23: Expected 3 raw records, got {r['total_raw_records']}"
+        assert "openalex" in r["sources"], "Test 23: openalex should be in sources"
+        assert r["sources"]["openalex"]["success"] == 1, "Test 23: openalex success should be 1"
+        print("  [PASS] 23. summarize-job-results counts success/failed/rate_limited correctly")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 23. summarize-job-results: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 24: init-run-skeleton creates empty job_results.jsonl
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        run_dir = tmp_dir / "skeleton_test"
+        r = init_run_skeleton(run_dir, "test topic", "novelty_check")
+        assert r["status"] == "created", f"Test 24: Expected created, got {r['status']}"
+        assert "job_results.jsonl" in r["files"], f"Test 24: job_results.jsonl should be in files list"
+        jr_path = run_dir / "job_results.jsonl"
+        assert jr_path.exists(), "Test 24: job_results.jsonl should exist"
+        content = jr_path.read_text(encoding="utf-8").strip()
+        assert content == "", f"Test 24: job_results.jsonl should be empty, got '{content}'"
+        print("  [PASS] 24. init-run-skeleton creates empty job_results.jsonl")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 24. init-run-skeleton job_results: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
 
@@ -1898,6 +2510,19 @@ def main():
     vsj = sub.add_parser("validate-search-jobs", help="Validate search_jobs.json schema")
     vsj.add_argument("--file", required=True, help="Path to search_jobs.json")
     vsj.add_argument("--json", action="store_true", help="Output JSON")
+
+    vjr = sub.add_parser("validate-job-results", help="Validate job_results.jsonl schema")
+    vjr.add_argument("--file", required=True, help="Path to job_results.jsonl")
+    vjr.add_argument("--json", action="store_true", help="Output JSON")
+
+    njr = sub.add_parser("normalize-job-results", help="Normalize successful job results into raw_results.jsonl")
+    njr.add_argument("--input", required=True, help="Path to job_results.jsonl")
+    njr.add_argument("--output", required=True, help="Output path for raw_results.jsonl")
+    njr.add_argument("--json", action="store_true", help="Output JSON")
+
+    sjr = sub.add_parser("summarize-job-results", help="Summarize job_results.jsonl")
+    sjr.add_argument("--file", required=True, help="Path to job_results.jsonl")
+    sjr.add_argument("--json", action="store_true", help="Output JSON")
 
     ir = sub.add_parser("init-run-skeleton", help="Create empty run skeleton")
     ir.add_argument("--run-dir", required=True, help="Target run directory")
@@ -1965,6 +2590,16 @@ def main():
         r = validate_search_jobs(Path(args.file), args.json)
         if r["status"] == "FAIL":
             sys.exit(1)
+    elif args.command == "validate-job-results":
+        r = validate_job_results(Path(args.file), args.json)
+        if r["status"] == "FAIL":
+            sys.exit(1)
+    elif args.command == "normalize-job-results":
+        r = normalize_job_results(Path(args.input), Path(args.output), args.json)
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "summarize-job-results":
+        summarize_job_results(Path(args.file), args.json)
     elif args.command == "init-run-skeleton":
         r = init_run_skeleton(Path(args.run_dir), args.topic, args.intent)
         print(json.dumps(r, indent=2))

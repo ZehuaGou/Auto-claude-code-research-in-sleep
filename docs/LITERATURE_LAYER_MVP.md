@@ -31,8 +31,11 @@ build-search-plan (generate plan + query variants)
   → build-search-jobs (expand plan → per-source jobs)
   → validate-search-jobs (schema check)
   → init-run-skeleton (create run with valid plan + jobs)
-  → [future: source adapters execute jobs → raw_results.jsonl]
-  → [future: build-candidates, build-top-k]
+  → [source adapters execute jobs → job_results.jsonl]
+  → validate-job-results (schema check)
+  → normalize-job-results (job_results → raw_results)
+  → build-candidates (dedup/rank)
+  → build-top-k (select top evidence)
   → validate-acquisition-status (schema check)
   → build-manual-queue (papers needing manual PDF)
   → summarize-run (status overview)
@@ -66,7 +69,27 @@ The `build-search-jobs` command expands `query_variants × sources` into job rec
 
 `summarize_run` now reports `search_jobs_present`, `search_jobs_valid`, `search_job_count`, `planned_job_count`, `executed_job_count`.
 
-Real search execution is future work. Future source adapters must write `raw_results.jsonl` and remain auditable.
+Real search execution is handled by source adapters (see Source Adapter Interface below).
+
+---
+
+## Source Adapter Interface MVP
+
+Source adapters are future real-search executors that take jobs from `search_jobs.json` and write results to `job_results.jsonl`. This MVP defines the schema and provides no-network validation/normalization tools. No real search is implemented.
+
+See `docs/LITERATURE_SOURCE_ADAPTERS.md` for full specification.
+
+The `validate-job-results` command validates `job_results.jsonl` against the `source_job_result_v1` schema. Each record represents one executed search job with status (success/empty/failed/rate_limited/auth_failed/blocked), retrieved records, and error info.
+
+The `normalize-job-results` command converts successful job result records into `raw_results.jsonl` format. It is fail-closed: validates input first, validates output second, only writes if both pass.
+
+The `summarize-job-results` command reports status breakdown: per-status counts, total raw records, per-source details.
+
+`init-run-skeleton` now creates an empty `job_results.jsonl` alongside other template files.
+
+`summarize_run` now reports `job_results_present`, `job_results_valid`, `job_result_count`, `successful_job_result_count`, `failed_job_result_count`, `total_raw_records_from_job_results`.
+
+Failed/rate-limited/blocked jobs are valid execution evidence — they are recorded, not hidden. 401/402/403/429/captcha/paywall must not be bypassed.
 
 ---
 
@@ -146,6 +169,33 @@ Validates `search_jobs.json` schema. Checks required fields, source validity, jo
 python tools/literature_evidence_landing.py validate-search-jobs --file search_jobs.json
 ```
 
+### validate-job-results
+
+Validates `job_results.jsonl` against `source_job_result_v1` schema. Checks schema_version, job_id, source, query, status, retrieved_at, raw_record_count consistency, status-specific rules, and rejects novelty verdict fields.
+
+```bash
+python tools/literature_evidence_landing.py validate-job-results --file job_results.jsonl
+python tools/literature_evidence_landing.py validate-job-results --file job_results.jsonl --json
+```
+
+### normalize-job-results
+
+Converts successful job result records into `raw_results.jsonl` format. Fail-closed: validates input, extracts success records, validates output, only writes if all pass.
+
+```bash
+python tools/literature_evidence_landing.py normalize-job-results \
+  --input job_results.jsonl \
+  --output raw_results.jsonl
+```
+
+### summarize-job-results
+
+Summarizes `job_results.jsonl`. Reports per-status counts, total raw records, per-source breakdown. No novelty judgment.
+
+```bash
+python tools/literature_evidence_landing.py summarize-job-results --file job_results.jsonl --json
+```
+
 ### init-run-skeleton
 
 Creates a run directory with a valid default search plan and empty template files.
@@ -197,9 +247,11 @@ Status logic:
 - WARN: search_plan invalid, or search_jobs missing/invalid, or no raw results, or no candidates, or top_k still template_only
 - PASS: plan valid, jobs valid, and all downstream files populated
 
+Reports: `search_plan_present`, `search_plan_valid`, `search_jobs_present`, `search_jobs_valid`, `search_job_count`, `planned_job_count`, `executed_job_count`, `job_results_present`, `job_results_valid`, `job_result_count`, `successful_job_result_count`, `failed_job_result_count`, `total_raw_records_from_job_results`, `raw_result_count`, `candidate_count`, `top_k_present`, `acquisition_status_present`, `manual_queue_present`, `manual_required_count`, `full_text_available_count`, `metadata_only_count`.
+
 ### --self-test
 
-Runs 16 tempfile-based self-tests covering all commands including query planning and search job expansion.
+Runs 24 tempfile-based self-tests covering all commands including query planning, search job expansion, and source adapter interface.
 
 ```bash
 python tools/literature_evidence_landing.py --self-test
@@ -213,6 +265,7 @@ python tools/literature_evidence_landing.py --self-test
 tmp/<run_name>/
   search_plan.yaml           # JSON search plan
   search_jobs.json           # per-source search job queue
+  job_results.jsonl          # source adapter job results (JSONL)
   raw_results.jsonl          # raw search results (JSONL)
   candidates.jsonl           # deduplicated/ranked candidates (JSONL)
   top_k.md                   # top-K evidence summary
