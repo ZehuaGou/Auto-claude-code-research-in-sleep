@@ -8,7 +8,7 @@
 
 ## What This Is
 
-A schema-level interface definition for source adapters that execute search jobs against real APIs. The OpenAlex adapter is now implemented. arXiv, Crossref, and Semantic Scholar adapters are planned. The interface provides no-network validation and normalization tools for all adapter output.
+A schema-level interface definition for source adapters that execute search jobs against real APIs. OpenAlex, arXiv, and Crossref adapters are now implemented. Semantic Scholar adapter is planned. The interface provides no-network validation and normalization tools for all adapter output.
 
 ---
 
@@ -288,6 +288,213 @@ Any step failure stops the pipeline and returns JSON with `failed_step` and `err
 
 ---
 
+## arXiv Adapter MVP
+
+The arXiv adapter executes planned arXiv search jobs from `search_jobs.json` and writes `source_job_result_v1` records to `job_results.jsonl`.
+
+### Commands
+
+#### run-arxiv-job
+
+Execute a single arXiv job by job ID:
+
+```bash
+python tools/literature_evidence_landing.py run-arxiv-job \
+  --job-id job_arxiv_xxxxxxxx \
+  --search-jobs search_jobs.json \
+  --output job_results.jsonl \
+  --max-results 5
+```
+
+- Reads `search_jobs.json`, finds job by `job_id`
+- Requires `job.source == "arxiv"` — rejects non-arxiv jobs before any network call
+- Executes exactly one job, appends one `source_job_result_v1` line to output
+- Validates result before writing (fail-closed)
+- No PDF download, no model, no .env
+
+#### run-arxiv-jobs
+
+Execute multiple arXiv jobs:
+
+```bash
+python tools/literature_evidence_landing.py run-arxiv-jobs \
+  --search-jobs search_jobs.json \
+  --output job_results.jsonl \
+  --max-jobs 3 \
+  --max-results 5 \
+  --overwrite
+```
+
+- Executes only `source == arxiv` jobs
+- Respects `--max-jobs` limit
+- Appends by default; use `--overwrite` to replace output
+
+### API Details
+
+- **Endpoint:** `http://export.arxiv.org/api/query`
+- **Query:** `search_query=all:<query>` with `max_results` and `sortBy=relevance`
+- **Response format:** Atom XML
+- **No API key required**
+- **Timeout:** 20 seconds
+- **User-Agent:** `literature-evidence-landing/1.0`
+- **Rate limit:** arXiv recommends 3 second delay between requests
+
+### Record Mapping
+
+Each arXiv entry is mapped to a raw record:
+
+| raw field | arXiv source |
+|-----------|-------------|
+| `source` | `"arxiv"` |
+| `title` | `<title>` |
+| `authors` | `<author><name>` list |
+| `year` | Extracted from `<published>` |
+| `url` | `<id>` (abs page, not PDF) |
+| `doi` | `<doi>` if present |
+| `arxiv_id` | Extracted from `<id>` URL |
+| `abstract` | `<summary>` |
+| `venue` | `"arXiv"` |
+| `evidence_origin` | `"api_export"` |
+
+### HTTP Status Handling
+
+| HTTP status | job result status |
+|-------------|-------------------|
+| 200 + results | `success` |
+| 200 + empty | `empty` |
+| 401 / 403 | `auth_failed` |
+| 429 | `rate_limited` |
+| other | `failed` |
+| timeout / network error | `failed` |
+
+---
+
+## Crossref Adapter MVP
+
+The Crossref adapter executes planned Crossref search jobs from `search_jobs.json` and writes `source_job_result_v1` records to `job_results.jsonl`.
+
+### Commands
+
+#### run-crossref-job
+
+Execute a single Crossref job by job ID:
+
+```bash
+python tools/literature_evidence_landing.py run-crossref-job \
+  --job-id job_crossref_xxxxxxxx \
+  --search-jobs search_jobs.json \
+  --output job_results.jsonl \
+  --rows 5
+```
+
+- Reads `search_jobs.json`, finds job by `job_id`
+- Requires `job.source == "crossref"` — rejects non-crossref jobs before any network call
+- Executes exactly one job, appends one `source_job_result_v1` line to output
+- Validates result before writing (fail-closed)
+- No PDF download, no model, no .env
+
+#### run-crossref-jobs
+
+Execute multiple Crossref jobs:
+
+```bash
+python tools/literature_evidence_landing.py run-crossref-jobs \
+  --search-jobs search_jobs.json \
+  --output job_results.jsonl \
+  --max-jobs 3 \
+  --rows 5 \
+  --overwrite
+```
+
+- Executes only `source == crossref` jobs
+- Respects `--max-jobs` limit
+- Appends by default; use `--overwrite` to replace output
+
+### API Details
+
+- **Endpoint:** `https://api.crossref.org/works`
+- **Query:** `query=<query>` with `rows` and `sort=relevance`
+- **Year filter:** `filter=from-pub-date:<start>,until-pub-date:<end>` when time_range present
+- **No API key required** for MVP (polite pool optional)
+- **Timeout:** 15 seconds
+- **User-Agent:** `literature-evidence-landing/1.0 (mailto:research@example.com)`
+
+### Record Mapping
+
+Each Crossref work is mapped to a raw record:
+
+| raw field | Crossref source |
+|-----------|----------------|
+| `source` | `"crossref"` |
+| `title` | `title[0]` |
+| `authors` | `author[].given + family` |
+| `year` | Extracted from `published-print` or `published-online` date-parts |
+| `url` | `URL` or constructed from DOI |
+| `doi` | `DOI` |
+| `abstract` | `abstract` (HTML tags stripped) |
+| `venue` | `container-title[0]` |
+| `evidence_origin` | `"api_export"` |
+
+Works with missing/empty `title` are skipped (not fabricated).
+
+### HTTP Status Handling
+
+| HTTP status | job result status |
+|-------------|-------------------|
+| 200 + results | `success` |
+| 200 + empty | `empty` |
+| 401 / 403 | `auth_failed` |
+| 429 | `rate_limited` |
+| other | `failed` |
+| timeout / network error | `failed` |
+
+---
+
+## Multi-source Pipeline
+
+The multi-source pipeline runs all three adapters in a single command:
+
+```bash
+python tools/literature_evidence_landing.py run-multisource-pipeline \
+  --topic "LLM hallucination detection hidden states" \
+  --intent novelty_check \
+  --must-include "hallucination detection" \
+  --must-include "hidden states" \
+  --run-dir tmp/my_run \
+  --sources arxiv \
+  --sources crossref \
+  --sources openalex \
+  --start-year 2020 \
+  --end-year 2026 \
+  --max-results-per-source 10 \
+  --max-jobs 36 \
+  --per-page 5 \
+  --top-k 10 \
+  --overwrite \
+  --json
+```
+
+Pipeline steps:
+1. `build_search_plan` → search_plan.yaml
+2. `build_search_jobs` → search_jobs.json (generates jobs for all requested sources)
+3. (dry-run stops here)
+4. `execute_jobs_by_source` → dispatches jobs to appropriate adapter by source type
+5. `validate_job_results` → check job_results.jsonl
+6. `normalize_job_results` → raw_results.jsonl
+7. `validate_raw` → check raw_results.jsonl
+8. `build_candidates` → candidates.jsonl (cross-source dedup by DOI, arXiv ID, normalized title)
+9. `validate_candidates` → check candidates.jsonl
+10. `build_top_k` → top_k.md
+
+Options:
+- `--dry-run`: Stop after plan + jobs (no network)
+- `--overwrite`: Overwrite job results instead of append
+- `--sources`: Repeatable, default: arxiv crossref openalex
+- `--max-jobs`: Total jobs across all sources (default: 9)
+- `--exclude`: Exclusion terms for query planning
+
+---
+
 ## Rules for Future Adapters
 
 1. **No fabrication.** Every record in `records` must come from the API response.
@@ -304,8 +511,8 @@ Any step failure stops the pipeline and returns JSON with `failed_step` and `err
 | adapter | source | API | status | notes |
 |---------|--------|-----|--------|-------|
 | OpenAlex adapter | `openalex` | OpenAlex Works API | **implemented** | free, no key required |
-| arXiv adapter | `arxiv` | arXiv API | planned | free, rate-limited |
-| Crossref adapter | `crossref` | Crossref REST API | planned | free, polite pool with key |
+| arXiv adapter | `arxiv` | arXiv Atom XML API | **implemented** | free, rate-limited |
+| Crossref adapter | `crossref` | Crossref REST API | **implemented** | free, polite pool optional |
 | Semantic Scholar adapter | `semantic_scholar` | S2 API | planned | free, aggressive rate limits |
 
 ---
@@ -316,5 +523,5 @@ Any step failure stops the pipeline and returns JSON with `failed_step` and `err
 - No model calls
 - No novelty judgment
 - No citation dedup or ranking (those happen downstream in build-candidates)
-- No arXiv/Crossref/Semantic Scholar adapters yet
-- No API key requirement (OpenAlex is free)
+- No Semantic Scholar adapter yet
+- No API key requirement (OpenAlex is free, arXiv/Crossref free tier)

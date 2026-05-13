@@ -1,25 +1,24 @@
 {
-  "topic": "Token-level hallucination detection via hidden state trajectory anomaly detection",
+  "topic": "token-level hallucination detection using hidden state trajectories",
   "search_intent": "novelty_check",
   "must_include": [
-    "hallucination detection",
-    "hidden states",
-    "token-level hallucination",
-    "representation trajectory",
-    "LLM internal states"
+    "hallucination",
+    "hidden state"
   ],
-  "exclude": "generic anomaly detection unrelated to language models",
+  "exclude": "supply chain,medical,image",
   "sources": [
+    "arxiv",
+    "crossref",
     "openalex"
   ],
   "time_range": {
     "start_year": 2020,
-    "end_year": 2026
+    "end_year": 2025
   },
   "max_results_per_source": 10,
   "query_variants": [
-    "Token-level hallucination detection via hidden state trajectory anomaly detection",
-    "hallucination detection hidden states token-level hallucination representation trajectory LLM internal states",
+    "token-level hallucination detection using hidden state trajectories",
+    "hallucination hidden state",
     "LLM hallucination detection hidden states",
     "LLM hallucination detection internal states",
     "LLM factuality detection hidden states",

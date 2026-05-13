@@ -95,22 +95,26 @@ Gaps:
 
 ### Literature Layer
 
-**Status: MVP COMPLETE**
+**Status: MVP COMPLETE — multi-source (Phase 20)**
 
 Completed:
 - OpenAlex adapter (`openalex_fetch.py`)
+- arXiv adapter (Atom XML API)
+- Crossref adapter (REST API)
+- Multi-source pipeline (`run-multisource-pipeline`)
 - Query planning (`literature_evidence_landing.py` build-search-plan)
 - Search jobs (`build-search-jobs`)
 - Job results (`validate-job-results`, `normalize-job-results`)
 - Raw results → candidates → top_k pipeline
 - Relevance scoring with domain negatives
 - Dedup by normalized title + year tolerance
+- Cross-source dedup (DOI, arXiv ID, normalized title)
 - Repair queue (`LITERATURE_REPAIR_QUEUE.md`)
 - Operator guide (`LITERATURE_LAYER_OPERATOR_GUIDE.md`)
 - `validate_literature_evidence.py` precheck
 
 Gaps:
-- Only OpenAlex implemented (LRQ-004)
+- Semantic Scholar deferred (LRQ-016)
 - No full-text acquisition (LRQ-005)
 - No paper parsing
 - No citation graph / ranking (LRQ-008)
@@ -136,7 +140,7 @@ Gaps:
 | raw_user_input | Manual file creation | N/A | N/A | No auto-save from CLI | Implement in CLI |
 | input_normalization | Workflow config exists, model executed | Yes | Good (DeepSeek Flash) | No trusted output in current run | Re-run if needed |
 | research_contract | Workflow config exists, model executed, trusted output exists | Yes | Good (DeepSeek Pro) | Complete | Ready |
-| literature evidence acquisition | OpenAlex pipeline complete, top_k exists | Yes | Insufficient (metadata only, no full text) | Single source, no full text | Multi-source (P20) |
+| literature evidence acquisition | Multi-source pipeline complete (arXiv+Crossref+OpenAlex), top_k exists | Yes | Improved (3 sources, metadata only, no full text) | No full text, Semantic Scholar deferred | Multi-source done (Phase 20) |
 | literature_search | Trusted output exists | Yes | Bounded by OpenAlex only | Single source | Ready for current scope |
 | novelty_check | Trusted output exists, contract-enforced | Yes | Insufficient_evidence (OpenAlex only, no full text) | Needs broader search for strong claims | Ready for risk assessment |
 | method_refinement | Trusted output exists, contract-enforced, validator PASS | Yes | evidence-bounded (needs_more_literature_evidence) | readiness gate: needs_more_literature_evidence — blocked from experiment_plan | Ready — but experiment_plan blocked until more literature evidence |
@@ -155,7 +159,7 @@ Gaps:
 | Native command layer | Section 5 | PARTIAL — dry-run planner exists; live one-command execution not implemented |
 | One-command user experience | Section 5 | PARTIAL — dry-run planner exists, but live one-command execution is not implemented |
 | Skill specs for all stages | Section 6 | Partial (contracts only) |
-| Multi-source search | Section 8.3 | Only OpenAlex |
+| Multi-source search | Section 8.3 | IMPLEMENTED (Phase 20) — arXiv + Crossref + OpenAlex |
 | Full-text acquisition | Section 8.8 | Not implemented |
 | Paper parsing | Section 8.9 | Not implemented |
 | Literature material store | Section 8.10 | Partial (search_runs only) |
@@ -174,7 +178,7 @@ Gaps:
 |-----|---------------|-----------|--------|-------------|
 | method_refinement missing | fix_now | Yes before experiment_plan | No generic method refinement exists | Phase 19: add workflow stage |
 | Status tracking incomplete | near_term_mvp | Was blocking, now mostly done | Phase 18A/B/C implemented | Phase 18A/B/C done |
-| OpenAlex only | repair_queue | No for risk assessment, yes for strong novelty | Single source limits coverage | Phase 20: multi-source bundle |
+| OpenAlex only | repair_queue | No for risk assessment, yes for strong novelty | Single source limits coverage | Phase 20: DONE — 3-source bundle |
 | No full text | repair_queue | Yes for strong novelty claims | Evidence is metadata-only | Phase 21: manual acquisition |
 | No paper parsing | repair_queue | Yes for paper writing | Cannot read PDFs programmatically | Phase 21: parser MVP |
 | self-test coverage gaps | repair_queue | No | Pre-existing, not blocking | LRQ-010 |
@@ -221,6 +225,8 @@ Why:
 Why:
 - OpenAlex-only limits novelty claim strength.
 - arXiv + Crossref adapters are straightforward.
+
+Status: IMPLEMENTED (Phase 20). 3-source pipeline operational. Semantic Scholar deferred.
 
 ### Phase 21: Full-text / Manual Acquisition MVP
 

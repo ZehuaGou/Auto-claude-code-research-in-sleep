@@ -5,6 +5,8 @@
 
 **Phase 19 Status:** IMPLEMENTED — generic method_refinement stage added to `research_default.yaml`. Trusted output generated via trusted_role_runner (deepseek-v4-pro, ledger call_74a3b9561c50). Validator PASS. Readiness gate: needs_more_literature_evidence. Next allowed: collect_more_literature. Dry-run plan updated to include method_refinement. experiment_plan blocked until more literature evidence collected.
 
+**Phase 20 Status:** IMPLEMENTED — arXiv and Crossref source adapters added to `literature_evidence_landing.py`. Multi-source pipeline (`run-multisource-pipeline`) executes all three sources (arXiv, Crossref, OpenAlex) with cross-source dedup. 70 self-tests pass. Live evidence: 155 records from 31 successful jobs (3 sources), 73 canonical candidates, 10 top-k selected. Evidence promoted to `literature/search_runs/current/`. Semantic Scholar deferred.
+
 ---
 
 ## 1. Goal
@@ -225,10 +227,10 @@ Phase 18A is implemented. See Phase 18A/B below.
 - Estimated: 2 days
 
 ### Phase 20 — Multi-source Literature Bundle
-- arXiv adapter
-- Crossref adapter
-- Maybe Semantic Scholar with rate-limit handling
-- Estimated: 3 days
+- arXiv adapter (implemented)
+- Crossref adapter (implemented)
+- Semantic Scholar deferred (aggressive rate limits)
+- Estimated: 3 days — DONE
 
 ### Phase 21 — Full-text / Manual Acquisition MVP
 - Manual acquisition queue

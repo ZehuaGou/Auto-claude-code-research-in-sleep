@@ -21,7 +21,7 @@ A schema-level MVP skeleton for the Literature Search & Acquisition Layer. It pr
 - Run summarization (no network calls)
 - Self-tests (42 tests, tempfile-based, no network)
 
-This is **not** a full implementation. It has no real search execution, no PDF download, no PDF parsing, no citation dedup/ranking. It only defines the data contracts and validates them.
+This is **not** a full implementation. It has no PDF download, no PDF parsing, no citation dedup/ranking. It now includes real search execution via OpenAlex, arXiv, and Crossref source adapters (Phase 20). It defines the data contracts and validates them.
 
 ---
 
@@ -77,7 +77,7 @@ Real search execution is handled by source adapters (see Source Adapter Interfac
 
 ## Source Adapter Interface MVP
 
-Source adapters are future real-search executors that take jobs from `search_jobs.json` and write results to `job_results.jsonl`. This MVP defines the schema and provides no-network validation/normalization tools. No real search is implemented.
+Source adapters execute real search jobs from `search_jobs.json` and write results to `job_results.jsonl`. OpenAlex, arXiv, and Crossref adapters are now implemented (Phase 20). Semantic Scholar is deferred.
 
 See `docs/LITERATURE_SOURCE_ADAPTERS.md` for full specification.
 
@@ -253,7 +253,7 @@ Reports: `search_plan_present`, `search_plan_valid`, `search_jobs_present`, `sea
 
 ### --self-test
 
-Runs 42 tempfile-based self-tests covering all commands including query planning, search job expansion, source adapter interface, and pipeline smoke command.
+Runs 70 tempfile-based self-tests covering all commands including query planning, search job expansion, source adapter interface (arXiv/Crossref/OpenAlex), multi-source pipeline, and pipeline smoke command.
 
 ```bash
 python tools/literature_evidence_landing.py --self-test
@@ -279,11 +279,10 @@ tmp/<run_name>/
 
 ## What This Does NOT Do
 
-- No real search execution (arXiv API, Semantic Scholar, OpenAlex)
 - No PDF download or parsing
 - No citation dedup or ranking
 - No model calls
-- No network calls
+- No Semantic Scholar adapter (deferred)
 - No trusted execution integration
 - No evidence quality judgment
 

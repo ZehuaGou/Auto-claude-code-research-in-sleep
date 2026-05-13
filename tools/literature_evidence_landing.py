@@ -2822,6 +2822,977 @@ def run_openalex_pipeline(
     return result
 
 
+# ---- arXiv adapter ----
+
+ARXIV_API_BASE = "https://export.arxiv.org/api/query"
+ARXIV_REQUEST_TIMEOUT = 15
+CROSSREF_API_BASE = "https://api.crossref.org/works"
+CROSSREF_REQUEST_TIMEOUT = 15
+
+
+def _parse_arxiv_date(date_str: str) -> str:
+    """Extract year from arXiv date string like '2024-03-15' or '2024'."""
+    if not date_str:
+        return ""
+    # Handle "2024-03-15" or "2024-03-15T12:00:00Z"
+    m = re.match(r"(\d{4})", date_str)
+    return m.group(1) if m else ""
+
+
+def _map_arxiv_entry_to_raw_record(entry: dict, job_id: str, query: str, retrieved_at: str) -> dict | None:
+    """Map a parsed arXiv entry dict to the standard raw record schema."""
+    title = entry.get("title", "").strip()
+    if not title:
+        return None
+
+    # Authors
+    authors = entry.get("authors", [])
+    if isinstance(authors, str):
+        authors = [a.strip() for a in authors.split(",") if a.strip()]
+
+    year = _parse_arxiv_date(entry.get("published", ""))
+    url = entry.get("url", "")
+    arxiv_id = entry.get("arxiv_id", "")
+    doi = entry.get("doi", "")
+
+    # Ensure URL is abs page, not PDF
+    if url.endswith(".pdf"):
+        url = url.rsplit("/", 1)[0] if "/" in url else url
+
+    return {
+        "source": "arxiv",
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "url": url,
+        "doi": doi,
+        "arxiv_id": arxiv_id,
+        "openalex_id": "",
+        "semantic_scholar_id": "",
+        "abstract": entry.get("abstract", ""),
+        "venue": "arXiv",
+        "full_text_available": False,
+        "pdf_url": "",
+        "source_record_id": arxiv_id if arxiv_id else url,
+        "evidence_origin": "api_export",
+        "retrieved_at": retrieved_at,
+        "query": query,
+        "job_id": job_id,
+    }
+
+
+def _execute_arxiv_job(job: dict, per_page: int = 10) -> dict:
+    """Execute a single arXiv search job. Returns a source_job_result_v1 dict.
+    Metadata only. No PDF download. No model."""
+    import xml.etree.ElementTree as ET
+
+    job_id = job.get("job_id", "")
+    source = job.get("source", "")
+    query = job.get("query", "")
+    retrieved_at = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    if source != "arxiv":
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": source,
+            "query": query,
+            "status": "failed",
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": f"source is '{source}', not 'arxiv'",
+            "notes": "run-arxiv-job only accepts arxiv jobs",
+        }
+
+    # Build query: use search_query=all:<query>
+    search_query = f"all:{query}"
+    params = {
+        "search_query": search_query,
+        "start": "0",
+        "max_results": str(min(per_page, 50)),
+        "sortBy": "relevance",
+        "sortOrder": "descending",
+    }
+    url = ARXIV_API_BASE + "?" + urllib.parse.urlencode(params)
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "literature-evidence-landing/1.0"})
+        with urllib.request.urlopen(req, timeout=ARXIV_REQUEST_TIMEOUT) as resp:
+            http_status = resp.status
+            body = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        http_status = e.code
+        body = ""
+        error_msg = f"HTTP {e.code}: {e.reason}"
+        if e.code in (401, 403):
+            status = "auth_failed"
+        elif e.code == 429:
+            status = "rate_limited"
+        else:
+            status = "failed"
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "arxiv",
+            "query": query,
+            "status": status,
+            "http_status": http_status,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": error_msg,
+            "notes": "",
+        }
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "arxiv",
+            "query": query,
+            "status": "failed",
+            "http_status": 0,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": str(e),
+            "notes": "",
+        }
+
+    # Parse Atom XML
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError as e:
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "arxiv",
+            "query": query,
+            "status": "failed",
+            "http_status": http_status,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": f"XML parse error: {e}",
+            "notes": "",
+        }
+
+    # Namespace for arXiv Atom
+    ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+
+    # Check if feed has entries
+    entries = root.findall("atom:entry", ns)
+    if not entries:
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "arxiv",
+            "query": query,
+            "status": "empty",
+            "http_status": http_status,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": "",
+            "notes": "no entries in arXiv response",
+        }
+
+    raw_records = []
+    for entry in entries:
+        # Extract fields
+        title_el = entry.find("atom:title", ns)
+        title_text = title_el.text.strip().replace("\n", " ") if title_el is not None and title_el.text else ""
+
+        # Authors
+        authors = []
+        for author_el in entry.findall("atom:author", ns):
+            name_el = author_el.find("atom:name", ns)
+            if name_el is not None and name_el.text:
+                authors.append(name_el.text.strip())
+
+        # Published date
+        published_el = entry.find("atom:published", ns)
+        published = published_el.text.strip() if published_el is not None and published_el.text else ""
+
+        # Abstract
+        summary_el = entry.find("atom:summary", ns)
+        abstract = summary_el.text.strip().replace("\n", " ") if summary_el is not None and summary_el.text else ""
+
+        # URL (abs page)
+        link_el = entry.find("atom:id", ns)
+        url = link_el.text.strip() if link_el is not None and link_el.text else ""
+
+        # arXiv ID from URL
+        arxiv_id = ""
+        if url:
+            # URL format: http://arxiv.org/abs/2403.12345v1
+            m = re.search(r"/abs/(.+?)(?:v\d+)?$", url)
+            if m:
+                arxiv_id = m.group(1)
+
+        # DOI if present
+        doi = ""
+        doi_el = entry.find("arxiv:doi", ns)
+        if doi_el is not None and doi_el.text:
+            doi = doi_el.text.strip()
+
+        rec = _map_arxiv_entry_to_raw_record(
+            {"title": title_text, "authors": authors, "published": published,
+             "url": url, "arxiv_id": arxiv_id, "doi": doi, "abstract": abstract},
+            job_id=job_id, query=query, retrieved_at=retrieved_at,
+        )
+        if rec:
+            raw_records.append(rec)
+
+    if not raw_records:
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "arxiv",
+            "query": query,
+            "status": "empty",
+            "http_status": http_status,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": "",
+            "notes": "all entries failed to map",
+        }
+
+    return {
+        "schema_version": "source_job_result_v1",
+        "job_id": job_id,
+        "source": "arxiv",
+        "query": query,
+        "status": "success",
+        "http_status": http_status,
+        "retrieved_at": retrieved_at,
+        "raw_record_count": len(raw_records),
+        "records": raw_records,
+        "error": "",
+        "notes": "",
+    }
+
+
+def run_arxiv_job(search_jobs_path: Path, job_id: str, output_path: Path,
+                   per_page: int = 10, json_output: bool = False) -> dict:
+    """Execute one arXiv job from search_jobs.json and append to job_results.jsonl."""
+    if not search_jobs_path.exists():
+        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    try:
+        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
+    except json.JSONDecodeError as e:
+        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    jobs_list = jobs_data.get("jobs", [])
+    target_job = None
+    for j in jobs_list:
+        if j.get("job_id") == job_id:
+            target_job = j
+            break
+
+    if target_job is None:
+        result = {"status": "FAIL", "errors": [f"job_id '{job_id}' not found in search_jobs.json"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    if target_job.get("source") != "arxiv":
+        result = {"status": "FAIL", "errors": [f"job source is '{target_job.get('source')}', not 'arxiv'"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    job_result = _execute_arxiv_job(target_job, per_page=per_page)
+
+    vr = validate_job_results_dict([job_result])
+    if vr["status"] != "PASS":
+        result = {"status": "FAIL", "errors": vr["errors"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    _append_jsonl(output_path, [job_result])
+
+    result = {
+        "status": "PASS",
+        "job_id": job_id,
+        "job_result_status": job_result["status"],
+        "raw_record_count": job_result["raw_record_count"],
+        "http_status": job_result.get("http_status"),
+        "output": str(output_path),
+    }
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Executed {job_id}: status={job_result['status']}, records={job_result['raw_record_count']}")
+    return result
+
+
+def run_arxiv_jobs(search_jobs_path: Path, output_path: Path,
+                    max_jobs: int = 3, per_page: int = 10,
+                    overwrite: bool = False, json_output: bool = False) -> dict:
+    """Execute arXiv jobs from search_jobs.json, append to job_results.jsonl."""
+    if not search_jobs_path.exists():
+        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    try:
+        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
+    except json.JSONDecodeError as e:
+        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    jobs_list = jobs_data.get("jobs", [])
+    arxiv_jobs = [j for j in jobs_list if j.get("source") == "arxiv"]
+
+    if not arxiv_jobs:
+        result = {"status": "FAIL", "errors": ["no arxiv jobs found in search_jobs.json"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Clear output if overwrite
+    if overwrite and output_path.exists():
+        output_path.unlink()
+
+    executed = 0
+    results = []
+    for job in arxiv_jobs[:max_jobs]:
+        job_result = _execute_arxiv_job(job, per_page=per_page)
+        vr = validate_job_results_dict([job_result])
+        if vr["status"] != "PASS":
+            continue
+        _append_jsonl(output_path, [job_result])
+        executed += 1
+        results.append({
+            "job_id": job_result["job_id"],
+            "status": job_result["status"],
+            "raw_record_count": job_result["raw_record_count"],
+        })
+
+    result = {
+        "status": "PASS",
+        "jobs_executed": executed,
+        "results": results,
+        "output": str(output_path),
+    }
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Executed {executed} arXiv job(s)")
+        for r in results:
+            print(f"  {r['job_id']}: status={r['status']}, records={r['raw_record_count']}")
+    return result
+
+
+# ---- Crossref adapter ----
+
+
+def _parse_crossref_date(date_parts) -> str:
+    """Extract year from Crossref date parts like [[2024, 3, 15]]."""
+    if not date_parts or not isinstance(date_parts, list):
+        return ""
+    if date_parts and isinstance(date_parts[0], list) and date_parts[0]:
+        return str(date_parts[0][0])
+    if date_parts and isinstance(date_parts[0], int):
+        return str(date_parts[0])
+    return ""
+
+
+def _map_crossref_item_to_raw_record(item: dict, job_id: str, query: str, retrieved_at: str) -> dict | None:
+    """Map a Crossref work item to the standard raw record schema."""
+    title_list = item.get("title", [])
+    title = title_list[0].strip() if title_list and isinstance(title_list[0], str) else ""
+    if not title:
+        return None
+
+    # Authors
+    authors = []
+    for author in item.get("author", []):
+        name_parts = []
+        if author.get("given"):
+            name_parts.append(author["given"])
+        if author.get("family"):
+            name_parts.append(author["family"])
+        if name_parts:
+            authors.append(" ".join(name_parts))
+
+    # Year: try published-print, published-online, issued
+    year = ""
+    for date_field in ("published-print", "published-online", "issued"):
+        dp = item.get(date_field, {}).get("date-parts")
+        year = _parse_crossref_date(dp)
+        if year:
+            break
+
+    # DOI and URL
+    doi = item.get("DOI", "")
+    url = item.get("URL", "")
+    if doi and not url:
+        url = f"https://doi.org/{doi}"
+
+    # Venue
+    container = item.get("container-title", [])
+    venue = container[0] if container and isinstance(container[0], str) else ""
+
+    # Abstract
+    abstract = item.get("abstract", "")
+    # Strip HTML tags from Crossref abstracts
+    if abstract:
+        abstract = re.sub(r"<[^>]+>", "", abstract).strip()
+
+    source_record_id = doi if doi else url
+
+    return {
+        "source": "crossref",
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "url": url,
+        "doi": doi,
+        "arxiv_id": "",
+        "openalex_id": "",
+        "semantic_scholar_id": "",
+        "abstract": abstract,
+        "venue": venue,
+        "full_text_available": False,
+        "pdf_url": "",
+        "source_record_id": source_record_id,
+        "evidence_origin": "api_export",
+        "retrieved_at": retrieved_at,
+        "query": query,
+        "job_id": job_id,
+    }
+
+
+def _execute_crossref_job(job: dict, per_page: int = 10) -> dict:
+    """Execute a single Crossref search job. Returns a source_job_result_v1 dict.
+    Metadata only. No DOI full-text lookup. No PDF. No Unpaywall."""
+    job_id = job.get("job_id", "")
+    source = job.get("source", "")
+    query = job.get("query", "")
+    time_range = job.get("time_range", {})
+    retrieved_at = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    if source != "crossref":
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": source,
+            "query": query,
+            "status": "failed",
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": f"source is '{source}', not 'crossref'",
+            "notes": "run-crossref-job only accepts crossref jobs",
+        }
+
+    # Build params
+    params = {
+        "query.bibliographic": query,
+        "rows": str(min(per_page, 50)),
+        "sort": "score",
+        "order": "desc",
+    }
+    # Year filter
+    if isinstance(time_range, dict):
+        sy = time_range.get("start_year")
+        ey = time_range.get("end_year")
+        if isinstance(sy, int) and isinstance(ey, int):
+            params["filter"] = f"from-pub-date:{sy},until-pub-date:{ey}"
+
+    url = CROSSREF_API_BASE + "?" + urllib.parse.urlencode(params)
+
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "literature-evidence-landing/1.0 (mailto:research@example.com)",
+        })
+        with urllib.request.urlopen(req, timeout=CROSSREF_REQUEST_TIMEOUT) as resp:
+            http_status = resp.status
+            body = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        http_status = e.code
+        body = ""
+        error_msg = f"HTTP {e.code}: {e.reason}"
+        if e.code in (401, 403):
+            status = "auth_failed"
+        elif e.code == 429:
+            status = "rate_limited"
+        else:
+            status = "failed"
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "crossref",
+            "query": query,
+            "status": status,
+            "http_status": http_status,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": error_msg,
+            "notes": "",
+        }
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "crossref",
+            "query": query,
+            "status": "failed",
+            "http_status": 0,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": str(e),
+            "notes": "",
+        }
+
+    # Parse JSON
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError as e:
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "crossref",
+            "query": query,
+            "status": "failed",
+            "http_status": http_status,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": f"JSON parse error: {e}",
+            "notes": "",
+        }
+
+    message = data.get("message", {})
+    items = message.get("items", [])
+
+    if not items:
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "crossref",
+            "query": query,
+            "status": "empty",
+            "http_status": http_status,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": "",
+            "notes": "no items in Crossref response",
+        }
+
+    raw_records = []
+    for item in items:
+        rec = _map_crossref_item_to_raw_record(item, job_id=job_id, query=query, retrieved_at=retrieved_at)
+        if rec:
+            raw_records.append(rec)
+
+    if not raw_records:
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "crossref",
+            "query": query,
+            "status": "empty",
+            "http_status": http_status,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": "",
+            "notes": "all items failed to map",
+        }
+
+    return {
+        "schema_version": "source_job_result_v1",
+        "job_id": job_id,
+        "source": "crossref",
+        "query": query,
+        "status": "success",
+        "http_status": http_status,
+        "retrieved_at": retrieved_at,
+        "raw_record_count": len(raw_records),
+        "records": raw_records,
+        "error": "",
+        "notes": "",
+    }
+
+
+def run_crossref_job(search_jobs_path: Path, job_id: str, output_path: Path,
+                      per_page: int = 10, json_output: bool = False) -> dict:
+    """Execute one Crossref job from search_jobs.json and append to job_results.jsonl."""
+    if not search_jobs_path.exists():
+        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    try:
+        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
+    except json.JSONDecodeError as e:
+        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    jobs_list = jobs_data.get("jobs", [])
+    target_job = None
+    for j in jobs_list:
+        if j.get("job_id") == job_id:
+            target_job = j
+            break
+
+    if target_job is None:
+        result = {"status": "FAIL", "errors": [f"job_id '{job_id}' not found in search_jobs.json"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    if target_job.get("source") != "crossref":
+        result = {"status": "FAIL", "errors": [f"job source is '{target_job.get('source')}', not 'crossref'"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    job_result = _execute_crossref_job(target_job, per_page=per_page)
+
+    vr = validate_job_results_dict([job_result])
+    if vr["status"] != "PASS":
+        result = {"status": "FAIL", "errors": vr["errors"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    _append_jsonl(output_path, [job_result])
+
+    result = {
+        "status": "PASS",
+        "job_id": job_id,
+        "job_result_status": job_result["status"],
+        "raw_record_count": job_result["raw_record_count"],
+        "http_status": job_result.get("http_status"),
+        "output": str(output_path),
+    }
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Executed {job_id}: status={job_result['status']}, records={job_result['raw_record_count']}")
+    return result
+
+
+def run_crossref_jobs(search_jobs_path: Path, output_path: Path,
+                       max_jobs: int = 3, per_page: int = 10,
+                       overwrite: bool = False, json_output: bool = False) -> dict:
+    """Execute Crossref jobs from search_jobs.json, append to job_results.jsonl."""
+    if not search_jobs_path.exists():
+        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    try:
+        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
+    except json.JSONDecodeError as e:
+        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    jobs_list = jobs_data.get("jobs", [])
+    crossref_jobs = [j for j in jobs_list if j.get("source") == "crossref"]
+
+    if not crossref_jobs:
+        result = {"status": "FAIL", "errors": ["no crossref jobs found in search_jobs.json"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    if overwrite and output_path.exists():
+        output_path.unlink()
+
+    executed = 0
+    results = []
+    for job in crossref_jobs[:max_jobs]:
+        job_result = _execute_crossref_job(job, per_page=per_page)
+        vr = validate_job_results_dict([job_result])
+        if vr["status"] != "PASS":
+            continue
+        _append_jsonl(output_path, [job_result])
+        executed += 1
+        results.append({
+            "job_id": job_result["job_id"],
+            "status": job_result["status"],
+            "raw_record_count": job_result["raw_record_count"],
+        })
+
+    result = {
+        "status": "PASS",
+        "jobs_executed": executed,
+        "results": results,
+        "output": str(output_path),
+    }
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Executed {executed} Crossref job(s)")
+        for r in results:
+            print(f"  {r['job_id']}: status={r['status']}, records={r['raw_record_count']}")
+    return result
+
+
+# ---- Multi-source pipeline ----
+
+
+def _execute_jobs_by_source(search_jobs_path: Path, output_path: Path,
+                             max_jobs: int, per_page: int,
+                             sources: list[str], overwrite: bool) -> dict:
+    """Execute jobs from search_jobs.json filtered by source list.
+    Dispatches to the appropriate source adapter. Returns summary."""
+    if not search_jobs_path.exists():
+        return {"status": "FAIL", "errors": ["search_jobs.json not found"]}
+
+    try:
+        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
+    except json.JSONDecodeError as e:
+        return {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
+
+    jobs_list = jobs_data.get("jobs", [])
+    # Filter to requested sources
+    filtered_jobs = [j for j in jobs_list if j.get("source") in sources]
+
+    if not filtered_jobs:
+        return {"status": "FAIL", "errors": [f"no jobs found for sources: {sources}"]}
+
+    if overwrite and output_path.exists():
+        output_path.unlink()
+
+    executed = 0
+    results = []
+    for job in filtered_jobs[:max_jobs]:
+        source = job.get("source", "")
+        if source == "openalex":
+            jr = _execute_openalex_job(job, per_page=per_page)
+        elif source == "arxiv":
+            jr = _execute_arxiv_job(job, per_page=per_page)
+        elif source == "crossref":
+            jr = _execute_crossref_job(job, per_page=per_page)
+        else:
+            continue
+
+        vr = validate_job_results_dict([jr])
+        if vr["status"] != "PASS":
+            continue
+        _append_jsonl(output_path, [jr])
+        executed += 1
+        results.append({
+            "job_id": jr["job_id"],
+            "source": source,
+            "status": jr["status"],
+            "raw_record_count": jr["raw_record_count"],
+        })
+
+    return {
+        "status": "PASS",
+        "jobs_executed": executed,
+        "results": results,
+        "output": str(output_path),
+    }
+
+
+def run_multisource_pipeline(
+    topic: str,
+    intent: str,
+    must_include: list[str],
+    sources: list[str],
+    run_dir: Path,
+    start_year: int | None = None,
+    end_year: int | None = None,
+    max_results_per_source: int = 10,
+    max_jobs: int = 9,
+    per_page: int = 10,
+    top_k: int = 10,
+    overwrite: bool = False,
+    exclude: str = "",
+    dry_run: bool = False,
+    json_output: bool = False,
+) -> dict:
+    """Run multi-source literature evidence pipeline.
+    Supports openalex, arxiv, crossref. No Semantic Scholar in this phase.
+    No model calls. No PDF downloads."""
+    import shutil
+
+    steps_executed = []
+
+    # Safety check
+    safety_errors = _check_run_dir_safe(run_dir)
+    if safety_errors:
+        result = {"status": "FAIL", "failed_step": "prepare_run_dir", "errors": safety_errors, "steps_executed": steps_executed, "dry_run": dry_run}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    if run_dir.exists():
+        if not overwrite:
+            result = {"status": "FAIL", "failed_step": "prepare_run_dir", "errors": [f"run_dir already exists; use --overwrite"], "steps_executed": steps_executed, "dry_run": dry_run}
+            if json_output:
+                print(json.dumps(result, indent=2))
+            return result
+        shutil.rmtree(run_dir)
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    if start_year is None:
+        start_year = 2020
+    if end_year is None:
+        end_year = datetime.now(timezone.utc).year
+
+    # Filter out semantic_scholar if present
+    allowed_sources = {"openalex", "arxiv", "crossref"}
+    sources = [s for s in sources if s in allowed_sources]
+    if not sources:
+        result = {"status": "FAIL", "failed_step": "validate_sources", "errors": ["no valid sources provided"], "steps_executed": steps_executed, "dry_run": dry_run}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    plan_path = run_dir / "search_plan.yaml"
+    jobs_path = run_dir / "search_jobs.json"
+    job_results_path = run_dir / "job_results.jsonl"
+    raw_results_path = run_dir / "raw_results.jsonl"
+    candidates_path = run_dir / "candidates.jsonl"
+
+    # Step 1: build_search_plan
+    plan_result = build_search_plan(
+        topic=topic, intent=intent, must_include=must_include,
+        sources=sources, start_year=start_year, end_year=end_year,
+        max_results_per_source=max_results_per_source,
+        output_path=plan_path, exclude=exclude, json_output=False,
+    )
+    steps_executed.append({"step": "build_search_plan", "status": plan_result["status"]})
+    if plan_result["status"] != "PASS":
+        result = {"status": "FAIL", "failed_step": "build_search_plan", "errors": plan_result.get("errors", []), "steps_executed": steps_executed, "dry_run": dry_run}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 2: build_search_jobs
+    jobs_result = build_search_jobs(plan_path, jobs_path, json_output=False)
+    steps_executed.append({"step": "build_search_jobs", "status": jobs_result["status"]})
+    if jobs_result["status"] != "PASS":
+        result = {"status": "FAIL", "failed_step": "build_search_jobs", "errors": jobs_result.get("errors", []), "steps_executed": steps_executed, "dry_run": dry_run}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    if dry_run:
+        result = {
+            "status": "PASS", "dry_run": True, "run_dir": str(run_dir),
+            "steps_executed": steps_executed,
+            "files_created": [str(plan_path), str(jobs_path)],
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Dry-run complete. Plan + jobs written to {run_dir}")
+        return result
+
+    # Step 3: execute jobs by source
+    exec_result = _execute_jobs_by_source(
+        search_jobs_path=jobs_path, output_path=job_results_path,
+        max_jobs=max_jobs, per_page=per_page, sources=sources, overwrite=overwrite,
+    )
+    steps_executed.append({"step": "execute_jobs_by_source", "status": exec_result["status"]})
+    if exec_result["status"] != "PASS":
+        result = {"status": "FAIL", "failed_step": "execute_jobs_by_source", "errors": exec_result.get("errors", []), "steps_executed": steps_executed, "dry_run": False}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 4: validate_job_results
+    vjr_result = validate_job_results(job_results_path, json_output=False)
+    steps_executed.append({"step": "validate_job_results", "status": vjr_result["status"]})
+    if vjr_result["status"] != "PASS":
+        result = {"status": "FAIL", "failed_step": "validate_job_results", "errors": vjr_result.get("errors", []), "steps_executed": steps_executed, "dry_run": False}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 5: normalize_job_results
+    norm_result = normalize_job_results(job_results_path, raw_results_path, json_output=False)
+    steps_executed.append({"step": "normalize_job_results", "status": norm_result["status"]})
+    if norm_result["status"] != "PASS":
+        result = {"status": "FAIL", "failed_step": "normalize_job_results", "errors": norm_result.get("errors", []), "steps_executed": steps_executed, "dry_run": False}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 6: validate_raw
+    vr_result = validate_raw(raw_results_path, json_output=False)
+    steps_executed.append({"step": "validate_raw", "status": vr_result["status"]})
+    if vr_result["status"] not in ("PASS", "valid", "valid_with_warnings"):
+        result = {"status": "FAIL", "failed_step": "validate_raw", "errors": vr_result.get("errors", []), "steps_executed": steps_executed, "dry_run": False}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 7: build_candidates
+    cand_result = build_candidates(run_dir, json_output=False)
+    steps_executed.append({"step": "build_candidates", "status": cand_result["status"]})
+    if cand_result["status"] not in ("PASS", "built"):
+        result = {"status": "FAIL", "failed_step": "build_candidates", "errors": cand_result.get("errors", []), "steps_executed": steps_executed, "dry_run": False}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 8: validate_candidates
+    vc_result = validate_candidates(candidates_path, json_output=False)
+    steps_executed.append({"step": "validate_candidates", "status": vc_result["status"]})
+    if vc_result["status"] not in ("PASS", "valid", "valid_with_warnings"):
+        result = {"status": "FAIL", "failed_step": "validate_candidates", "errors": vc_result.get("errors", []), "steps_executed": steps_executed, "dry_run": False}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 9: build_top_k
+    tk_result = build_top_k(run_dir, top_k, json_output=False)
+    steps_executed.append({"step": "build_top_k", "status": tk_result["status"]})
+    if tk_result["status"] not in ("PASS", "built"):
+        result = {"status": "FAIL", "failed_step": "build_top_k", "errors": tk_result.get("errors", []), "steps_executed": steps_executed, "dry_run": False}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Step 10: summarize
+    summary = summarize_run(run_dir, json_output=False)
+
+    result = {
+        "status": "PASS", "dry_run": False, "run_dir": str(run_dir),
+        "steps_executed": steps_executed, "summary": summary,
+    }
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Multi-source pipeline complete. Run directory: {run_dir}")
+        for s in steps_executed:
+            print(f"  {s['step']}: {s['status']}")
+    return result
+
+
 # ---- Self-test ----
 
 def _self_test() -> bool:
@@ -4411,6 +5382,219 @@ def _self_test() -> bool:
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
+    # --- Q. _parse_arxiv_date extracts year ---
+    try:
+        assert _parse_arxiv_date("2024-03-15") == "2024"
+        assert _parse_arxiv_date("2024") == "2024"
+        assert _parse_arxiv_date("2024-03-15T12:00:00Z") == "2024"
+        assert _parse_arxiv_date("") == ""
+        assert _parse_arxiv_date(None) == ""
+        print("  [PASS] Q. _parse_arxiv_date extracts year")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] Q. _parse_arxiv_date: {e}")
+        failed += 1
+
+    # --- R. _map_arxiv_entry_to_raw_record maps valid entry ---
+    try:
+        entry = {
+            "title": "Test Paper",
+            "authors": ["Alice Smith", "Bob Jones"],
+            "published": "2024-06-01",
+            "url": "http://arxiv.org/abs/2406.00001v1",
+            "arxiv_id": "2406.00001",
+            "doi": "10.1234/test",
+            "abstract": "Test abstract",
+        }
+        rec = _map_arxiv_entry_to_raw_record(entry, "j1", "query", "2025-01-01")
+        assert rec is not None
+        assert rec["source"] == "arxiv"
+        assert rec["title"] == "Test Paper"
+        assert rec["authors"] == ["Alice Smith", "Bob Jones"]
+        assert rec["year"] == "2024"
+        assert rec["arxiv_id"] == "2406.00001"
+        assert rec["doi"] == "10.1234/test"
+        assert not rec["url"].endswith(".pdf")
+        print("  [PASS] R. _map_arxiv_entry_to_raw_record maps valid entry")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] R. _map_arxiv_entry_to_raw_record: {e}")
+        failed += 1
+
+    # --- S. _map_arxiv_entry_to_raw_record returns None for empty title ---
+    try:
+        rec = _map_arxiv_entry_to_raw_record({"title": "", "authors": []}, "j1", "q", "2025-01-01")
+        assert rec is None
+        rec2 = _map_arxiv_entry_to_raw_record({}, "j1", "q", "2025-01-01")
+        assert rec2 is None
+        print("  [PASS] S. _map_arxiv_entry_to_raw_record returns None for empty title")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] S. _map_arxiv_entry_to_raw_record None: {e}")
+        failed += 1
+
+    # --- T. _execute_arxiv_job rejects non-arxiv source ---
+    try:
+        job = {"job_id": "j1", "source": "openalex", "query": "test"}
+        r = _execute_arxiv_job(job, per_page=5)
+        assert r["status"] == "failed"
+        assert "not 'arxiv'" in r["error"]
+        print("  [PASS] T. _execute_arxiv_job rejects non-arxiv source")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] T. _execute_arxiv_job reject: {e}")
+        failed += 1
+
+    # --- U. _parse_crossref_date extracts year ---
+    try:
+        assert _parse_crossref_date([[2024, 3, 15]]) == "2024"
+        assert _parse_crossref_date([[2024]]) == "2024"
+        assert _parse_crossref_date([2024]) == "2024"
+        assert _parse_crossref_date([]) == ""
+        assert _parse_crossref_date(None) == ""
+        print("  [PASS] U. _parse_crossref_date extracts year")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] U. _parse_crossref_date: {e}")
+        failed += 1
+
+    # --- V. _map_crossref_item_to_raw_record maps valid item ---
+    try:
+        item = {
+            "title": ["Crossref Paper"],
+            "author": [{"given": "Alice", "family": "Smith"}],
+            "published-print": {"date-parts": [[2024, 6]]},
+            "DOI": "10.9999/crtest",
+            "URL": "https://doi.org/10.9999/crtest",
+            "container-title": ["Test Journal"],
+            "abstract": "<p>HTML abstract</p>",
+        }
+        rec = _map_crossref_item_to_raw_record(item, "j1", "query", "2025-01-01")
+        assert rec is not None
+        assert rec["source"] == "crossref"
+        assert rec["title"] == "Crossref Paper"
+        assert rec["authors"] == ["Alice Smith"]
+        assert rec["year"] == "2024"
+        assert rec["doi"] == "10.9999/crtest"
+        assert rec["venue"] == "Test Journal"
+        assert rec["abstract"] == "HTML abstract"
+        print("  [PASS] V. _map_crossref_item_to_raw_record maps valid item")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] V. _map_crossref_item_to_raw_record: {e}")
+        failed += 1
+
+    # --- W. _map_crossref_item_to_raw_record returns None for empty title ---
+    try:
+        rec = _map_crossref_item_to_raw_record({"title": [], "author": []}, "j1", "q", "2025-01-01")
+        assert rec is None
+        rec2 = _map_crossref_item_to_raw_record({}, "j1", "q", "2025-01-01")
+        assert rec2 is None
+        print("  [PASS] W. _map_crossref_item_to_raw_record returns None for empty title")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] W. _map_crossref_item_to_raw_record None: {e}")
+        failed += 1
+
+    # --- X. _execute_crossref_job rejects non-crossref source ---
+    try:
+        job = {"job_id": "j1", "source": "arxiv", "query": "test", "time_range": {}}
+        r = _execute_crossref_job(job, per_page=5)
+        assert r["status"] == "failed"
+        assert "not 'crossref'" in r["error"]
+        print("  [PASS] X. _execute_crossref_job rejects non-crossref source")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] X. _execute_crossref_job reject: {e}")
+        failed += 1
+
+    # --- Y. _execute_jobs_by_source routes arxiv job ---
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        sj = {"jobs": [{"job_id": "aj1", "source": "arxiv", "query": "test", "time_range": {"start_year": 2023, "end_year": 2024}}]}
+        (tmpdir / "search_jobs.json").write_text(json.dumps(sj), encoding="utf-8")
+        out = tmpdir / "job_results.jsonl"
+        r = _execute_jobs_by_source(tmpdir / "search_jobs.json", out, max_jobs=1, per_page=5, sources=["arxiv"], overwrite=True)
+        assert r["status"] == "PASS"
+        assert r["jobs_executed"] == 1
+        print("  [PASS] Y. _execute_jobs_by_source routes arxiv job")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] Y. _execute_jobs_by_source: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # --- Z. _execute_jobs_by_source routes crossref job ---
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        sj = {"jobs": [{"job_id": "cj1", "source": "crossref", "query": "test", "time_range": {"start_year": 2023, "end_year": 2024}}]}
+        (tmpdir / "search_jobs.json").write_text(json.dumps(sj), encoding="utf-8")
+        out = tmpdir / "job_results.jsonl"
+        r = _execute_jobs_by_source(tmpdir / "search_jobs.json", out, max_jobs=1, per_page=5, sources=["crossref"], overwrite=True)
+        assert r["status"] == "PASS"
+        assert r["jobs_executed"] == 1
+        print("  [PASS] Z. _execute_jobs_by_source routes crossref job")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] Z. _execute_jobs_by_source: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # --- AA. run_multisource_pipeline dry-run builds plan + jobs ---
+    try:
+        tmpdir = Path(tempfile.mkdtemp()) / "run"
+        # tmpdir does not exist yet, so no overwrite needed
+        r = run_multisource_pipeline(
+            topic="hallucination detection",
+            intent="novelty_check",
+            must_include=["hallucination"],
+            run_dir=tmpdir,
+            sources=["arxiv", "crossref"],
+            start_year=2023,
+            end_year=2024,
+            max_results_per_source=5,
+            max_jobs=4,
+            top_k=5,
+            dry_run=True,
+            json_output=False,
+        )
+        assert r["status"] == "PASS", f"AA expected PASS, got {r}"
+        assert (tmpdir / "search_plan.yaml").exists()
+        assert (tmpdir / "search_jobs.json").exists()
+        print("  [PASS] AA. run_multisource_pipeline dry-run builds plan + jobs")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] AA. run_multisource_pipeline dry-run: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir.parent, ignore_errors=True)
+
+    # --- BB. CLI parses new subcommands ---
+    try:
+        import subprocess as _sp
+        res = _sp.run(
+            ["python", "tools/literature_evidence_landing.py", "run-arxiv-job", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert res.returncode == 0, f"run-arxiv-job --help failed: {res.stderr}"
+        res2 = _sp.run(
+            ["python", "tools/literature_evidence_landing.py", "run-crossref-job", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert res2.returncode == 0, f"run-crossref-job --help failed: {res2.stderr}"
+        res3 = _sp.run(
+            ["python", "tools/literature_evidence_landing.py", "run-multisource-pipeline", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert res3.returncode == 0, f"run-multisource-pipeline --help failed: {res3.stderr}"
+        print("  [PASS] BB. CLI parses new subcommands (arxiv/crossref/multisource)")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] BB. CLI parse new subcommands: {e}")
+        failed += 1
+
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
 
@@ -4532,6 +5716,57 @@ def main():
     sr.add_argument("--run-dir", required=True, help="Run directory to summarize")
     sr.add_argument("--json", action="store_true", help="Output JSON")
 
+    # --- arXiv subcommands ---
+    raj = sub.add_parser("run-arxiv-job", help="Execute one arXiv search job")
+    raj.add_argument("--job-id", required=True, help="Job ID to execute")
+    raj.add_argument("--search-jobs", required=True, help="Path to search_jobs.json")
+    raj.add_argument("--output", required=True, help="Output path for job_results.jsonl")
+    raj.add_argument("--max-results", type=int, default=5, help="Max results (default: 5)")
+    raj.add_argument("--json", action="store_true", help="Output JSON")
+
+    rajs = sub.add_parser("run-arxiv-jobs", help="Execute multiple arXiv search jobs")
+    rajs.add_argument("--search-jobs", required=True, help="Path to search_jobs.json")
+    rajs.add_argument("--output", required=True, help="Output path for job_results.jsonl")
+    rajs.add_argument("--max-jobs", type=int, default=3, help="Max jobs to execute (default: 3)")
+    rajs.add_argument("--max-results", type=int, default=5, help="Max results per job (default: 5)")
+    rajs.add_argument("--overwrite", action="store_true", help="Overwrite output instead of append")
+    rajs.add_argument("--json", action="store_true", help="Output JSON")
+
+    # --- Crossref subcommands ---
+    rcj = sub.add_parser("run-crossref-job", help="Execute one Crossref search job")
+    rcj.add_argument("--job-id", required=True, help="Job ID to execute")
+    rcj.add_argument("--search-jobs", required=True, help="Path to search_jobs.json")
+    rcj.add_argument("--output", required=True, help="Output path for job_results.jsonl")
+    rcj.add_argument("--rows", type=int, default=5, help="Rows per query (default: 5)")
+    rcj.add_argument("--json", action="store_true", help="Output JSON")
+
+    rcjs = sub.add_parser("run-crossref-jobs", help="Execute multiple Crossref search jobs")
+    rcjs.add_argument("--search-jobs", required=True, help="Path to search_jobs.json")
+    rcjs.add_argument("--output", required=True, help="Output path for job_results.jsonl")
+    rcjs.add_argument("--max-jobs", type=int, default=3, help="Max jobs to execute (default: 3)")
+    rcjs.add_argument("--rows", type=int, default=5, help="Rows per query (default: 5)")
+    rcjs.add_argument("--overwrite", action="store_true", help="Overwrite output instead of append")
+    rcjs.add_argument("--json", action="store_true", help="Output JSON")
+
+    # --- Multi-source pipeline ---
+    rmp = sub.add_parser("run-multisource-pipeline", help="Run multi-source pipeline (arXiv+Crossref+OpenAlex)")
+    rmp.add_argument("--topic", required=True, help="Research topic")
+    rmp.add_argument("--intent", default="novelty_check", help="Search intent (default: novelty_check)")
+    rmp.add_argument("--must-include", action="append", required=True, help="Must-include term (repeatable)")
+    rmp.add_argument("--run-dir", required=True, help="Run directory for all outputs")
+    rmp.add_argument("--sources", action="append", default=None, help="Sources to query (default: arxiv,crossref,openalex)")
+    rmp.add_argument("--start-year", type=int, default=None, help="Start year (default: 2020)")
+    rmp.add_argument("--end-year", type=int, default=None, help="End year (default: current year)")
+    rmp.add_argument("--max-results-per-source", type=int, default=10, help="Max results per source (default: 10)")
+    rmp.add_argument("--max-jobs", type=int, default=9, help="Max total jobs across sources (default: 9)")
+    rmp.add_argument("--per-page", type=int, default=5, help="Results per page for OpenAlex (default: 5)")
+    rmp.add_argument("--top-k", type=int, default=10, help="Top-K candidates to select (default: 10)")
+    rmp.add_argument("--overwrite", action="store_true", help="Overwrite job results instead of append")
+    rmp.add_argument("--exclude", default="", help="Exclusion terms")
+    rmp.add_argument("--mailto", default="", help="Optional email for polite OpenAlex API pool")
+    rmp.add_argument("--dry-run", action="store_true", help="Stop after plan + jobs (no network)")
+    rmp.add_argument("--json", action="store_true", help="Output JSON")
+
     parser.add_argument("--self-test", action="store_true", help="Run self-tests")
 
     args = parser.parse_args()
@@ -4646,6 +5881,68 @@ def main():
         print(json.dumps(r, indent=2))
     elif args.command == "summarize-run":
         summarize_run(Path(args.run_dir), args.json)
+    elif args.command == "run-arxiv-job":
+        r = run_arxiv_job(
+            search_jobs_path=Path(args.search_jobs),
+            job_id=args.job_id,
+            output_path=Path(args.output),
+            max_results=args.max_results,
+            json_output=args.json,
+        )
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "run-arxiv-jobs":
+        r = run_arxiv_jobs(
+            search_jobs_path=Path(args.search_jobs),
+            output_path=Path(args.output),
+            max_jobs=args.max_jobs,
+            max_results=args.max_results,
+            overwrite=args.overwrite,
+            json_output=args.json,
+        )
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "run-crossref-job":
+        r = run_crossref_job(
+            search_jobs_path=Path(args.search_jobs),
+            job_id=args.job_id,
+            output_path=Path(args.output),
+            rows=args.rows,
+            json_output=args.json,
+        )
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "run-crossref-jobs":
+        r = run_crossref_jobs(
+            search_jobs_path=Path(args.search_jobs),
+            output_path=Path(args.output),
+            max_jobs=args.max_jobs,
+            rows=args.rows,
+            overwrite=args.overwrite,
+            json_output=args.json,
+        )
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "run-multisource-pipeline":
+        r = run_multisource_pipeline(
+            topic=args.topic,
+            intent=args.intent,
+            must_include=args.must_include,
+            run_dir=Path(args.run_dir),
+            sources=args.sources,
+            start_year=args.start_year,
+            end_year=args.end_year,
+            max_results_per_source=args.max_results_per_source,
+            max_jobs=args.max_jobs,
+            per_page=args.per_page,
+            top_k=args.top_k,
+            overwrite=args.overwrite,
+            exclude=args.exclude,
+            dry_run=args.dry_run,
+            json_output=args.json,
+        )
+        if r["status"] != "PASS":
+            sys.exit(1)
 
 
 if __name__ == "__main__":

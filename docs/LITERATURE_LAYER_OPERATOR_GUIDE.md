@@ -12,9 +12,10 @@ This guide documents how to operate the Literature Layer MVP.
 **What this layer does:**
 - Generates search plans with deterministic query variants
 - Expands plans into per-source search jobs
-- Executes OpenAlex API calls (the only implemented adapter)
+- Executes search jobs via OpenAlex, arXiv, and Crossref adapters
 - Validates and normalizes search results
 - Builds deduplicated candidates and top-k evidence summaries
+- Supports multi-source pipeline with cross-source dedup
 
 **What this layer does NOT do:**
 - It does not replace `trusted_role_runner`
@@ -76,16 +77,22 @@ These commands run entirely locally. They validate schemas, generate plans, expa
 | `summarize-job-results` | Summarize job_results.jsonl status breakdown |
 | `init-run-skeleton` | Create empty run skeleton with valid defaults |
 | `run-openalex-pipeline --dry-run` | Pipeline stopped after plan + jobs (no network) |
+| `run-multisource-pipeline --dry-run` | Multi-source pipeline stopped after plan + jobs (no network) |
 
 ### Network commands
 
-These commands call the OpenAlex API. They do NOT call models and do NOT download PDFs.
+These commands call real APIs (OpenAlex, arXiv, Crossref). They do NOT call models and do NOT download PDFs.
 
 | Command | Purpose |
 |---------|---------|
 | `run-openalex-job` | Execute one OpenAlex search job |
 | `run-openalex-jobs` | Execute multiple OpenAlex search jobs |
 | `run-openalex-pipeline` (without `--dry-run`) | Full pipeline including OpenAlex execution |
+| `run-arxiv-job` | Execute one arXiv search job |
+| `run-arxiv-jobs` | Execute multiple arXiv search jobs |
+| `run-crossref-job` | Execute one Crossref search job |
+| `run-crossref-jobs` | Execute multiple Crossref search jobs |
+| `run-multisource-pipeline` (without `--dry-run`) | Full multi-source pipeline (arXiv+Crossref+OpenAlex) |
 
 ---
 
@@ -94,16 +101,19 @@ These commands call the OpenAlex API. They do NOT call models and do NOT downloa
 Use `--dry-run` to validate plan and job generation without network calls:
 
 ```bash
-python tools/literature_evidence_landing.py run-openalex-pipeline \
+python tools/literature_evidence_landing.py run-multisource-pipeline \
   --topic "LLM hallucination detection hidden states" \
   --intent novelty_check \
   --must-include "hallucination detection" \
   --must-include "hidden states" \
-  --run-dir tmp/openalex_dry_run \
+  --run-dir tmp/multisource_dry_run \
+  --sources arxiv \
+  --sources crossref \
+  --sources openalex \
   --start-year 2020 \
   --end-year 2026 \
   --max-results-per-source 5 \
-  --max-jobs 1 \
+  --max-jobs 9 \
   --per-page 2 \
   --top-k 5 \
   --dry-run \
@@ -123,21 +133,24 @@ python tools/literature_evidence_landing.py run-openalex-pipeline \
 
 ---
 
-## 5. Live OpenAlex Smoke Run
+## 5. Live Multi-source Smoke Run
 
-Run the full pipeline with real OpenAlex API calls:
+Run the full pipeline with real API calls (arXiv + Crossref + OpenAlex):
 
 ```bash
-python tools/literature_evidence_landing.py run-openalex-pipeline \
+python tools/literature_evidence_landing.py run-multisource-pipeline \
   --topic "LLM hallucination detection hidden states" \
   --intent novelty_check \
   --must-include "hallucination detection" \
   --must-include "hidden states" \
-  --run-dir tmp/openalex_pipeline_smoke \
+  --run-dir tmp/multisource_pipeline_smoke \
+  --sources arxiv \
+  --sources crossref \
+  --sources openalex \
   --start-year 2020 \
   --end-year 2026 \
   --max-results-per-source 5 \
-  --max-jobs 1 \
+  --max-jobs 9 \
   --per-page 2 \
   --top-k 5 \
   --overwrite \
@@ -148,16 +161,16 @@ python tools/literature_evidence_landing.py run-openalex-pipeline \
 
 ```bash
 python tools/literature_evidence_landing.py summarize-run \
-  --run-dir tmp/openalex_pipeline_smoke --json
+  --run-dir tmp/multisource_pipeline_smoke --json
 
 python tools/literature_evidence_landing.py validate-job-results \
-  --file tmp/openalex_pipeline_smoke/job_results.jsonl
+  --file tmp/multisource_pipeline_smoke/job_results.jsonl
 
 python tools/literature_evidence_landing.py validate-raw \
-  --file tmp/openalex_pipeline_smoke/raw_results.jsonl
+  --file tmp/multisource_pipeline_smoke/raw_results.jsonl
 
 python tools/literature_evidence_landing.py validate-candidates \
-  --file tmp/openalex_pipeline_smoke/candidates.jsonl
+  --file tmp/multisource_pipeline_smoke/candidates.jsonl
 ```
 
 **Important:**
