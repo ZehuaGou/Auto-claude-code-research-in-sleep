@@ -117,7 +117,7 @@
       "full_text_status": "manual_required",
       "acquisition_method": "open_html",
       "review_status": "pending",
-      "notes": "paywall_blocked: legal_open_full_text_not_found. Exhaustive OA search (arXiv, OpenAlex, Crossref, Semantic Scholar, author pages) returned no open access. Sci-Hub mirrors (SE captcha-blocked, RU not-in-database) also failed. IEEE Xplore subscription required.",
+      "notes": "paywall_blocked: legal_open_full_text_not_found. Exhaustive OA search (arXiv, OpenAlex, Crossref, Semantic Scholar, author pages) returned no open access. IEEE Xplore subscription required.",
       "extraction_status": "not_attempted",
       "local_text_path": "",
       "extraction_method": ""
@@ -151,7 +151,7 @@
       "full_text_status": "manual_required",
       "acquisition_method": "open_html",
       "review_status": "pending",
-      "notes": "paywall_blocked: legal_open_full_text_not_found. Exhaustive OA search (arXiv, OpenAlex, Crossref, Semantic Scholar, author pages) returned no open access. Sci-Hub mirrors (SE captcha-blocked, RU not-in-database) also failed. IEEE Xplore subscription required.",
+      "notes": "paywall_blocked: legal_open_full_text_not_found. Exhaustive OA search (arXiv, OpenAlex, Crossref, Semantic Scholar, author pages) returned no open access. IEEE Xplore subscription required.",
       "extraction_status": "not_attempted",
       "local_text_path": "",
       "extraction_method": ""

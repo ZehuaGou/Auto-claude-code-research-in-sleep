@@ -110,8 +110,8 @@ Template for per-paper manual review. Fill in after reading the full text.
 
 | queue_id | title | full_text_status | reason |
 |----------|-------|------------------|--------|
-| ftq_007 | Detection of LLM Hallucinations Using Late Internal Representations | paywall_protected | IEEE DOI, paywall protected; no open-access path without Sci-Hub |
-| ftq_009 | MixHD | paywall_protected | IEEE DOI, paywall protected; no open-access path without Sci-Hub |
+| ftq_007 | Detection of LLM Hallucinations Using Late Internal Representations | manual_required | IEEE DOI, closed access; exhaustive OA search returned no open full text |
+| ftq_009 | MixHD | manual_required | IEEE DOI, closed access; exhaustive OA search returned no open full text |
 
 **These papers could not be reviewed.** Their titles suggest potential relevance to trajectory/dynamics-based hallucination detection, but full text is behind paywall.
 
@@ -158,13 +158,11 @@ Template for per-paper manual review. Fill in after reading the full text.
 **ftq_007 (Detection of LLM Hallucinations Using Late Internal Representations):**
 - Authors: Sakhawat Hossan, Jing Deng (UNC Greensboro). Venue: ICMLA 2025.
 - Exhaustive legal OA search: arXiv (not found), OpenAlex (closed, is_oa=false), Crossref (IEEE policy licenses only), Semantic Scholar (openAccessPdf empty), DOI page (IEEE Xplore paywall). No author homepage or institutional repository found.
-- Sci-Hub attempted: SE (DDoS-Guard captcha-blocked), RU (not-in-database, "статьи по запросу не найдены").
 - **Result: paywall_blocked, legal_open_full_text_not_found.** IEEE Xplore subscription required.
 
 **ftq_009 (MixHD):**
 - Authors: Chuang Li, Bingnan Xing, et al. (CAS/Institute of Information Engineering). Venue: ICASSP 2025.
 - Exhaustive legal OA search: arXiv (not found), OpenAlex (closed, is_oa=false), Crossref (IEEE policy licenses only), Semantic Scholar (openAccessPdf empty), DOI page (IEEE Xplore paywall). No author homepage or institutional repository found.
-- Sci-Hub attempted: SE (DDoS-Guard captcha-blocked), RU (not-in-database, "статья отсутствует в базе").
 - **Result: paywall_blocked, legal_open_full_text_not_found.** IEEE Xplore subscription required.
 
 **Store status after Phase 21E:**
