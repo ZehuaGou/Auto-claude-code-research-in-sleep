@@ -11,11 +11,13 @@ A schema-level MVP skeleton for the Literature Search & Acquisition Layer. It pr
 
 - Query planning with deterministic query variant generation (no network calls)
 - Search plan validation (no network calls)
-- Run skeleton initialization with valid default plans
+- Search job expansion: plan → explicit per-source jobs (no network calls)
+- Search job validation (schema check)
+- Run skeleton initialization with valid default plans and jobs
 - Acquisition status schema validation
 - Manual acquisition queue building
 - Run summarization (no network calls)
-- Self-tests (10 tests, tempfile-based, no network)
+- Self-tests (16 tests, tempfile-based, no network)
 
 This is **not** a full implementation. It has no real search execution, no PDF download, no PDF parsing, no citation dedup/ranking. It only defines the data contracts and validates them.
 
@@ -26,8 +28,10 @@ This is **not** a full implementation. It has no real search execution, no PDF d
 ```
 build-search-plan (generate plan + query variants)
   → validate-search-plan (schema check)
-  → init-run-skeleton (create run with valid default plan)
-  → [future: execute search, populate raw_results.jsonl]
+  → build-search-jobs (expand plan → per-source jobs)
+  → validate-search-jobs (schema check)
+  → init-run-skeleton (create run with valid plan + jobs)
+  → [future: source adapters execute jobs → raw_results.jsonl]
   → [future: build-candidates, build-top-k]
   → validate-acquisition-status (schema check)
   → build-manual-queue (papers needing manual PDF)
@@ -49,6 +53,20 @@ Query variants are generated deterministically from the topic and `must_include`
 `summarize_run` now reports `search_plan_valid` — if the plan exists but is invalid, status is WARN (not PASS).
 
 `validate-search-plan` now rejects novelty verdict fields (`verdict`, `novelty_verdict`, `confirmed_novel`, `already_done`, `likely_incremental`) and checks `start_year <= end_year`.
+
+---
+
+## Search Job Expansion MVP
+
+Search job expansion converts a validated `search_plan.yaml` into explicit per-source search jobs. It does NOT search the internet, does NOT call APIs, does NOT judge novelty, and does NOT call models.
+
+The `build-search-jobs` command expands `query_variants × sources` into job records. Each job is `status: "planned"`, `execution_result: "not_started"`, `network_required: true`. The output `search_jobs.json` is an execution queue for future source adapters.
+
+`init-run-skeleton` now creates `search_jobs.json` alongside `search_plan.yaml`. A fresh skeleton produces valid plan + valid jobs, but since no search has run, `summarize_run` reports WARN.
+
+`summarize_run` now reports `search_jobs_present`, `search_jobs_valid`, `search_job_count`, `planned_job_count`, `executed_job_count`.
+
+Real search execution is future work. Future source adapters must write `raw_results.jsonl` and remain auditable.
 
 ---
 
@@ -106,6 +124,28 @@ Valid sources: `arxiv`, `semantic_scholar`, `openalex`, `crossref`, `unpaywall`,
 
 Note: `search_plan.yaml` currently stores JSON-formatted content. Full YAML parsing is future work. Manual PDFs should go through `manual` source + `manual_acquisition_queue.md` + `literature/manual_pdf_drop/`, not a `local_pdf` source.
 
+### build-search-jobs
+
+Expands a validated search plan into explicit per-source search jobs. No network, no model.
+
+```bash
+python tools/literature_evidence_landing.py build-search-jobs \
+  --plan search_plan.yaml \
+  --output search_jobs.json
+```
+
+Each job includes: `job_id`, `source`, `query`, `time_range`, `max_results`, `status` ("planned"), `network_required` (true), `execution_result` ("not_started"), `raw_output_file`, `error`, `notes`.
+
+Job count = `len(sources) × len(query_variants)`. Job IDs are deterministic (`job_<source>_<hash>`). Fail-closed: invalid plan → no output file.
+
+### validate-search-jobs
+
+Validates `search_jobs.json` schema. Checks required fields, source validity, job_id uniqueness, and fixed field values.
+
+```bash
+python tools/literature_evidence_landing.py validate-search-jobs --file search_jobs.json
+```
+
 ### init-run-skeleton
 
 Creates a run directory with a valid default search plan and empty template files.
@@ -115,9 +155,9 @@ python tools/literature_evidence_landing.py init-run-skeleton \
   --run-dir tmp/my_run --topic "hallucination detection" --intent novelty_check
 ```
 
-Creates: `search_plan.yaml` (valid, PASS), `raw_results.jsonl`, `candidates.jsonl`, `top_k.md`, `acquisition_status.json`, `manual_acquisition_queue.md`
+Creates: `search_plan.yaml` (valid), `search_jobs.json` (valid), `raw_results.jsonl`, `candidates.jsonl`, `top_k.md`, `acquisition_status.json`, `manual_acquisition_queue.md`
 
-Default search plan uses: topic as first `must_include`, default sources (`arxiv`, `semantic_scholar`, `openalex`, `crossref`), deterministic `query_variants`.
+Default search plan uses: topic as first `must_include`, default sources (`arxiv`, `semantic_scholar`, `openalex`, `crossref`), deterministic `query_variants`. Jobs are auto-generated from the plan.
 
 ### validate-acquisition-status
 
@@ -154,12 +194,12 @@ python tools/literature_evidence_landing.py summarize-run --run-dir tmp/my_run -
 
 Status logic:
 - FAIL: no search_plan
-- WARN: search_plan exists but invalid/template, or no raw results, or no candidates, or top_k still template_only
-- PASS: plan valid and all downstream files populated
+- WARN: search_plan invalid, or search_jobs missing/invalid, or no raw results, or no candidates, or top_k still template_only
+- PASS: plan valid, jobs valid, and all downstream files populated
 
 ### --self-test
 
-Runs 10 tempfile-based self-tests covering all commands including query planning.
+Runs 16 tempfile-based self-tests covering all commands including query planning and search job expansion.
 
 ```bash
 python tools/literature_evidence_landing.py --self-test
@@ -172,6 +212,7 @@ python tools/literature_evidence_landing.py --self-test
 ```
 tmp/<run_name>/
   search_plan.yaml           # JSON search plan
+  search_jobs.json           # per-source search job queue
   raw_results.jsonl          # raw search results (JSONL)
   candidates.jsonl           # deduplicated/ranked candidates (JSONL)
   top_k.md                   # top-K evidence summary
