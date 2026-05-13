@@ -2177,6 +2177,46 @@ def run_openalex_jobs(search_jobs_path: Path, output_path: Path,
     return result
 
 
+# ---- Pipeline run-dir safety ----
+
+_DANGEROUS_DIR_NAMES = frozenset({".aris", "research", "literature", ".env"})
+
+
+def _check_run_dir_safe(run_dir: Path) -> list[str]:
+    """Return list of errors if run_dir is dangerous, empty if safe."""
+    errors = []
+    run_str = str(run_dir).strip()
+
+    # Reject empty or "." paths
+    if not run_str or run_str == ".":
+        errors.append("run_dir must not be empty or '.'")
+        return errors
+
+    resolved = run_dir.resolve()
+    cwd = Path.cwd().resolve()
+
+    # Reject cwd itself
+    if resolved == cwd:
+        errors.append(f"run_dir must not be the current working directory: {resolved}")
+    # Reject cwd parent
+    if resolved == cwd.parent:
+        errors.append(f"run_dir must not be the parent of cwd: {resolved}")
+    # Reject any path containing dangerous directory names
+    for part in resolved.parts:
+        if part in _DANGEROUS_DIR_NAMES:
+            errors.append(f"run_dir contains forbidden path segment: {part}")
+            break
+    # Reject home directory
+    try:
+        home = Path.home().resolve()
+        if resolved == home:
+            errors.append(f"run_dir must not be the home directory: {resolved}")
+    except Exception:
+        pass
+
+    return errors
+
+
 # ---- Pipeline smoke command ----
 
 def run_openalex_pipeline(
@@ -2200,6 +2240,40 @@ def run_openalex_pipeline(
     Fail-closed: stops on any step failure.
     No model calls. Network only for OpenAlex API (skipped in dry-run)."""
 
+    import shutil
+
+    steps_executed = []
+
+    # Safety check: reject dangerous run_dir paths
+    safety_errors = _check_run_dir_safe(run_dir)
+    if safety_errors:
+        result = {
+            "status": "FAIL",
+            "failed_step": "prepare_run_dir",
+            "errors": safety_errors,
+            "steps_executed": steps_executed,
+            "dry_run": dry_run,
+        }
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Handle existing directory
+    if run_dir.exists():
+        if not overwrite:
+            result = {
+                "status": "FAIL",
+                "failed_step": "prepare_run_dir",
+                "errors": [f"run_dir already exists; use --overwrite"],
+                "steps_executed": steps_executed,
+                "dry_run": dry_run,
+            }
+            if json_output:
+                print(json.dumps(result, indent=2))
+            return result
+        # overwrite=True: delete existing run_dir then recreate
+        shutil.rmtree(run_dir)
+
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Resolve year defaults
@@ -2214,8 +2288,6 @@ def run_openalex_pipeline(
     job_results_path = run_dir / "job_results.jsonl"
     raw_results_path = run_dir / "raw_results.jsonl"
     candidates_path = run_dir / "candidates.jsonl"
-
-    steps_executed = []
 
     # Step 1: build_search_plan
     plan_result = build_search_plan(
@@ -3414,20 +3486,21 @@ def _self_test() -> bool:
     # Test 36: dry-run produces plan + jobs, no job_results
     try:
         tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "run36"
         r = run_openalex_pipeline(
             topic="test topic",
             intent="novelty_check",
             must_include=["test"],
-            run_dir=tmpdir,
+            run_dir=run_dir,
             dry_run=True,
             json_output=False,
         )
         assert r["status"] == "PASS", f"Test 36: expected PASS, got {r['status']}"
         assert r["dry_run"] is True, f"Test 36: expected dry_run=True"
-        assert (tmpdir / "search_plan.yaml").exists(), "Test 36: search_plan.yaml missing"
-        assert (tmpdir / "search_jobs.json").exists(), "Test 36: search_jobs.json missing"
-        assert not (tmpdir / "job_results.jsonl").exists(), "Test 36: job_results.jsonl should not exist"
-        assert not (tmpdir / "raw_results.jsonl").exists(), "Test 36: raw_results.jsonl should not exist"
+        assert (run_dir / "search_plan.yaml").exists(), "Test 36: search_plan.yaml missing"
+        assert (run_dir / "search_jobs.json").exists(), "Test 36: search_jobs.json missing"
+        assert not (run_dir / "job_results.jsonl").exists(), "Test 36: job_results.jsonl should not exist"
+        assert not (run_dir / "raw_results.jsonl").exists(), "Test 36: raw_results.jsonl should not exist"
         print("  [PASS] 36. dry-run produces plan + jobs, no network files")
         passed += 1
     except Exception as e:
@@ -3439,11 +3512,12 @@ def _self_test() -> bool:
     # Test 37: dry-run with overwrite flag succeeds
     try:
         tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "run37"
         r1 = run_openalex_pipeline(
             topic="test topic",
             intent="novelty_check",
             must_include=["test"],
-            run_dir=tmpdir,
+            run_dir=run_dir,
             dry_run=True,
             overwrite=True,
             json_output=False,
@@ -3453,7 +3527,7 @@ def _self_test() -> bool:
             topic="test topic",
             intent="novelty_check",
             must_include=["test"],
-            run_dir=tmpdir,
+            run_dir=run_dir,
             dry_run=True,
             overwrite=True,
             json_output=False,
@@ -3470,11 +3544,12 @@ def _self_test() -> bool:
     # Test 38: invalid start_year > end_year fails at plan step
     try:
         tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "run38"
         r = run_openalex_pipeline(
             topic="test",
             intent="novelty_check",
             must_include=["test"],
-            run_dir=tmpdir,
+            run_dir=run_dir,
             start_year=2025,
             end_year=2020,
             dry_run=True,
@@ -3493,11 +3568,12 @@ def _self_test() -> bool:
     # Test 39: invalid intent fails at plan step
     try:
         tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "run39"
         r = run_openalex_pipeline(
             topic="test",
             intent="invalid_intent",
             must_include=["test"],
-            run_dir=tmpdir,
+            run_dir=run_dir,
             dry_run=True,
             json_output=False,
         )
@@ -3514,11 +3590,12 @@ def _self_test() -> bool:
     # Test 40: pipeline result has no fabricated results field
     try:
         tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "run40"
         r = run_openalex_pipeline(
             topic="test topic",
             intent="novelty_check",
             must_include=["test"],
-            run_dir=tmpdir,
+            run_dir=run_dir,
             dry_run=True,
             json_output=True,
         )
@@ -3535,11 +3612,12 @@ def _self_test() -> bool:
     # Test 41: summary includes dry_run flag
     try:
         tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "run41"
         r = run_openalex_pipeline(
             topic="test",
             intent="novelty_check",
             must_include=["test"],
-            run_dir=tmpdir,
+            run_dir=run_dir,
             dry_run=True,
             json_output=False,
         )
@@ -3555,11 +3633,12 @@ def _self_test() -> bool:
     # Test 42: pipeline stops on invalid plan (empty must_include)
     try:
         tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "run42"
         r = run_openalex_pipeline(
             topic="test",
             intent="novelty_check",
             must_include=[],
-            run_dir=tmpdir,
+            run_dir=run_dir,
             dry_run=True,
             json_output=False,
         )
@@ -3571,6 +3650,102 @@ def _self_test() -> bool:
         passed += 1
     except Exception as e:
         print(f"  [FAIL] 42. edge case: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test A: existing run_dir without --overwrite → FAIL, old files preserved
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        existing = tmpdir / "existing_run"
+        existing.mkdir()
+        marker = existing / "old_marker.txt"
+        marker.write_text("old content", encoding="utf-8")
+        r = run_openalex_pipeline(
+            topic="test",
+            intent="novelty_check",
+            must_include=["test"],
+            run_dir=existing,
+            dry_run=True,
+            overwrite=False,
+            json_output=False,
+        )
+        assert r["status"] == "FAIL", f"Test A: expected FAIL, got {r['status']}"
+        assert r.get("failed_step") == "prepare_run_dir", f"Test A: expected failed_step=prepare_run_dir"
+        assert marker.exists(), "Test A: old_marker.txt should still exist"
+        assert not (existing / "search_plan.yaml").exists(), "Test A: search_plan.yaml should not exist"
+        print("  [PASS] A. existing run_dir without --overwrite → FAIL, old files preserved")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] A. existing run_dir no overwrite: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test B: existing run_dir with --overwrite → PASS, old files deleted
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        existing = tmpdir / "existing_run"
+        existing.mkdir()
+        marker = existing / "old_marker.txt"
+        marker.write_text("old content", encoding="utf-8")
+        r = run_openalex_pipeline(
+            topic="test",
+            intent="novelty_check",
+            must_include=["test"],
+            run_dir=existing,
+            dry_run=True,
+            overwrite=True,
+            json_output=False,
+        )
+        assert r["status"] == "PASS", f"Test B: expected PASS, got {r['status']}"
+        assert not marker.exists(), "Test B: old_marker.txt should be deleted"
+        assert (existing / "search_plan.yaml").exists(), "Test B: search_plan.yaml should exist"
+        assert (existing / "search_jobs.json").exists(), "Test B: search_jobs.json should exist"
+        print("  [PASS] B. existing run_dir with --overwrite → PASS, old files deleted")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] B. existing run_dir overwrite: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test C: run_dir=Path(".") → FAIL
+    try:
+        r = run_openalex_pipeline(
+            topic="test",
+            intent="novelty_check",
+            must_include=["test"],
+            run_dir=Path("."),
+            dry_run=True,
+            json_output=False,
+        )
+        assert r["status"] == "FAIL", f"Test C: expected FAIL, got {r['status']}"
+        assert r.get("failed_step") == "prepare_run_dir", f"Test C: expected failed_step=prepare_run_dir"
+        print("  [PASS] C. run_dir='.' → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] C. run_dir='.': {e}")
+        failed += 1
+
+    # Test D: run_dir contains 'research' segment → FAIL
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        bad_path = tmpdir / "research" / "bad"
+        r = run_openalex_pipeline(
+            topic="test",
+            intent="novelty_check",
+            must_include=["test"],
+            run_dir=bad_path,
+            dry_run=True,
+            json_output=False,
+        )
+        assert r["status"] == "FAIL", f"Test D: expected FAIL, got {r['status']}"
+        assert r.get("failed_step") == "prepare_run_dir", f"Test D: expected failed_step=prepare_run_dir"
+        print("  [PASS] D. run_dir contains 'research' → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] D. run_dir 'research': {e}")
         failed += 1
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
