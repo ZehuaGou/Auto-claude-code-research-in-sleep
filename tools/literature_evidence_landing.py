@@ -7324,6 +7324,143 @@ def acquire_alternative_fulltext(
     }
 
 
+def ingest_manual_fulltext(
+    store_path: Path,
+    queue_id: str,
+    local_file: Path,
+    json_output: bool = False,
+) -> dict:
+    """Ingest a local file (PDF or text) into the full-text store for a specific queue_id.
+
+    For .txt files: copies directly to extracted_text/{queue_id}.txt
+    For .pdf files: extracts text via pypdf/pymupdf and saves to extracted_text/{queue_id}.txt
+    Updates manifest.json and full_text_queue.json.
+    """
+    manifest_path = store_path / "manifest.json"
+    queue_path = store_path / "full_text_queue.json"
+
+    if not manifest_path.exists():
+        return {"status": "FAIL", "error": f"manifest.json not found in {store_path}"}
+    if not queue_path.exists():
+        return {"status": "FAIL", "error": f"full_text_queue.json not found in {store_path}"}
+    if not local_file.exists():
+        return {"status": "FAIL", "error": f"Local file not found: {local_file}"}
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    queue = json.loads(queue_path.read_text(encoding="utf-8"))
+
+    # Find the target item in manifest
+    target_item = None
+    for item in manifest.get("items", []):
+        if item.get("queue_id") == queue_id:
+            target_item = item
+            break
+    if target_item is None:
+        return {"status": "FAIL", "error": f"queue_id '{queue_id}' not found in manifest"}
+
+    extracted_dir = store_path / "extracted_text"
+    extracted_dir.mkdir(exist_ok=True)
+
+    suffix = local_file.suffix.lower()
+    extracted_path = extracted_dir / f"{queue_id}.txt"
+
+    if suffix == ".txt":
+        # Copy text file directly
+        import shutil
+        shutil.copy2(str(local_file), str(extracted_path))
+        extraction_method = "manual_text_copy"
+    elif suffix == ".pdf":
+        # Try pypdf first, then pymupdf
+        extracted_text = None
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(str(local_file))
+            pages = []
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    pages.append(text)
+            extracted_text = "\n\n".join(pages)
+            extraction_method = "pypdf"
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+        if extracted_text is None:
+            try:
+                import pymupdf
+                doc = pymupdf.open(str(local_file))
+                pages = []
+                for page in doc:
+                    text = page.get_text()
+                    if text:
+                        pages.append(text)
+                extracted_text = "\n\n".join(pages)
+                extraction_method = "pymupdf"
+            except ImportError:
+                pass
+            except Exception:
+                pass
+
+        if extracted_text is None:
+            return {
+                "status": "FAIL",
+                "error": "No PDF extraction library available. Install pypdf or pymupdf.",
+            }
+
+        extracted_path.write_text(extracted_text, encoding="utf-8")
+    else:
+        return {"status": "FAIL", "error": f"Unsupported file type: {suffix}. Use .txt or .pdf"}
+
+    # Update manifest item
+    rel_path = str(extracted_path.relative_to(store_path)).replace("\\", "/")
+    target_item["full_text_status"] = "likely_full_text"
+    target_item["extraction_status"] = "extracted_text"
+    target_item["extraction_method"] = extraction_method
+    target_item["local_text_path"] = rel_path
+    target_item["notes"] = f"manual_local ingestion from {local_file.name}"
+
+    # Save manifest
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Update queue
+    for qi in queue.get("items", []):
+        if qi.get("queue_id") == queue_id:
+            qi["full_text_status"] = "likely_full_text"
+            qi["extraction_status"] = "extracted_text"
+            qi["extraction_method"] = extraction_method
+            qi["local_text_path"] = rel_path
+            qi["notes"] = f"manual_local ingestion from {local_file.name}"
+            break
+
+    # Update queue summary
+    summary = queue.get("summary", {})
+    # Recount from items
+    status_counts = {}
+    extract_counts = {}
+    for qi in queue.get("items", []):
+        fts = qi.get("full_text_status", "unknown")
+        ets = qi.get("extraction_status", "unknown")
+        status_counts[fts] = status_counts.get(fts, 0) + 1
+        extract_counts[ets] = extract_counts.get(ets, 0) + 1
+    summary.update(status_counts)
+    summary.update(extract_counts)
+    summary["total_items"] = len(queue.get("items", []))
+    queue["summary"] = summary
+
+    queue_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return {
+        "status": "PASS",
+        "queue_id": queue_id,
+        "local_file": str(local_file),
+        "extraction_method": extraction_method,
+        "extracted_path": rel_path,
+        "full_text_status": "likely_full_text",
+    }
+
+
 # ---- CLI ----
 
 def main():
@@ -7525,6 +7662,12 @@ def main():
     aaf.add_argument("--allow-open-pdf", action="store_true", default=True, help="Allow open PDF download")
     aaf.add_argument("--allow-open-html", action="store_true", default=True, help="Allow open HTML download")
     aaf.add_argument("--json", action="store_true", help="Output JSON")
+
+    imf = sub.add_parser("ingest-manual-fulltext", help="Ingest a local file into the full-text store")
+    imf.add_argument("--store", required=True, help="Path to full-text store directory")
+    imf.add_argument("--queue-id", required=True, help="Queue ID of the paper to update")
+    imf.add_argument("--local-file", required=True, help="Path to local file (.txt or .pdf)")
+    imf.add_argument("--json", action="store_true", help="Output JSON")
 
     parser.add_argument("--self-test", action="store_true", help="Run self-tests")
 
@@ -7771,6 +7914,22 @@ def main():
             print(json.dumps(r, indent=2, ensure_ascii=False))
         else:
             print(f"Acquired: {r.get('acquired', 0)}, Skipped: {r.get('skipped', 0)}")
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "ingest-manual-fulltext":
+        r = ingest_manual_fulltext(
+            store_path=Path(args.store),
+            queue_id=args.queue_id,
+            local_file=Path(args.local_file),
+            json_output=args.json,
+        )
+        if args.json:
+            print(json.dumps(r, indent=2, ensure_ascii=False))
+        else:
+            if r["status"] == "PASS":
+                print(f"Ingested {r['queue_id']}: {r['extraction_method']} -> {r['extracted_path']}")
+            else:
+                print(f"FAIL: {r.get('error', 'unknown error')}")
         if r["status"] != "PASS":
             sys.exit(1)
 
