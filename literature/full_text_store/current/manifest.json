@@ -99,19 +99,19 @@
       "year": "2024",
       "source": "openalex",
       "doi": "10.48550/arxiv.2410.02707",
-      "arxiv_id": "",
-      "url": "https://openalex.org/W4403928636",
+      "arxiv_id": "2410.02707",
+      "url": "https://arxiv.org/abs/2410.02707",
       "priority": "high",
       "acquisition_status": "acquired",
-      "acquisition_method": "open_html",
-      "full_text_status": "metadata_page_only",
+      "acquisition_method": "arxiv_source",
+      "full_text_status": "likely_full_text",
       "extraction_status": "extracted_text",
-      "extraction_method": "html_text",
-      "local_source_path": "",
-      "local_pdf_path": "",
-      "local_html_path": "literature\\full_text_store\\current\\raw_html\\ftq_004.html",
-      "local_text_path": "",
-      "local_markdown_path": "literature\\full_text_store\\current\\raw_html\\ftq_004.md",
+      "extraction_method": "pypdf",
+      "local_source_path": "literature\\full_text_store\\current\\raw_sources\\2410.02707.tar.gz",
+      "local_pdf_path": "literature\\full_text_store\\current\\raw_pdfs\\2410.02707.pdf",
+      "local_html_path": "",
+      "local_text_path": "literature\\full_text_store\\current\\extracted_text\\ftq_004.txt",
+      "local_markdown_path": "",
       "should_commit_raw": false,
       "should_commit_extracted_full_text": false,
       "blocking_for": [
@@ -119,7 +119,7 @@
         "experiment_plan"
       ],
       "review_questions": [],
-      "notes": ""
+      "notes": "arXiv source + PDF acquired via HTTPS; pypdf extraction done"
     },
     {
       "queue_id": "ftq_005",
@@ -188,9 +188,9 @@
       "priority": "high",
       "acquisition_status": "acquired",
       "acquisition_method": "open_html",
-      "full_text_status": "landing_page_only",
-      "extraction_status": "extracted_text",
-      "extraction_method": "html_text",
+      "full_text_status": "manual_required",
+      "extraction_status": "not_attempted",
+      "extraction_method": "",
       "local_source_path": "",
       "local_pdf_path": "",
       "local_html_path": "literature\\full_text_store\\current\\raw_html\\ftq_007.html",
@@ -203,7 +203,7 @@
         "experiment_plan"
       ],
       "review_questions": [],
-      "notes": ""
+      "notes": "IEEE DOI, paywall protected; no open-access path without Sci-Hub"
     },
     {
       "queue_id": "ftq_008",
@@ -245,9 +245,9 @@
       "priority": "medium",
       "acquisition_status": "acquired",
       "acquisition_method": "open_html",
-      "full_text_status": "metadata_page_only",
-      "extraction_status": "extracted_text",
-      "extraction_method": "html_text",
+      "full_text_status": "manual_required",
+      "extraction_status": "not_attempted",
+      "extraction_method": "",
       "local_source_path": "",
       "local_pdf_path": "",
       "local_html_path": "literature\\full_text_store\\current\\raw_html\\ftq_009.html",
@@ -260,7 +260,7 @@
         "experiment_plan"
       ],
       "review_questions": [],
-      "notes": ""
+      "notes": "IEEE DOI, paywall protected; no open-access path without Sci-Hub"
     },
     {
       "queue_id": "ftq_010",
@@ -268,19 +268,19 @@
       "year": "2024",
       "source": "openalex",
       "doi": "10.48550/arxiv.2403.06448",
-      "arxiv_id": "",
-      "url": "https://openalex.org/W4392735839",
+      "arxiv_id": "2403.06448",
+      "url": "https://arxiv.org/abs/2403.06448",
       "priority": "medium",
       "acquisition_status": "acquired",
-      "acquisition_method": "open_html",
-      "full_text_status": "metadata_page_only",
+      "acquisition_method": "arxiv_source",
+      "full_text_status": "likely_full_text",
       "extraction_status": "extracted_text",
-      "extraction_method": "html_text",
-      "local_source_path": "",
-      "local_pdf_path": "",
-      "local_html_path": "literature\\full_text_store\\current\\raw_html\\ftq_010.html",
-      "local_text_path": "",
-      "local_markdown_path": "literature\\full_text_store\\current\\raw_html\\ftq_010.md",
+      "extraction_method": "pypdf",
+      "local_source_path": "literature\\full_text_store\\current\\raw_sources\\2403.06448.tar.gz",
+      "local_pdf_path": "literature\\full_text_store\\current\\raw_pdfs\\2403.06448.pdf",
+      "local_html_path": "",
+      "local_text_path": "literature\\full_text_store\\current\\extracted_text\\ftq_010.txt",
+      "local_markdown_path": "",
       "should_commit_raw": false,
       "should_commit_extracted_full_text": false,
       "blocking_for": [
@@ -288,19 +288,19 @@
         "experiment_plan"
       ],
       "review_questions": [],
-      "notes": ""
+      "notes": "arXiv source + PDF acquired via HTTPS; pypdf extraction done"
     }
   ],
   "summary": {
     "total_items": 10,
     "acquired": 10,
-    "manual_required": 0,
+    "manual_required": 2,
     "source_acquired_unreviewed": 4,
-    "likely_full_text": 2,
-    "metadata_page_only": 3,
-    "landing_page_only": 1,
+    "likely_full_text": 4,
+    "metadata_page_only": 0,
+    "landing_page_only": 0,
     "extracted_markdown": 4,
-    "extracted_text": 6,
+    "extracted_text": 4,
     "tool_missing": 0,
     "failed": 0
   }

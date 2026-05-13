@@ -110,12 +110,10 @@ Template for per-paper manual review. Fill in after reading the full text.
 
 | queue_id | title | full_text_status | reason |
 |----------|-------|------------------|--------|
-| ftq_004 | LLMs Know More Than They Show | metadata_page_only | OpenAlex metadata page only |
-| ftq_007 | Detection of LLM Hallucinations Using Late Internal Representations | landing_page_only | DOI landing page only |
-| ftq_009 | MixHD | metadata_page_only | OpenAlex metadata page only |
-| ftq_010 | Unsupervised Real-Time Hallucination Detection | metadata_page_only | OpenAlex metadata page only |
+| ftq_007 | Detection of LLM Hallucinations Using Late Internal Representations | paywall_protected | IEEE DOI, paywall protected; no open-access path without Sci-Hub |
+| ftq_009 | MixHD | paywall_protected | IEEE DOI, paywall protected; no open-access path without Sci-Hub |
 
-**These papers could not be reviewed.** Their titles suggest potential relevance to trajectory/dynamics-based hallucination detection, but full text is not available.
+**These papers could not be reviewed.** Their titles suggest potential relevance to trajectory/dynamics-based hallucination detection, but full text is behind paywall.
 
 ---
 
@@ -135,6 +133,23 @@ Template for per-paper manual review. Fill in after reading the full text.
 - 2 likely_full_text (ftq_002, ftq_008 — both PDF text extracted; partial trusted review completed from bounded extracted-text summary, full human review still needed)
 - 3 metadata_page_only
 - 1 landing_page_only
+
+---
+
+## Phase 21D — collect_more_full_text (2026-05-14)
+
+**ftq_004 (LLMs Know More Than They Show):** arXiv source + PDF already acquired (2410.02707). pypdf extraction done → extracted_text/ftq_004.txt (1635 lines). Now reviewable.
+
+**ftq_010 (Unsupervised Real-Time Hallucination Detection):** arXiv source + PDF already acquired (2403.06448). pypdf extraction done → extracted_text/ftq_010.txt (1233 lines). Now reviewable.
+
+**ftq_007 (Detection of LLM Hallucinations Using Late Internal Representations):** IEEE DOI, paywall protected. No open-access path without Sci-Hub. Remains manual_required.
+
+**ftq_009 (MixHD):** IEEE DOI, paywall protected. No open-access path without Sci-Hub. Remains manual_required.
+
+**Store status after Phase 21D:**
+- 4 likely_full_text (ftq_002, ftq_004, ftq_008, ftq_010 — all have extracted text, pending review)
+- 4 source_acquired_unreviewed (ftq_001, ftq_003, ftq_005, ftq_006 — LaTeX source only)
+- 2 paywall_protected (ftq_007, ftq_009 — manual required)
 
 ---
 
