@@ -755,7 +755,8 @@ def build_search_plan(
     exclude: str = "",
     json_output: bool = False,
 ) -> dict:
-    """Build a search plan with deterministic query variants. No network, no model."""
+    """Build a search plan with deterministic query variants. No network, no model.
+    Fail-closed: only writes output_path if validation passes."""
     # Validate sources
     bad_sources = [s for s in sources if s not in VALID_PLAN_SOURCES]
     if bad_sources:
@@ -786,17 +787,17 @@ def build_search_plan(
                  "Query variants are deterministic and non-exhaustive.",
     }
 
-    # Write output
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    # Validate the generated plan
-    vr = validate_search_plan(output_path, json_output=False)
+    # Validate in-memory before writing
+    vr = validate_search_plan_dict(plan)
     if vr["status"] != "PASS":
-        result = {"status": "FAIL", "errors": vr["errors"], "output": str(output_path)}
+        result = {"status": "FAIL", "errors": vr["errors"]}
         if json_output:
             print(json.dumps(result, indent=2))
         return result
+
+    # Only write output after validation passes
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8")
 
     result = {
         "status": "PASS",
@@ -817,25 +818,10 @@ NOVELTY_VERDICT_FIELDS = frozenset([
 ])
 
 
-def validate_search_plan(file_path: Path, json_output: bool) -> dict:
-    """Validate a search_plan.yaml-like JSON file. No network calls."""
+def validate_search_plan_dict(plan: dict) -> dict:
+    """Validate a search plan dict in memory. No file I/O, no network calls."""
     errors = []
     warnings = []
-
-    if not file_path.exists():
-        result = {"status": "FAIL", "errors": ["file not found"], "warnings": []}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    try:
-        text = file_path.read_text(encoding="utf-8", errors="ignore")
-        plan = json.loads(text)
-    except json.JSONDecodeError as e:
-        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"], "warnings": []}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
 
     # Required fields
     for field in ("topic", "search_intent", "must_include", "sources", "time_range", "max_results_per_source"):
@@ -902,7 +888,27 @@ def validate_search_plan(file_path: Path, json_output: bool) -> dict:
             errors.append(f"novelty verdict field not allowed: {field}")
 
     status = "PASS" if not errors else "FAIL"
-    result = {"status": status, "errors": errors, "warnings": warnings}
+    return {"status": status, "errors": errors, "warnings": warnings}
+
+
+def validate_search_plan(file_path: Path, json_output: bool) -> dict:
+    """Validate a search_plan.yaml-like JSON file. No network calls."""
+    if not file_path.exists():
+        result = {"status": "FAIL", "errors": ["file not found"], "warnings": []}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    try:
+        text = file_path.read_text(encoding="utf-8", errors="ignore")
+        plan = json.loads(text)
+    except json.JSONDecodeError as e:
+        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"], "warnings": []}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    result = validate_search_plan_dict(plan)
     if json_output:
         print(json.dumps(result, indent=2))
     return result
@@ -1293,34 +1299,105 @@ def _self_test() -> bool:
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # Test 6: init-run-skeleton creates all files and search_plan validates PASS
+    # Test 6: build-search-plan with start_year > end_year → FAIL, no output file
     try:
         tmp_dir = Path(tempfile.mkdtemp())
-        run_dir = tmp_dir / "test_run"
-        r = init_run_skeleton(run_dir, "test topic", "novelty_check")
-        assert r["status"] == "created", f"Test 6: Expected created, got {r['status']}"
-        expected_files = ["search_plan.yaml", "raw_results.jsonl", "candidates.jsonl",
-                          "top_k.md", "acquisition_status.json", "manual_acquisition_queue.md"]
-        for fname in expected_files:
-            assert (run_dir / fname).exists(), f"Test 6: Missing {fname}"
-        # Verify search_plan validates PASS
-        vr = validate_search_plan(run_dir / "search_plan.yaml", json_output=False)
-        assert vr["status"] == "PASS", f"Test 6: search_plan should validate PASS, got {vr['status']}: {vr['errors']}"
-        # Verify content
-        plan_content = json.loads((run_dir / "search_plan.yaml").read_text(encoding="utf-8"))
-        assert plan_content["topic"] == "test topic"
-        assert plan_content["search_intent"] == "novelty_check"
-        assert len(plan_content["must_include"]) > 0, "Test 6: must_include should be non-empty"
-        assert len(plan_content["sources"]) > 0, "Test 6: sources should be non-empty"
-        print("  [PASS] 6. init-run-skeleton creates all files and search_plan validates PASS")
+        out_path = tmp_dir / "inverted_years.yaml"
+        r = build_search_plan(
+            topic="test topic",
+            intent="novelty_check",
+            must_include=["test"],
+            sources=["arxiv"],
+            start_year=2026,
+            end_year=2020,
+            max_results_per_source=10,
+            output_path=out_path,
+        )
+        assert r["status"] == "FAIL", f"Test 6: Expected FAIL, got {r['status']}"
+        assert not out_path.exists(), f"Test 6: output file should NOT exist on FAIL"
+        print("  [PASS] 6. build-search-plan start_year > end_year → FAIL, no output file")
         passed += 1
     except Exception as e:
-        print(f"  [FAIL] 6. init-run-skeleton: {e}")
+        print(f"  [FAIL] 6. build-search-plan inverted years: {e}")
         failed += 1
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # Test 7: valid acquisition_status → PASS
+    # Test 7: build-search-plan with max_results_per_source=0 → FAIL, no output file
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        out_path = tmp_dir / "zero_max.yaml"
+        r = build_search_plan(
+            topic="test topic",
+            intent="novelty_check",
+            must_include=["test"],
+            sources=["arxiv"],
+            start_year=2020,
+            end_year=2026,
+            max_results_per_source=0,
+            output_path=out_path,
+        )
+        assert r["status"] == "FAIL", f"Test 7: Expected FAIL, got {r['status']}"
+        assert not out_path.exists(), f"Test 7: output file should NOT exist on FAIL"
+        print("  [PASS] 7. build-search-plan max_results=0 → FAIL, no output file")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 7. build-search-plan zero max: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 8: validate-search-plan rejects novelty verdict fields → FAIL
+    try:
+        plan = {
+            "topic": "test",
+            "search_intent": "novelty_check",
+            "must_include": ["test"],
+            "sources": ["arxiv"],
+            "time_range": {"start_year": 2020, "end_year": 2026},
+            "max_results_per_source": 10,
+            "confirmed_novel": True,
+        }
+        p = _write_tmp_json(plan, ".yaml")
+        r = validate_search_plan(p, json_output=False)
+        assert r["status"] == "FAIL", f"Test 8: Expected FAIL, got {r['status']}"
+        assert any("confirmed_novel" in e for e in r["errors"]), f"Test 8: Expected verdict error, got {r['errors']}"
+        print("  [PASS] 8. validate-search-plan rejects novelty verdict fields → FAIL")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 8. novelty verdict rejection: {e}")
+        failed += 1
+    finally:
+        p.unlink(missing_ok=True)
+
+    # Test 9: init-run-skeleton creates all files and search_plan validates PASS
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        run_dir = tmp_dir / "test_run"
+        r = init_run_skeleton(run_dir, "test topic", "novelty_check")
+        assert r["status"] == "created", f"Test 9: Expected created, got {r['status']}"
+        expected_files = ["search_plan.yaml", "raw_results.jsonl", "candidates.jsonl",
+                          "top_k.md", "acquisition_status.json", "manual_acquisition_queue.md"]
+        for fname in expected_files:
+            assert (run_dir / fname).exists(), f"Test 9: Missing {fname}"
+        # Verify search_plan validates PASS
+        vr = validate_search_plan(run_dir / "search_plan.yaml", json_output=False)
+        assert vr["status"] == "PASS", f"Test 9: search_plan should validate PASS, got {vr['status']}: {vr['errors']}"
+        # Verify content
+        plan_content = json.loads((run_dir / "search_plan.yaml").read_text(encoding="utf-8"))
+        assert plan_content["topic"] == "test topic"
+        assert plan_content["search_intent"] == "novelty_check"
+        assert len(plan_content["must_include"]) > 0, "Test 9: must_include should be non-empty"
+        assert len(plan_content["sources"]) > 0, "Test 9: sources should be non-empty"
+        print("  [PASS] 9. init-run-skeleton creates all files and search_plan validates PASS")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 9. init-run-skeleton: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 10: valid acquisition_status → PASS
     try:
         acq = {
             "papers": [{
@@ -1338,16 +1415,16 @@ def _self_test() -> bool:
         }
         p = _write_tmp_json(acq)
         r = validate_acquisition_status(p, json_output=False)
-        assert r["status"] == "PASS", f"Test 7: Expected PASS, got {r['status']}: {r['errors']}"
-        print("  [PASS] 7. valid acquisition_status → PASS")
+        assert r["status"] == "PASS", f"Test 10: Expected PASS, got {r['status']}: {r['errors']}"
+        print("  [PASS] 10. valid acquisition_status → PASS")
         passed += 1
     except Exception as e:
-        print(f"  [FAIL] 7. valid acquisition_status: {e}")
+        print(f"  [FAIL] 10. valid acquisition_status: {e}")
         failed += 1
     finally:
         p.unlink(missing_ok=True)
 
-    # Test 8: metadata_only with empty evidence_gap → FAIL
+    # Test 11: metadata_only with empty evidence_gap → FAIL
     try:
         acq = {
             "papers": [{
@@ -1362,17 +1439,17 @@ def _self_test() -> bool:
         }
         p = _write_tmp_json(acq)
         r = validate_acquisition_status(p, json_output=False)
-        assert r["status"] == "FAIL", f"Test 8: Expected FAIL, got {r['status']}"
-        assert any("evidence_gap" in e for e in r["errors"]), f"Test 8: Expected evidence_gap error, got {r['errors']}"
-        print("  [PASS] 8. metadata_only empty evidence_gap → FAIL")
+        assert r["status"] == "FAIL", f"Test 11: Expected FAIL, got {r['status']}"
+        assert any("evidence_gap" in e for e in r["errors"]), f"Test 11: Expected evidence_gap error, got {r['errors']}"
+        print("  [PASS] 11. metadata_only empty evidence_gap → FAIL")
         passed += 1
     except Exception as e:
-        print(f"  [FAIL] 8. metadata_only empty evidence_gap: {e}")
+        print(f"  [FAIL] 11. metadata_only empty evidence_gap: {e}")
         failed += 1
     finally:
         p.unlink(missing_ok=True)
 
-    # Test 9: build-manual-queue writes queue for manual_required paper
+    # Test 12: build-manual-queue writes queue for manual_required paper
     try:
         tmp_dir = Path(tempfile.mkdtemp())
         acq = {
@@ -1404,20 +1481,20 @@ def _self_test() -> bool:
         acq_path.write_text(json.dumps(acq, indent=2), encoding="utf-8")
         out_path = tmp_dir / "manual_acquisition_queue.md"
         r = build_manual_queue(acq_path, out_path)
-        assert r["status"] == "built", f"Test 9: Expected built, got {r['status']}"
-        assert r["queued_count"] == 1, f"Test 9: Expected 1 queued, got {r['queued_count']}"
+        assert r["status"] == "built", f"Test 12: Expected built, got {r['status']}"
+        assert r["queued_count"] == 1, f"Test 12: Expected 1 queued, got {r['queued_count']}"
         content = out_path.read_text(encoding="utf-8")
-        assert "Important Prior Work" in content, "Test 9: Expected paper title in queue"
-        assert "Available Paper" not in content, "Test 9: Should not include available paper"
-        print("  [PASS] 9. build-manual-queue for manual_required paper")
+        assert "Important Prior Work" in content, "Test 12: Expected paper title in queue"
+        assert "Available Paper" not in content, "Test 12: Should not include available paper"
+        print("  [PASS] 12. build-manual-queue for manual_required paper")
         passed += 1
     except Exception as e:
-        print(f"  [FAIL] 9. build-manual-queue: {e}")
+        print(f"  [FAIL] 12. build-manual-queue: {e}")
         failed += 1
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # Test 10: summarize-run detects counts and search_plan_valid correctly
+    # Test 13: summarize-run detects counts and search_plan_valid correctly
     try:
         tmp_dir = Path(tempfile.mkdtemp())
         run_dir = tmp_dir / "summary_run"
@@ -1444,17 +1521,17 @@ def _self_test() -> bool:
         (run_dir / "acquisition_status.json").write_text(json.dumps(acq, indent=2), encoding="utf-8")
 
         r = summarize_run(run_dir, json_output=False)
-        assert r["search_plan_present"] is True, "Test 10: plan should be present"
-        assert r["search_plan_valid"] is True, f"Test 10: plan should be valid"
-        assert r["raw_result_count"] == 1, f"Test 10: Expected 1 raw, got {r['raw_result_count']}"
-        assert r["manual_required_count"] == 1, f"Test 10: Expected 1 manual_required, got {r['manual_required_count']}"
-        assert r["full_text_available_count"] == 1, f"Test 10: Expected 1 available, got {r['full_text_available_count']}"
-        assert r["metadata_only_count"] == 1, f"Test 10: Expected 1 metadata_only, got {r['metadata_only_count']}"
-        assert r["status"] == "WARN", f"Test 10: Expected WARN (no candidates), got {r['status']}"
-        print("  [PASS] 10. summarize-run detects counts and search_plan_valid correctly")
+        assert r["search_plan_present"] is True, "Test 13: plan should be present"
+        assert r["search_plan_valid"] is True, f"Test 13: plan should be valid"
+        assert r["raw_result_count"] == 1, f"Test 13: Expected 1 raw, got {r['raw_result_count']}"
+        assert r["manual_required_count"] == 1, f"Test 13: Expected 1 manual_required, got {r['manual_required_count']}"
+        assert r["full_text_available_count"] == 1, f"Test 13: Expected 1 available, got {r['full_text_available_count']}"
+        assert r["metadata_only_count"] == 1, f"Test 13: Expected 1 metadata_only, got {r['metadata_only_count']}"
+        assert r["status"] == "WARN", f"Test 13: Expected WARN (no candidates), got {r['status']}"
+        print("  [PASS] 13. summarize-run detects counts and search_plan_valid correctly")
         passed += 1
     except Exception as e:
-        print(f"  [FAIL] 10. summarize-run: {e}")
+        print(f"  [FAIL] 13. summarize-run: {e}")
         failed += 1
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1547,9 +1624,11 @@ def main():
     elif args.command == "build-top-k":
         build_top_k(Path(args.run_dir), args.k, args.json)
     elif args.command == "validate-search-plan":
-        validate_search_plan(Path(args.file), args.json)
+        r = validate_search_plan(Path(args.file), args.json)
+        if r["status"] == "FAIL":
+            sys.exit(1)
     elif args.command == "build-search-plan":
-        build_search_plan(
+        r = build_search_plan(
             topic=args.topic,
             intent=args.intent,
             must_include=args.must_include,
@@ -1561,11 +1640,15 @@ def main():
             exclude=args.exclude,
             json_output=args.json,
         )
+        if r["status"] != "PASS":
+            sys.exit(1)
     elif args.command == "init-run-skeleton":
         r = init_run_skeleton(Path(args.run_dir), args.topic, args.intent)
         print(json.dumps(r, indent=2))
     elif args.command == "validate-acquisition-status":
-        validate_acquisition_status(Path(args.file), args.json)
+        r = validate_acquisition_status(Path(args.file), args.json)
+        if r["status"] == "FAIL":
+            sys.exit(1)
     elif args.command == "build-manual-queue":
         r = build_manual_queue(Path(args.acquisition_status), Path(args.output))
         print(json.dumps(r, indent=2))
