@@ -62,6 +62,9 @@ literature/*
 !literature/search_runs/
 literature/search_runs/*
 !literature/search_runs/current/
+!literature/full_text_store/
+literature/full_text_store/*
+!literature/full_text_store/current/
 literature-md/
 *.pdf
 

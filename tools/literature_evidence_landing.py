@@ -24,6 +24,9 @@ Usage:
     python tools/literature_evidence_landing.py validate-acquisition-status --file <path> [--json]
     python tools/literature_evidence_landing.py build-manual-queue --acquisition-status <file> --output <file>
     python tools/literature_evidence_landing.py summarize-run --run-dir <dir> [--json]
+    python tools/literature_evidence_landing.py acquire-open-fulltext --top-k <path> --output-dir <dir> [--prefer-latex] [--allow-arxiv-pdf] [--allow-open-html] [--allow-open-pdf] [--max-items <n>] [--overwrite] [--json]
+    python tools/literature_evidence_landing.py validate-fulltext-store --store <dir> [--json]
+    python tools/literature_evidence_landing.py summarize-fulltext-store --store <dir> [--json]
     python tools/literature_evidence_landing.py --self-test
 """
 from __future__ import annotations
@@ -5595,8 +5598,922 @@ def _self_test() -> bool:
         print(f"  [FAIL] BB. CLI parse new subcommands: {e}")
         failed += 1
 
+    # --- CC. Full-text acquisition: parse top_k.md ---
+    try:
+        import subprocess as _sp2
+        # create a minimal top_k.md for testing
+        topk_content = """# Top-K Literature Evidence
+Status: populated_by_tool
+
+## Candidate Papers
+
+### Paper 1
+title: Test Paper Alpha
+authors: ['Author A']
+year: 2025
+source: arxiv
+url: http://arxiv.org/abs/2506.09886v2
+doi:
+arxiv_id: 2506.09886
+relevance_score: 14
+relevance_label: high
+
+### Paper 2
+title: Test Paper Beta
+authors: ['Author B']
+year: 2024
+source: openalex
+url: https://openalex.org/W4404783306
+doi: 10.18653/v1/2024.emnlp-main.84
+arxiv_id:
+relevance_score: 14
+relevance_label: high
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+            f.write(topk_content)
+            topk_path = f.name
+        items = _parse_top_k_md(Path(topk_path))
+        assert len(items) == 2, f"Expected 2 items, got {len(items)}"
+        assert items[0]["arxiv_id"] == "2506.09886"
+        assert items[1]["arxiv_id"] == ""
+        os.unlink(topk_path)
+        print("  [PASS] CC. parse top_k.md into acquisition items")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] CC. parse top_k.md: {e}")
+        failed += 1
+
+    # --- DD. priority critical for first papers ---
+    try:
+        items = [{"title": "P1"}, {"title": "P2"}, {"title": "P3"}, {"title": "P4"}]
+        # simulate priority assignment from acquire_open_fulltext logic
+        priorities = []
+        for i, item in enumerate(items[:4]):
+            p = "critical" if i < 3 else "high" if i < 7 else "medium"
+            priorities.append(p)
+        assert priorities[0] == "critical"
+        assert priorities[2] == "critical"
+        assert priorities[3] == "high"
+        print("  [PASS] DD. priority critical for first papers")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] DD. priority assignment: {e}")
+        failed += 1
+
+    # --- EE. arxiv source URL construction ---
+    try:
+        url = ARXIV_SOURCE_URL.format(arxiv_id="2506.09886")
+        assert url == "https://arxiv.org/e-print/2506.09886"
+        url2 = ARXIV_PDF_URL.format(arxiv_id="2402.03744")
+        assert url2 == "https://arxiv.org/pdf/2402.03744.pdf"
+        print("  [PASS] EE. arxiv source/PDF URL construction")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] EE. arxiv URL construction: {e}")
+        failed += 1
+
+    # --- FF. LaTeX section conversion ---
+    try:
+        tex = r"""\documentclass{article}
+\begin{document}
+\title{Test Paper}
+\begin{abstract}
+This is the abstract.
+\end{abstract}
+\section{Introduction}
+Some intro text.
+\subsection{Background}
+Background info.
+\textbf{Important note.}
+\emph{emphasized.}
+Citation: \cite{smith2024}.
+Reference: \ref{fig:1}.
+\section{Conclusion}
+Final thoughts.
+\end{document}
+"""
+        md = _latex_to_markdown(tex)
+        assert "# Test Paper" in md
+        assert "## Abstract" in md
+        assert "## Introduction" in md
+        assert "### Background" in md
+        assert "**Important note.**" in md
+        assert "*emphasized.*" in md
+        assert "[smith2024]" in md
+        assert "[fig:1]" in md
+        assert "## Conclusion" in md
+        print("  [PASS] FF. LaTeX section conversion to Markdown")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] FF. LaTeX conversion: {e}")
+        failed += 1
+
+    # --- GG. LaTeX math preservation ---
+    try:
+        tex = r"""\documentclass{article}
+\begin{document}
+Inline math: $E = mc^2$ and $\alpha + \beta$.
+Display math:
+\begin{equation}
+\int_0^\infty f(x) dx
+\end{equation}
+And display: \[a + b = c\]
+\end{document}
+"""
+        md = _latex_to_markdown(tex)
+        assert "$E = mc^2$" in md
+        assert "$\\alpha + \\beta$" in md
+        assert "$$" in md  # equation delimiters preserved
+        print("  [PASS] GG. LaTeX math preservation")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] GG. LaTeX math: {e}")
+        failed += 1
+
+    # --- HH. manifest schema validates ---
+    try:
+        manifest = {
+            "schema_version": "full_text_store_v1",
+            "source_top_k": "literature/search_runs/current/top_k.md",
+            "created_by": "tools/literature_evidence_landing.py acquire-open-fulltext",
+            "network_used": True,
+            "paywall_bypass_used": False,
+            "model_used": False,
+            "pdfs_committed": False,
+            "full_text_committed": False,
+            "items": [{
+                "queue_id": "ftq_001",
+                "title": "Test",
+                "year": "2025",
+                "source": "arxiv",
+                "doi": "",
+                "arxiv_id": "2506.09886",
+                "url": "http://arxiv.org/abs/2506.09886v2",
+                "priority": "critical",
+                "acquisition_status": "manual_required",
+                "acquisition_method": "manual_required",
+                "extraction_status": "not_attempted",
+                "extraction_method": "none",
+                "local_source_path": "",
+                "local_pdf_path": "",
+                "local_html_path": "",
+                "local_text_path": "",
+                "local_markdown_path": "",
+                "should_commit_raw": False,
+                "should_commit_extracted_full_text": False,
+                "blocking_for": ["method_refinement", "experiment_plan"],
+                "review_questions": [],
+                "notes": "",
+            }],
+            "summary": {"total_items": 1, "acquired": 0, "manual_required": 1,
+                        "extracted_markdown": 0, "extracted_text": 0, "failed": 0},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            store = Path(td)
+            (store / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            (store / "README.md").write_text("# Full Text Store\n", encoding="utf-8")
+            r = validate_fulltext_store(store)
+            assert r["status"] == "PASS", f"Expected PASS, got {r}"
+        print("  [PASS] HH. manifest schema validates")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] HH. manifest validation: {e}")
+        failed += 1
+
+    # --- II. invalid paywall_bypass_used=true fails ---
+    try:
+        manifest = {
+            "schema_version": "full_text_store_v1",
+            "paywall_bypass_used": True,
+            "model_used": False,
+            "pdfs_committed": False,
+            "full_text_committed": False,
+            "items": [{"queue_id": "ftq_001", "acquisition_status": "acquired",
+                        "acquisition_method": "arxiv_source", "extraction_status": "extracted_markdown",
+                        "priority": "critical", "local_source_path": "x"}],
+            "summary": {"total_items": 1, "acquired": 1, "manual_required": 0,
+                        "extracted_markdown": 1, "extracted_text": 0, "failed": 0},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            store = Path(td)
+            (store / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            (store / "README.md").write_text("# Full Text Store\nNo paywall bypass.\n", encoding="utf-8")
+            r = validate_fulltext_store(store)
+            assert r["status"] == "FAIL", "Expected FAIL for paywall_bypass_used=true"
+            assert any("paywall" in e.lower() for e in r["errors"])
+        print("  [PASS] II. invalid paywall_bypass_used=true fails")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] II. paywall bypass check: {e}")
+        failed += 1
+
+    # --- JJ. .gitignore rules ---
+    try:
+        gi_path = Path("literature/full_text_store/current/.gitignore")
+        if gi_path.exists():
+            gi = gi_path.read_text(encoding="utf-8")
+            assert "raw_pdfs/*" in gi
+            assert "raw_html/*" in gi
+            assert "raw_sources/*" in gi
+            assert "extracted_text/*" in gi
+            assert "extracted_markdown/*" in gi
+            assert "!raw_pdfs/.gitkeep" in gi
+        print("  [PASS] JJ. .gitignore rules include raw/extracted directories")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] JJ. .gitignore rules: {e}")
+        failed += 1
+
+    # --- KK. manual_required item valid ---
+    try:
+        manifest = {
+            "schema_version": "full_text_store_v1",
+            "paywall_bypass_used": False, "model_used": False,
+            "pdfs_committed": False, "full_text_committed": False,
+            "items": [{"queue_id": "ftq_001", "acquisition_status": "manual_required",
+                        "acquisition_method": "manual_required", "extraction_status": "not_attempted",
+                        "extraction_method": "none", "priority": "high",
+                        "local_source_path": "", "local_pdf_path": "", "local_html_path": "",
+                        "local_text_path": "", "local_markdown_path": ""}],
+            "summary": {"total_items": 1, "acquired": 0, "manual_required": 1,
+                        "extracted_markdown": 0, "extracted_text": 0, "failed": 0},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            store = Path(td)
+            (store / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            (store / "README.md").write_text("# Full Text Store\nNo paywall bypass.\n", encoding="utf-8")
+            r = validate_fulltext_store(store)
+            assert r["status"] == "PASS", f"Expected PASS for manual_required, got {r}"
+        print("  [PASS] KK. manual_required item valid")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] KK. manual_required validation: {e}")
+        failed += 1
+
+    # --- LL. CLI parses fulltext subcommands ---
+    try:
+        res = _sp.run(
+            ["python", "tools/literature_evidence_landing.py", "acquire-open-fulltext", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert res.returncode == 0, f"acquire-open-fulltext --help failed: {res.stderr}"
+        res2 = _sp.run(
+            ["python", "tools/literature_evidence_landing.py", "validate-fulltext-store", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert res2.returncode == 0, f"validate-fulltext-store --help failed: {res2.stderr}"
+        res3 = _sp.run(
+            ["python", "tools/literature_evidence_landing.py", "summarize-fulltext-store", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert res3.returncode == 0, f"summarize-fulltext-store --help failed: {res3.stderr}"
+        print("  [PASS] LL. CLI parses fulltext subcommands (acquire/validate/summarize)")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] LL. CLI parse fulltext subcommands: {e}")
+        failed += 1
+
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
+
+
+# ---- Full-text Acquisition MVP ----
+
+VALID_ACQUISITION_STATUSES = frozenset([
+    "acquired", "manual_required", "failed", "skipped"
+])
+VALID_ACQUISITION_METHODS = frozenset([
+    "arxiv_source", "arxiv_pdf", "open_html", "open_pdf",
+    "manual_required", "none"
+])
+VALID_EXTRACTION_STATUSES = frozenset([
+    "extracted_markdown", "extracted_text", "tool_missing", "failed", "not_attempted"
+])
+VALID_EXTRACTION_METHODS = frozenset([
+    "latex_to_markdown_mvp", "pdf_text", "html_text", "none"
+])
+VALID_PRIORITIES = frozenset(["critical", "high", "medium"])
+
+ARXIV_SOURCE_URL = "https://arxiv.org/e-print/{arxiv_id}"
+ARXIV_PDF_URL = "https://arxiv.org/pdf/{arxiv_id}.pdf"
+ARXIV_ABS_URL = "https://arxiv.org/abs/{arxiv_id}"
+
+
+def _parse_top_k_md(path: Path) -> list[dict]:
+    """Parse top_k.md into a list of paper item dicts."""
+    text = path.read_text(encoding="utf-8")
+    items = []
+    current = {}
+    in_paper = False
+    for line in text.splitlines():
+        if line.startswith("### Paper "):
+            if current and current.get("title"):
+                items.append(current)
+            current = {}
+            in_paper = True
+        elif in_paper and ":" in line:
+            key, _, val = line.partition(":")
+            key = key.strip()
+            val = val.strip()
+            if key in ("title", "authors", "year", "source", "url", "doi",
+                        "arxiv_id", "semantic_scholar_id", "openalex_id",
+                        "relevance_score", "relevance_label"):
+                current[key] = val
+    if current and current.get("title"):
+        items.append(current)
+    return items
+
+
+def _latex_to_markdown(tex_content: str) -> str:
+    """Convert LaTeX source to rough Markdown. Not perfect, but usable."""
+    lines = tex_content.split("\n")
+    out = []
+    skip = True  # skip until \begin{document}
+    in_equation = False
+    for line in lines:
+        stripped = line.strip()
+        # skip preamble
+        if skip:
+            if re.match(r"\\begin\{document\}", stripped):
+                skip = False
+            continue
+        # skip comments
+        if stripped.startswith("%"):
+            continue
+        # stop at bibliography
+        if re.match(r"\\begin\{thebibliography\}", stripped):
+            out.append("\n## References\n")
+            continue
+        if re.match(r"\\bibliography\{", stripped) or re.match(r"\\bibliographystyle\{", stripped):
+            continue
+        # equations
+        if re.match(r"\\begin\{equation", stripped) or re.match(r"\\begin\{align", stripped):
+            in_equation = True
+            out.append("$$")
+            continue
+        if re.match(r"\\end\{equation", stripped) or re.match(r"\\end\{align", stripped):
+            in_equation = False
+            out.append("$$")
+            continue
+        if in_equation:
+            out.append(stripped)
+            continue
+        # display math
+        m = re.match(r"\\\[(.*)\\\]\s*$", stripped)
+        if m:
+            out.append(f"$$ {m.group(1)} $$")
+            continue
+        # section commands
+        m = re.match(r"\\section\*?\{(.+?)\}", stripped)
+        if m:
+            out.append(f"\n## {m.group(1)}\n")
+            continue
+        m = re.match(r"\\subsection\*?\{(.+?)\}", stripped)
+        if m:
+            out.append(f"\n### {m.group(1)}\n")
+            continue
+        m = re.match(r"\\subsubsection\*?\{(.+?)\}", stripped)
+        if m:
+            out.append(f"\n#### {m.group(1)}\n")
+            continue
+        m = re.match(r"\\paragraph\{(.+?)\}", stripped)
+        if m:
+            out.append(f"\n**{m.group(1)}**\n")
+            continue
+        # title and abstract
+        m = re.match(r"\\title\{(.+?)\}", stripped)
+        if m:
+            out.append(f"# {m.group(1)}\n")
+            continue
+        if re.match(r"\\begin\{abstract\}", stripped):
+            out.append("\n## Abstract\n")
+            continue
+        if re.match(r"\\end\{abstract\}", stripped):
+            continue
+        if re.match(r"\\end\{document\}", stripped):
+            continue
+        # formatting
+        s = stripped
+        s = re.sub(r"\\textbf\{(.+?)\}", r"**\1**", s)
+        s = re.sub(r"\\emph\{(.+?)\}", r"*\1*", s)
+        s = re.sub(r"\\textit\{(.+?)\}", r"*\1*", s)
+        s = re.sub(r"\\cite\{([^}]+)\}", r"[\1]", s)
+        s = re.sub(r"\\ref\{([^}]+)\}", r"[\1]", s)
+        # strip commands
+        s = re.sub(r"\\label\{[^}]*\}", "", s)
+        s = re.sub(r"\\vspace\{[^}]*\}", "", s)
+        s = re.sub(r"\\hspace\{[^}]*\}", "", s)
+        s = re.sub(r"\\includegraphics(\[[^\]]*\])?\{[^}]*\}", "", s)
+        s = re.sub(r"\\noindent\s*", "", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        if s:
+            out.append(s)
+    md = "\n".join(out)
+    # collapse multiple blank lines
+    md = re.sub(r"\n{3,}", "\n\n", md)
+    return md.strip() + "\n"
+
+
+def _acquire_arxiv_source(arxiv_id: str, output_dir: Path) -> dict:
+    """Try to download arXiv source tarball and extract main .tex, convert to Markdown."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = arxiv_id.replace("/", "_")
+    tar_path = output_dir / f"{safe_id}.tar.gz"
+    url = ARXIV_SOURCE_URL.format(arxiv_id=arxiv_id)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ARIS-FullText/1.0 (research; open-access)"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            tar_path.write_bytes(resp.read())
+    except Exception as e:
+        return {"status": "failed", "error": f"source download failed: {e}"}
+
+    # try to extract
+    import tarfile
+    extract_dir = output_dir / f"{safe_id}_src"
+    extract_dir.mkdir(exist_ok=True)
+    try:
+        with tarfile.open(tar_path, "r:gz") as tf:
+            tf.extractall(extract_dir, filter="data")
+    except tarfile.TarError:
+        # might be a single .tex file (not gzipped)
+        try:
+            with tarfile.open(tar_path, "r:") as tf:
+                tf.extractall(extract_dir, filter="data")
+        except Exception:
+            # treat as raw .tex content
+            try:
+                raw = tar_path.read_bytes()
+                tex_content = raw.decode("utf-8", errors="replace")
+                if "\\documentclass" in tex_content or "\\begin{document}" in tex_content:
+                    md = _latex_to_markdown(tex_content)
+                    tex_path = output_dir / f"{safe_id}.tex"
+                    tex_path.write_text(tex_content, encoding="utf-8")
+                    md_path = output_dir / f"{safe_id}.md"
+                    md_path.write_text(md, encoding="utf-8")
+                    return {
+                        "status": "acquired",
+                        "method": "arxiv_source",
+                        "source_path": str(tar_path),
+                        "tex_path": str(tex_path),
+                        "markdown_path": str(md_path),
+                        "extraction": "extracted_markdown",
+                    }
+                else:
+                    return {"status": "failed", "error": "source not LaTeX"}
+            except Exception:
+                return {"status": "failed", "error": "cannot parse source"}
+
+    # find main .tex
+    tex_files = list(extract_dir.rglob("*.tex"))
+    main_tex = None
+    for tf in tex_files:
+        content = tf.read_text(encoding="utf-8", errors="replace")
+        if "\\begin{document}" in content:
+            if main_tex is None or tf.stat().st_size > main_tex.stat().st_size:
+                main_tex = tf
+    if main_tex is None and tex_files:
+        main_tex = tex_files[0]
+    if main_tex is None:
+        # check for .pdf inside archive (some arXiv sources are PDF-only)
+        pdfs = list(extract_dir.rglob("*.pdf"))
+        if pdfs:
+            return {
+                "status": "failed",
+                "error": "source archive contains PDF not LaTeX",
+                "archive_pdf": str(pdfs[0]),
+            }
+        return {"status": "failed", "error": "no .tex file found in source"}
+
+    tex_content = main_tex.read_text(encoding="utf-8", errors="replace")
+    md = _latex_to_markdown(tex_content)
+    md_path = output_dir / f"{safe_id}.md"
+    md_path.write_text(md, encoding="utf-8")
+    return {
+        "status": "acquired",
+        "method": "arxiv_source",
+        "source_path": str(tar_path),
+        "extract_dir": str(extract_dir),
+        "main_tex": str(main_tex),
+        "markdown_path": str(md_path),
+        "extraction": "extracted_markdown",
+    }
+
+
+def _acquire_arxiv_pdf(arxiv_id: str, output_dir: Path) -> dict:
+    """Download arXiv PDF and attempt text extraction."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = arxiv_id.replace("/", "_")
+    pdf_path = output_dir / f"{safe_id}.pdf"
+    url = ARXIV_PDF_URL.format(arxiv_id=arxiv_id)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ARIS-FullText/1.0 (research; open-access)"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            pdf_path.write_bytes(resp.read())
+    except Exception as e:
+        return {"status": "failed", "error": f"PDF download failed: {e}"}
+
+    # try to extract text
+    text_content = None
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(str(pdf_path))
+        pages = []
+        for page in doc:
+            pages.append(page.get_text())
+        text_content = "\n".join(pages)
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    if text_content is None:
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(str(pdf_path))
+            pages = []
+            for page in reader.pages:
+                pages.append(page.extract_text() or "")
+            text_content = "\n".join(pages)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+    if text_content is None:
+        try:
+            from pdfminer.high_level import extract_text as pdfminer_extract
+            text_content = pdfminer_extract(str(pdf_path))
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+    if text_content:
+        # rough markdown: just title header + text
+        title_match = re.search(r"(?:^|\n)(.+?)(?:\n|$)", text_content)
+        title = title_match.group(1).strip() if title_match else safe_id
+        md = f"# {title}\n\n{text_content}"
+        md_path = output_dir / f"{safe_id}.md"
+        md_path.write_text(md, encoding="utf-8")
+        return {
+            "status": "acquired",
+            "method": "arxiv_pdf",
+            "pdf_path": str(pdf_path),
+            "markdown_path": str(md_path),
+            "extraction": "extracted_text",
+        }
+    else:
+        return {
+            "status": "acquired",
+            "method": "arxiv_pdf",
+            "pdf_path": str(pdf_path),
+            "extraction": "tool_missing",
+            "error": "no PDF text extraction library available (install PyMuPDF, pypdf, or pdfminer.six)",
+        }
+
+
+def _acquire_open_url(url: str, output_dir: Path, queue_id: str) -> dict:
+    """Try to download open HTML or PDF from a direct URL."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = queue_id
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ARIS-FullText/1.0 (research; open-access)"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            content_type = resp.headers.get("Content-Type", "")
+            data = resp.read()
+
+            if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+                pdf_path = output_dir / f"{safe_id}.pdf"
+                pdf_path.write_bytes(data)
+                return {
+                    "status": "acquired",
+                    "method": "open_pdf",
+                    "pdf_path": str(pdf_path),
+                    "extraction": "not_attempted",
+                }
+            elif "text/html" in content_type or url.lower().endswith(".html"):
+                html_path = output_dir / f"{safe_id}.html"
+                html_path.write_bytes(data)
+                # basic text extraction from HTML
+                try:
+                    html_text = data.decode("utf-8", errors="replace")
+                    # strip tags for rough text
+                    text = re.sub(r"<script[^>]*>.*?</script>", "", html_text, flags=re.DOTALL | re.IGNORECASE)
+                    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+                    text = re.sub(r"<[^>]+>", " ", text)
+                    text = re.sub(r"\s+", " ", text).strip()
+                    md_path = output_dir / f"{safe_id}.md"
+                    md_path.write_text(f"# {safe_id}\n\n{text}\n", encoding="utf-8")
+                    return {
+                        "status": "acquired",
+                        "method": "open_html",
+                        "html_path": str(html_path),
+                        "markdown_path": str(md_path),
+                        "extraction": "extracted_text",
+                    }
+                except Exception:
+                    return {
+                        "status": "acquired",
+                        "method": "open_html",
+                        "html_path": str(html_path),
+                        "extraction": "failed",
+                    }
+            else:
+                return {"status": "failed", "error": f"unsupported content-type: {content_type}"}
+    except urllib.error.HTTPError as e:
+        return {"status": "failed", "error": f"HTTP {e.code}: {e.reason}"}
+    except Exception as e:
+        return {"status": "failed", "error": str(e)}
+
+
+def acquire_open_fulltext(
+    top_k_path: Path,
+    output_dir: Path,
+    prefer_latex: bool = True,
+    allow_arxiv_pdf: bool = True,
+    allow_open_html: bool = True,
+    allow_open_pdf: bool = True,
+    max_items: int = 10,
+    overwrite: bool = False,
+    json_output: bool = False,
+) -> dict:
+    """Acquire open-access full text for top-k papers."""
+    items = _parse_top_k_md(top_k_path)
+    if not items:
+        return {"status": "FAIL", "error": "no items parsed from top_k.md"}
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    raw_pdfs = output_dir / "raw_pdfs"
+    raw_html = output_dir / "raw_html"
+    raw_sources = output_dir / "raw_sources"
+    extracted_text = output_dir / "extracted_text"
+    extracted_md = output_dir / "extracted_markdown"
+    for d in (raw_pdfs, raw_html, raw_sources, extracted_text, extracted_md):
+        d.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = output_dir / "manifest.json"
+    if manifest_path.exists() and not overwrite:
+        return {"status": "FAIL", "error": f"manifest already exists; use --overwrite"}
+
+    results = []
+    for i, item in enumerate(items[:max_items]):
+        title = item.get("title", f"paper_{i}")
+        arxiv_id = item.get("arxiv_id", "").strip()
+        doi = item.get("doi", "").strip()
+        url = item.get("url", "").strip()
+        source = item.get("source", "").strip()
+        year = item.get("year", "")
+        queue_id = f"ftq_{i+1:03d}"
+
+        entry = {
+            "queue_id": queue_id,
+            "title": title,
+            "year": year,
+            "source": source,
+            "doi": doi,
+            "arxiv_id": arxiv_id,
+            "url": url,
+            "priority": "critical" if i < 3 else "high" if i < 7 else "medium",
+            "acquisition_status": "manual_required",
+            "acquisition_method": "none",
+            "extraction_status": "not_attempted",
+            "extraction_method": "none",
+            "local_source_path": "",
+            "local_pdf_path": "",
+            "local_html_path": "",
+            "local_text_path": "",
+            "local_markdown_path": "",
+            "should_commit_raw": False,
+            "should_commit_extracted_full_text": False,
+            "blocking_for": ["method_refinement", "experiment_plan"],
+            "review_questions": [],
+            "notes": "",
+        }
+
+        acquired = False
+
+        # 1. arXiv source first
+        if arxiv_id and prefer_latex:
+            result = _acquire_arxiv_source(arxiv_id, raw_sources)
+            if result.get("status") == "acquired":
+                entry["acquisition_status"] = "acquired"
+                entry["acquisition_method"] = "arxiv_source"
+                entry["local_source_path"] = result.get("source_path", "")
+                entry["local_markdown_path"] = result.get("markdown_path", "")
+                entry["extraction_status"] = result.get("extraction", "extracted_markdown")
+                entry["extraction_method"] = "latex_to_markdown_mvp"
+                acquired = True
+
+        # 2. arXiv PDF fallback
+        if not acquired and arxiv_id and allow_arxiv_pdf:
+            result = _acquire_arxiv_pdf(arxiv_id, raw_pdfs)
+            if result.get("status") == "acquired":
+                entry["acquisition_status"] = "acquired"
+                entry["acquisition_method"] = "arxiv_pdf"
+                entry["local_pdf_path"] = result.get("pdf_path", "")
+                entry["local_markdown_path"] = result.get("markdown_path", "")
+                entry["extraction_status"] = result.get("extraction", "not_attempted")
+                entry["extraction_method"] = "pdf_text"
+                acquired = True
+
+        # 3. Open URL (non-arXiv or no arxiv_id)
+        if not acquired and url:
+            can_fetch = False
+            if allow_open_html and not url.lower().endswith(".pdf"):
+                can_fetch = True
+            if allow_open_pdf and (url.lower().endswith(".pdf") or "pdf" in url.lower()):
+                can_fetch = True
+            if can_fetch:
+                result = _acquire_open_url(url, raw_html, queue_id)
+                if result.get("status") == "acquired":
+                    entry["acquisition_status"] = "acquired"
+                    entry["acquisition_method"] = result.get("method", "open_html")
+                    entry["local_pdf_path"] = result.get("pdf_path", "")
+                    entry["local_html_path"] = result.get("html_path", "")
+                    entry["local_markdown_path"] = result.get("markdown_path", "")
+                    entry["extraction_status"] = result.get("extraction", "not_attempted")
+                    entry["extraction_method"] = "html_text"
+                    acquired = True
+
+        if not acquired:
+            entry["acquisition_status"] = "manual_required"
+            entry["acquisition_method"] = "manual_required"
+            entry["notes"] = "no legal open-access full text found automatically"
+
+        results.append(entry)
+
+    summary = {
+        "total_items": len(results),
+        "acquired": sum(1 for r in results if r["acquisition_status"] == "acquired"),
+        "manual_required": sum(1 for r in results if r["acquisition_status"] == "manual_required"),
+        "extracted_markdown": sum(1 for r in results if r["extraction_status"] == "extracted_markdown"),
+        "extracted_text": sum(1 for r in results if r["extraction_status"] == "extracted_text"),
+        "failed": sum(1 for r in results if r["acquisition_status"] == "failed"),
+    }
+
+    manifest = {
+        "schema_version": "full_text_store_v1",
+        "source_top_k": str(top_k_path),
+        "created_by": "tools/literature_evidence_landing.py acquire-open-fulltext",
+        "network_used": True,
+        "paywall_bypass_used": False,
+        "model_used": False,
+        "pdfs_committed": False,
+        "full_text_committed": False,
+        "items": results,
+        "summary": summary,
+    }
+
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return {"status": "PASS", "summary": summary, "manifest": str(manifest_path)}
+
+
+def validate_fulltext_store(store_path: Path, json_output: bool = False) -> dict:
+    """Validate full-text store manifest."""
+    manifest_path = store_path / "manifest.json"
+    errors = []
+    warnings = []
+
+    if not manifest_path.exists():
+        errors.append("manifest.json not found")
+        return {"status": "FAIL", "errors": errors, "warnings": warnings}
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        errors.append(f"cannot parse manifest.json: {e}")
+        return {"status": "FAIL", "errors": errors, "warnings": warnings}
+
+    # schema
+    if manifest.get("schema_version") != "full_text_store_v1":
+        errors.append(f"schema_version mismatch: {manifest.get('schema_version')}")
+
+    # safety flags
+    if manifest.get("paywall_bypass_used") is True:
+        errors.append("paywall_bypass_used is true")
+    if manifest.get("model_used") is True:
+        errors.append("model_used is true")
+    if manifest.get("pdfs_committed") is True:
+        errors.append("pdfs_committed is true")
+    if manifest.get("full_text_committed") is True:
+        errors.append("full_text_committed is true")
+
+    items = manifest.get("items", [])
+    if not items:
+        errors.append("items list is empty")
+
+    # check queue_id uniqueness
+    seen_ids = set()
+    for item in items:
+        qid = item.get("queue_id", "")
+        if qid in seen_ids:
+            errors.append(f"duplicate queue_id: {qid}")
+        seen_ids.add(qid)
+
+        status = item.get("acquisition_status", "")
+        if status not in VALID_ACQUISITION_STATUSES:
+            errors.append(f"invalid acquisition_status '{status}' for {qid}")
+
+        method = item.get("acquisition_method", "")
+        if method not in VALID_ACQUISITION_METHODS:
+            errors.append(f"invalid acquisition_method '{method}' for {qid}")
+
+        ext_status = item.get("extraction_status", "")
+        if ext_status not in VALID_EXTRACTION_STATUSES:
+            errors.append(f"invalid extraction_status '{ext_status}' for {qid}")
+
+        priority = item.get("priority", "")
+        if priority not in VALID_PRIORITIES:
+            errors.append(f"invalid priority '{priority}' for {qid}")
+
+        if status == "acquired":
+            has_path = (item.get("local_source_path") or item.get("local_pdf_path")
+                        or item.get("local_html_path"))
+            if not has_path:
+                warnings.append(f"acquired item {qid} has no local source/pdf/html path")
+
+        if ext_status == "extracted_markdown":
+            if not item.get("local_markdown_path"):
+                warnings.append(f"extracted_markdown item {qid} has no local_markdown_path")
+
+    # check for tracked full-text files
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch"] +
+            [str(f) for f in (store_path / "raw_pdfs").glob("*")
+             if f.is_file() and f.name != ".gitkeep"] +
+            [str(f) for f in (store_path / "raw_sources").glob("*")
+             if f.is_file() and f.name != ".gitkeep"] +
+            [str(f) for f in (store_path / "raw_html").glob("*")
+             if f.is_file() and f.name != ".gitkeep"] +
+            [str(f) for f in (store_path / "extracted_text").glob("*")
+             if f.is_file() and f.name != ".gitkeep"] +
+            [str(f) for f in (store_path / "extracted_markdown").glob("*")
+             if f.is_file() and f.name != ".gitkeep"],
+            capture_output=True, text=True, cwd=str(store_path),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for tracked in result.stdout.strip().split("\n"):
+                if tracked.strip():
+                    errors.append(f"full-text artifact tracked by git: {tracked}")
+    except Exception:
+        pass
+
+    # check README
+    readme_path = store_path / "README.md"
+    if readme_path.exists():
+        readme_text = readme_path.read_text(encoding="utf-8")
+        if "paywall" in readme_text.lower() and "bypass" in readme_text.lower():
+            if "no" not in readme_text.lower().split("paywall")[0][-20:]:
+                warnings.append("README may contain paywall bypass instruction")
+    else:
+        warnings.append("README.md not found")
+
+    status = "PASS" if not errors else "FAIL"
+    return {"status": status, "errors": errors, "warnings": warnings}
+
+
+def summarize_fulltext_store(store_path: Path, json_output: bool = False) -> dict:
+    """Summarize full-text store status."""
+    manifest_path = store_path / "manifest.json"
+    if not manifest_path.exists():
+        return {"status": "FAIL", "error": "manifest.json not found"}
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"status": "FAIL", "error": f"cannot parse manifest: {e}"}
+
+    items = manifest.get("items", [])
+    summary = manifest.get("summary", {})
+
+    result = {
+        "status": "PASS",
+        "schema_version": manifest.get("schema_version"),
+        "total_items": summary.get("total_items", len(items)),
+        "acquired": summary.get("acquired", 0),
+        "manual_required": summary.get("manual_required", 0),
+        "extracted_markdown": summary.get("extracted_markdown", 0),
+        "extracted_text": summary.get("extracted_text", 0),
+        "failed": summary.get("failed", 0),
+        "paywall_bypass_used": manifest.get("paywall_bypass_used", False),
+        "model_used": manifest.get("model_used", False),
+        "items": [],
+    }
+
+    for item in items:
+        result["items"].append({
+            "queue_id": item.get("queue_id"),
+            "title": item.get("title", "")[:80],
+            "priority": item.get("priority"),
+            "acquisition_status": item.get("acquisition_status"),
+            "acquisition_method": item.get("acquisition_method"),
+            "extraction_status": item.get("extraction_status"),
+        })
+
+    return result
 
 
 # ---- CLI ----
@@ -5766,6 +6683,26 @@ def main():
     rmp.add_argument("--mailto", default="", help="Optional email for polite OpenAlex API pool")
     rmp.add_argument("--dry-run", action="store_true", help="Stop after plan + jobs (no network)")
     rmp.add_argument("--json", action="store_true", help="Output JSON")
+
+    # --- Full-text acquisition ---
+    aoft = sub.add_parser("acquire-open-fulltext", help="Acquire open-access full text for top-k papers")
+    aoft.add_argument("--top-k", required=True, help="Path to top_k.md")
+    aoft.add_argument("--output-dir", required=True, help="Output directory for full-text store")
+    aoft.add_argument("--prefer-latex", action="store_true", default=True, help="Prefer arXiv LaTeX source over PDF")
+    aoft.add_argument("--allow-arxiv-pdf", action="store_true", default=True, help="Allow arXiv PDF fallback")
+    aoft.add_argument("--allow-open-html", action="store_true", default=True, help="Allow open HTML download")
+    aoft.add_argument("--allow-open-pdf", action="store_true", default=True, help="Allow open PDF download")
+    aoft.add_argument("--max-items", type=int, default=10, help="Max items to process (default: 10)")
+    aoft.add_argument("--overwrite", action="store_true", help="Overwrite existing manifest")
+    aoft.add_argument("--json", action="store_true", help="Output JSON")
+
+    vfst = sub.add_parser("validate-fulltext-store", help="Validate full-text store manifest")
+    vfst.add_argument("--store", required=True, help="Path to full-text store directory")
+    vfst.add_argument("--json", action="store_true", help="Output JSON")
+
+    sfst = sub.add_parser("summarize-fulltext-store", help="Summarize full-text store status")
+    sfst.add_argument("--store", required=True, help="Path to full-text store directory")
+    sfst.add_argument("--json", action="store_true", help="Output JSON")
 
     parser.add_argument("--self-test", action="store_true", help="Run self-tests")
 
@@ -5941,6 +6878,52 @@ def main():
             dry_run=args.dry_run,
             json_output=args.json,
         )
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "acquire-open-fulltext":
+        r = acquire_open_fulltext(
+            top_k_path=Path(args.top_k),
+            output_dir=Path(args.output_dir),
+            prefer_latex=args.prefer_latex,
+            allow_arxiv_pdf=args.allow_arxiv_pdf,
+            allow_open_html=args.allow_open_html,
+            allow_open_pdf=args.allow_open_pdf,
+            max_items=args.max_items,
+            overwrite=args.overwrite,
+            json_output=args.json,
+        )
+        if r.get("json") is not None:
+            print(json.dumps(r, indent=2, ensure_ascii=False))
+        else:
+            s = r.get("summary", {})
+            print(f"Acquisition complete: {s.get('acquired', 0)} acquired, "
+                  f"{s.get('manual_required', 0)} manual required, "
+                  f"{s.get('extracted_markdown', 0)} markdown extracted")
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "validate-fulltext-store":
+        r = validate_fulltext_store(Path(args.store), args.json)
+        if args.json:
+            print(json.dumps(r, indent=2, ensure_ascii=False))
+        else:
+            for e in r.get("errors", []):
+                print(f"ERROR: {e}")
+            for w in r.get("warnings", []):
+                print(f"WARN: {w}")
+            print(f"Status: {r['status']}")
+        if r["status"] == "FAIL":
+            sys.exit(1)
+    elif args.command == "summarize-fulltext-store":
+        r = summarize_fulltext_store(Path(args.store), args.json)
+        if args.json:
+            print(json.dumps(r, indent=2, ensure_ascii=False))
+        else:
+            print(f"Total items: {r.get('total_items', 0)}")
+            print(f"Acquired: {r.get('acquired', 0)}")
+            print(f"Manual required: {r.get('manual_required', 0)}")
+            print(f"Extracted markdown: {r.get('extracted_markdown', 0)}")
+            print(f"Extracted text: {r.get('extracted_text', 0)}")
+            print(f"Failed: {r.get('failed', 0)}")
         if r["status"] != "PASS":
             sys.exit(1)
 

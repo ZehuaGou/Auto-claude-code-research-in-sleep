@@ -10,6 +10,8 @@
 
 A schema-level interface definition for source adapters that execute search jobs against real APIs. OpenAlex, arXiv, and Crossref adapters are now implemented. Semantic Scholar adapter is planned. The interface provides no-network validation and normalization tools for all adapter output.
 
+Source adapters provide **metadata only** (title, authors, abstract, DOI, etc.). Full-text acquisition is handled separately by the `acquire-open-fulltext` command, which downloads arXiv LaTeX source, arXiv PDF, or open HTML/PDF for papers in the top-k evidence.
+
 ---
 
 ## Source Adapters

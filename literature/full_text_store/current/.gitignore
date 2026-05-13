@@ -1,0 +1,13 @@
+# Ignore downloaded full-text artifacts (local-only, never committed)
+raw_pdfs/*
+raw_html/*
+raw_sources/*
+extracted_text/*
+extracted_markdown/*
+
+# Keep directory structure
+!raw_pdfs/.gitkeep
+!raw_html/.gitkeep
+!raw_sources/.gitkeep
+!extracted_text/.gitkeep
+!extracted_markdown/.gitkeep

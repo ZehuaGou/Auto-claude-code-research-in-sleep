@@ -95,7 +95,7 @@ Gaps:
 
 ### Literature Layer
 
-**Status: MVP COMPLETE — multi-source (Phase 20)**
+**Status: MVP COMPLETE — multi-source + full-text acquisition (Phase 20 + 21A)**
 
 Completed:
 - OpenAlex adapter (`openalex_fetch.py`)
@@ -109,17 +109,19 @@ Completed:
 - Relevance scoring with domain negatives
 - Dedup by normalized title + year tolerance
 - Cross-source dedup (DOI, arXiv ID, normalized title)
+- Open-access full-text acquisition MVP (Phase 21A): arXiv LaTeX source, arXiv PDF, open HTML/PDF
+- LaTeX-to-Markdown extraction (rough conversion)
+- Full-text store with manifest, queue, review notes, .gitignore
 - Repair queue (`LITERATURE_REPAIR_QUEUE.md`)
 - Operator guide (`LITERATURE_LAYER_OPERATOR_GUIDE.md`)
 - `validate_literature_evidence.py` precheck
 
 Gaps:
 - Semantic Scholar deferred (LRQ-016)
-- No full-text acquisition (LRQ-005)
-- No paper parsing
+- Full-text review of closest prior work pending (LRQ-018)
 - No citation graph / ranking (LRQ-008)
-- No manual PDF parsing loop
 - Keyword scoring not semantic (LRQ-003)
+- experiment_plan blocked until critical paper reviews completed
 
 ### Status Tracking Layer
 
@@ -140,7 +142,7 @@ Gaps:
 | raw_user_input | Manual file creation | N/A | N/A | No auto-save from CLI | Implement in CLI |
 | input_normalization | Workflow config exists, model executed | Yes | Good (DeepSeek Flash) | No trusted output in current run | Re-run if needed |
 | research_contract | Workflow config exists, model executed, trusted output exists | Yes | Good (DeepSeek Pro) | Complete | Ready |
-| literature evidence acquisition | Multi-source pipeline complete (arXiv+Crossref+OpenAlex), top_k exists | Yes | Improved (3 sources, metadata only, no full text) | No full text, Semantic Scholar deferred | Multi-source done (Phase 20) |
+| literature evidence acquisition | Multi-source pipeline complete (arXiv+Crossref+OpenAlex), top_k exists, full-text acquisition MVP (Phase 21A) | Yes | Improved (3 sources, metadata + open-access full text for 10 papers) | Full-text review pending, Semantic Scholar deferred | Phase 21A done; review closest prior work |
 | literature_search | Trusted output exists | Yes | Bounded by OpenAlex only | Single source | Ready for current scope |
 | novelty_check | Trusted output exists, contract-enforced | Yes | Insufficient_evidence (OpenAlex only, no full text) | Needs broader search for strong claims | Ready for risk assessment |
 | method_refinement | Trusted output refreshed (Phase 20B), contract-enforced, validator PASS | Yes | evidence-bounded (needs_more_literature_evidence, multi-source) | readiness gate: needs_more_literature_evidence — blocked from experiment_plan | Refreshed with multi-source evidence; full-text verification of closest prior work needed |
@@ -160,10 +162,10 @@ Gaps:
 | One-command user experience | Section 5 | PARTIAL — dry-run planner exists, but live one-command execution is not implemented |
 | Skill specs for all stages | Section 6 | Partial (contracts only) |
 | Multi-source search | Section 8.3 | IMPLEMENTED (Phase 20) — arXiv + Crossref + OpenAlex |
-| Full-text acquisition | Section 8.8 | Not implemented |
-| Paper parsing | Section 8.9 | Not implemented |
-| Literature material store | Section 8.10 | Partial (search_runs only) |
-| Manual acquisition workflow | Section 8.8 | Not implemented |
+| Full-text acquisition | Section 8.8 | PARTIAL (Phase 21A) — open-access arXiv source/PDF + open HTML/PDF; no paywall bypass |
+| Paper parsing | Section 8.9 | PARTIAL (Phase 21A) — rough LaTeX-to-Markdown extraction; PDF text extraction needs library |
+| Literature material store | Section 8.10 | Partial (search_runs + full_text_store) |
+| Manual acquisition workflow | Section 8.8 | PARTIAL (Phase 21A) — manual queue created for papers without legal automatic access |
 | Method refinement stage | Section 12 | IMPLEMENTED (Phase 19) |
 | Status tracking | Section 12.10 | Mostly complete (Phase 18A/B/C) |
 | Core workflow tests | Section 9 | Limited (LRQ-010) |

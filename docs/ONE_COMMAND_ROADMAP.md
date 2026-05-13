@@ -9,6 +9,8 @@
 
 **Phase 20B Status:** IMPLEMENTED — forbidden-token `confirmed_novel` removed from top_k generator. Trusted stages refreshed via trusted_role_runner: literature_search (deepseek-v4-flash, call_1aa9746795ae), novelty_check (deepseek-v4-pro, call truncated but file written), method_refinement (deepseek-v4-pro, needs_more_literature_evidence). experiment_plan remains blocked. Full-text verification of closest prior work (ICR Probe, INSIDE, Unsupervised Real-Time Detection) required before readiness gate can advance.
 
+**Phase 21A Status:** IMPLEMENTED — open-access full-text acquisition MVP. 10/10 top-k papers acquired (5 arxiv_source, 1 arxiv_pdf, 4 open_html). 4 extracted_markdown, 5 extracted_text, 1 tool_missing (no PDF extraction library). No paywall bypass. No committed PDFs/full text. Full-text store with manifest, queue, review notes. 80 self-tests pass. experiment_plan remains blocked until human review of closest prior work completes (Phase 21B).
+
 ---
 
 ## 1. Goal
@@ -234,11 +236,25 @@ Phase 18A is implemented. See Phase 18A/B below.
 - Semantic Scholar deferred (aggressive rate limits)
 - Estimated: 3 days — DONE
 
-### Phase 21 — Full-text / Manual Acquisition MVP
-- Manual acquisition queue
-- User PDF drop directory
-- Basic parser (sections extraction)
-- Estimated: 3 days
+### Phase 21A — Open-access Full-text Acquisition + Markdown Extraction MVP
+- arXiv LaTeX source download and extraction
+- arXiv PDF fallback with text extraction
+- Open HTML/PDF download for non-arXiv papers
+- LaTeX-to-Markdown rough conversion
+- Full-text store with manifest, queue, review notes
+- Manual queue for papers without legal automatic access
+- 80 self-tests pass
+- Estimated: 3 days — DONE
+
+### Phase 21B — Full-text Review + Trusted Stage Rerun (future)
+- Human review of closest prior work (ICR Probe, INSIDE, Unsupervised Real-Time Detection)
+- Update review_notes.md with findings
+- Rerun trusted stages (literature_search, novelty_check, method_refinement)
+- Advance readiness gate if reviews confirm gap
+
+### Phase 21C — experiment_plan Unblocked (future)
+- Only after Phase 21B completes and readiness gate advances
+- experiment_plan stage execution
 
 ---
 

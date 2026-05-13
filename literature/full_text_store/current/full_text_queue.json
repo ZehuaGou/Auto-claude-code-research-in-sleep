@@ -1,0 +1,117 @@
+{
+  "schema_version": "full_text_queue_v1",
+  "source_top_k": "literature/search_runs/current/top_k.md",
+  "created_by": "tools/literature_evidence_landing.py acquire-open-fulltext",
+  "items": [
+    {
+      "queue_id": "ftq_001",
+      "title": "Probabilistic distances-based hallucination detection in LLMs with RAG",
+      "year": "2025",
+      "source": "arxiv",
+      "arxiv_id": "2506.09886",
+      "doi": "",
+      "priority": "critical",
+      "acquisition_status": "manual_required",
+      "notes": "acquisition not yet attempted"
+    },
+    {
+      "queue_id": "ftq_002",
+      "title": "Lookback Lens: Detecting and Mitigating Contextual Hallucinations in Large Language Models Using Only Attention Maps",
+      "year": "2024",
+      "source": "openalex",
+      "arxiv_id": "",
+      "doi": "10.18653/v1/2024.emnlp-main.84",
+      "priority": "critical",
+      "acquisition_status": "manual_required",
+      "notes": "acquisition not yet attempted"
+    },
+    {
+      "queue_id": "ftq_003",
+      "title": "INSIDE: LLMs' Internal States Retain the Power of Hallucination Detection",
+      "year": "2024",
+      "source": "arxiv",
+      "arxiv_id": "2402.03744",
+      "doi": "",
+      "priority": "critical",
+      "acquisition_status": "manual_required",
+      "notes": "acquisition not yet attempted"
+    },
+    {
+      "queue_id": "ftq_004",
+      "title": "LLMs Know More Than They Show: On the Intrinsic Representation of LLM Hallucinations",
+      "year": "2024",
+      "source": "openalex",
+      "arxiv_id": "",
+      "doi": "10.48550/arxiv.2410.02707",
+      "priority": "high",
+      "acquisition_status": "manual_required",
+      "notes": "acquisition not yet attempted"
+    },
+    {
+      "queue_id": "ftq_005",
+      "title": "Weakly Supervised Distillation of Hallucination Signals into Transformer Representations",
+      "year": "2026",
+      "source": "arxiv",
+      "arxiv_id": "2604.06277",
+      "doi": "",
+      "priority": "high",
+      "acquisition_status": "manual_required",
+      "notes": "acquisition not yet attempted"
+    },
+    {
+      "queue_id": "ftq_006",
+      "title": "ICR Probe: Tracking Hidden State Dynamics for Reliable Hallucination Detection in LLMs",
+      "year": "2025",
+      "source": "arxiv",
+      "arxiv_id": "2507.16488",
+      "doi": "",
+      "priority": "high",
+      "acquisition_status": "manual_required",
+      "notes": "acquisition not yet attempted"
+    },
+    {
+      "queue_id": "ftq_007",
+      "title": "Detection of LLM Hallucinations Using Late Internal Representations",
+      "year": "2025",
+      "source": "crossref",
+      "arxiv_id": "",
+      "doi": "10.1109/icmla66185.2025.00214",
+      "priority": "high",
+      "acquisition_status": "manual_required",
+      "notes": "acquisition not yet attempted"
+    },
+    {
+      "queue_id": "ftq_008",
+      "title": "Hallucination Detection with the Internal Layers of LLMs",
+      "year": "2025",
+      "source": "arxiv",
+      "arxiv_id": "2509.14254",
+      "doi": "",
+      "priority": "medium",
+      "acquisition_status": "manual_required",
+      "notes": "acquisition not yet attempted"
+    },
+    {
+      "queue_id": "ftq_009",
+      "title": "MixHD: A Method for Detecting Hallucinations Based on the Internal State and Output Probability of Large Language Models",
+      "year": "2025",
+      "source": "openalex",
+      "arxiv_id": "",
+      "doi": "10.1109/icassp49660.2025.10889328",
+      "priority": "medium",
+      "acquisition_status": "manual_required",
+      "notes": "acquisition not yet attempted"
+    },
+    {
+      "queue_id": "ftq_010",
+      "title": "Unsupervised Real-Time Hallucination Detection based on the Internal States of Large Language Models",
+      "year": "2024",
+      "source": "openalex",
+      "arxiv_id": "",
+      "doi": "10.48550/arxiv.2403.06448",
+      "priority": "medium",
+      "acquisition_status": "manual_required",
+      "notes": "acquisition not yet attempted"
+    }
+  ]
+}

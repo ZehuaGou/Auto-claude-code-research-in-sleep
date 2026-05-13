@@ -22,7 +22,8 @@ This guide documents how to operate the Literature Layer MVP.
 - It does not produce novelty verdicts
 - It does not produce research trusted outputs
 - It does not call models
-- It does not download PDFs
+- It does not bypass paywalls
+- It does not commit PDFs or full extracted text
 - It only prepares auditable literature evidence
 
 ---
@@ -81,7 +82,7 @@ These commands run entirely locally. They validate schemas, generate plans, expa
 
 ### Network commands
 
-These commands call real APIs (OpenAlex, arXiv, Crossref). They do NOT call models and do NOT download PDFs.
+These commands call real APIs (OpenAlex, arXiv, Crossref). They do NOT call models. Full-text acquisition downloads legally accessible open-access content only.
 
 | Command | Purpose |
 |---------|---------|
@@ -93,6 +94,9 @@ These commands call real APIs (OpenAlex, arXiv, Crossref). They do NOT call mode
 | `run-crossref-job` | Execute one Crossref search job |
 | `run-crossref-jobs` | Execute multiple Crossref search jobs |
 | `run-multisource-pipeline` (without `--dry-run`) | Full multi-source pipeline (arXiv+Crossref+OpenAlex) |
+| `acquire-open-fulltext` | Acquire open-access full text (arXiv source/PDF, open HTML/PDF) |
+| `validate-fulltext-store` | Validate full-text store manifest |
+| `summarize-fulltext-store` | Summarize full-text store status |
 
 ---
 
@@ -178,6 +182,49 @@ python tools/literature_evidence_landing.py validate-candidates \
 - Do not bypass rate limits or auth failures
 - Record failures in job_results.jsonl (they are valid execution evidence)
 - Delete tmp run after testing unless explicitly needed
+
+---
+
+## 6. Full-text Acquisition
+
+### Open-access full-text acquisition
+
+Acquire legally accessible full text for top-k papers:
+
+```bash
+python tools/literature_evidence_landing.py acquire-open-fulltext \
+  --top-k literature/search_runs/current/top_k.md \
+  --output-dir literature/full_text_store/current \
+  --prefer-latex --allow-arxiv-pdf --allow-open-html --allow-open-pdf \
+  --max-items 10 --overwrite --json
+```
+
+**Acquisition priority:**
+1. arXiv LaTeX source (preferred — preserves structure, formulas, citations)
+2. arXiv PDF fallback (if source not available)
+3. Open HTML/PDF from direct URL (non-arXiv papers)
+4. Manual queue (if no legal automatic access)
+
+**Where files go:**
+- Downloaded PDFs: `raw_pdfs/` (gitignored)
+- Downloaded HTML: `raw_html/` (gitignored)
+- Downloaded LaTeX sources: `raw_sources/` (gitignored)
+- Extracted text: `extracted_text/` (gitignored)
+- Extracted Markdown: `extracted_markdown/` (gitignored)
+
+**Why gitignored:** Raw downloads and extracted full text are local evidence-support material. They must not be committed to git (copyright, reproducibility, repository size).
+
+**How to manually add missing PDFs:** Place the PDF in `raw_pdfs/<queue_id>.pdf` or `manual_sources/<queue_id>.pdf`, then update `review_notes.md`.
+
+### Validate and summarize store
+
+```bash
+python tools/literature_evidence_landing.py validate-fulltext-store \
+  --store literature/full_text_store/current
+
+python tools/literature_evidence_landing.py summarize-fulltext-store \
+  --store literature/full_text_store/current --json
+```
 
 ---
 
@@ -284,12 +331,13 @@ Literature evidence can later be promoted into the official run directory only u
 
 ## 11. Current Limitations
 
-- **Only OpenAlex adapter implemented** — arXiv, Crossref, Semantic Scholar are planned but not yet available
-- **No PDF download** — full-text acquisition is future work
-- **No full-text parsing** — abstract-only evidence
+- **Semantic Scholar adapter deferred** — aggressive rate limits
+- **Full-text extraction quality is rough** — LaTeX-to-Markdown is conservative, not perfect
+- **PDF text extraction requires library** — PyMuPDF, pypdf, or pdfminer.six for arXiv PDF fallback
 - **No citation graph ranking** — deterministic metadata completeness score only
 - **No trusted reading** — evidence files are raw material, not analyzed conclusions
 - **No novelty verdict** — this layer cannot judge novelty; that belongs to novelty_check stage
+- **experiment_plan remains blocked** — full-text review of closest prior work required before advancing
 
 ---
 

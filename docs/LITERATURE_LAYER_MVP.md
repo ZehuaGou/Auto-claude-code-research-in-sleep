@@ -20,8 +20,11 @@ A schema-level MVP skeleton for the Literature Search & Acquisition Layer. It pr
 - Manual acquisition queue building
 - Run summarization (no network calls)
 - Self-tests (42 tests, tempfile-based, no network)
+- Open-access full-text acquisition MVP (Phase 21A): arXiv LaTeX source, arXiv PDF, open HTML/PDF
+- LaTeX-to-Markdown extraction (rough conversion)
+- Full-text store with manifest, queue, and review notes
 
-This is **not** a full implementation. It has no PDF download, no PDF parsing, no citation dedup/ranking. It now includes real search execution via OpenAlex, arXiv, and Crossref source adapters (Phase 20). It defines the data contracts and validates them.
+This is **not** a full implementation. It has no citation dedup/ranking. It now includes real search execution via OpenAlex, arXiv, and Crossref source adapters (Phase 20) and open-access full-text acquisition with local Markdown extraction (Phase 21A). Generated Markdown is local evidence-support material, not a paper claim. No paywall bypass. No committed PDFs or full text.
 
 ---
 
@@ -253,10 +256,47 @@ Reports: `search_plan_present`, `search_plan_valid`, `search_jobs_present`, `sea
 
 ### --self-test
 
-Runs 70 tempfile-based self-tests covering all commands including query planning, search job expansion, source adapter interface (arXiv/Crossref/OpenAlex), multi-source pipeline, and pipeline smoke command.
+Runs 80 tempfile-based self-tests covering all commands including query planning, search job expansion, source adapter interface (arXiv/Crossref/OpenAlex), multi-source pipeline, pipeline smoke command, and full-text acquisition.
 
 ```bash
 python tools/literature_evidence_landing.py --self-test
+```
+
+### acquire-open-fulltext
+
+Acquires open-access full text for top-k papers. Downloads arXiv LaTeX source (preferred), arXiv PDF (fallback), or open HTML/PDF. Papers that cannot be acquired automatically enter manual queue.
+
+```bash
+python tools/literature_evidence_landing.py acquire-open-fulltext \
+  --top-k literature/search_runs/current/top_k.md \
+  --output-dir literature/full_text_store/current \
+  --prefer-latex \
+  --allow-arxiv-pdf \
+  --allow-open-html \
+  --allow-open-pdf \
+  --max-items 10 \
+  --overwrite \
+  --json
+```
+
+Priority: critical (papers 1-3), high (papers 4-7), medium (papers 8-10).
+
+### validate-fulltext-store
+
+Validates full-text store manifest. Checks schema, safety flags (no paywall bypass, no model used, no committed full text), queue_id uniqueness, status enums, and gitignore rules.
+
+```bash
+python tools/literature_evidence_landing.py validate-fulltext-store \
+  --store literature/full_text_store/current
+```
+
+### summarize-fulltext-store
+
+Summarizes full-text store status: total items, acquired, manual required, extracted markdown/text, failed.
+
+```bash
+python tools/literature_evidence_landing.py summarize-fulltext-store \
+  --store literature/full_text_store/current --json
 ```
 
 ---
@@ -279,12 +319,13 @@ tmp/<run_name>/
 
 ## What This Does NOT Do
 
-- No PDF download or parsing
 - No citation dedup or ranking
 - No model calls
 - No Semantic Scholar adapter (deferred)
 - No trusted execution integration
 - No evidence quality judgment
+- No paywall bypass, Sci-Hub, login scraping, or cookie-based access
+- No committed PDFs or full extracted text (local-only via .gitignore)
 
 ---
 
