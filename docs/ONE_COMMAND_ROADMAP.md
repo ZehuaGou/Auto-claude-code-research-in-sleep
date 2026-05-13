@@ -15,6 +15,10 @@
 
 **Phase 21C Status:** PARTIAL — command support implemented, live PDF review blocked by missing library. extract-fulltext-store command added (PyMuPDF/pypdf/pdfminer.six with graceful tool_missing). acquire-alternative-fulltext command added (arXiv DOI resolver, ACL Anthology DOI resolver). 88 self-tests pass. ftq_002 acquired via ACL Anthology (open_pdf, extraction pending). ftq_004/010 arXiv DOIs resolved but downloads timeout in China. ftq_007/009 IEEE DOIs not auto-resolved (paywall). Store: 4 source_acquired_unreviewed, 2 likely_full_text, 3 metadata_page_only, 1 landing_page_only. Live PDF text extraction requires library installation (pymupdf, pypdf, or pdfminer.six). experiment_plan remains blocked.
 
+**Phase 21D Status:** IMPLEMENTED — collect_more_full_text. ftq_004 (arXiv 2410.02707) and ftq_010 (arXiv 2403.06448) full text acquired and extracted via pypdf (extracted_text/ftq_004.txt: 1635 lines, extracted_text/ftq_010.txt: 1233 lines). Both now reviewable. ftq_007/ftq_009 (IEEE DOIs) confirmed paywall — no legal OA access exists. Store: 4 likely_full_text, 4 source_acquired_unreviewed, 2 manual_required. 90 self-tests pass. experiment_plan remains blocked.
+
+**Phase 21E Status:** IMPLEMENTED — close remaining full-text evidence gaps. ftq_007 (Detection of LLM Hallucinations Using Late Internal Representations, ICMLA 2025) and ftq_009 (MixHD, ICASSP 2025) confirmed fully paywall_blocked after exhaustive legal OA search (arXiv, OpenAlex, Crossref, Semantic Scholar, author pages). No open access exists. Queue and manifest notes cleaned of Sci-Hub references. LRQ-023 added. experiment_plan blocked for current test case due to high_risk_overlap with ICR Probe and two papers behind paywall. This is a regression test case limitation, not a system limitation — the generic system can proceed with any idea that has sufficient literature evidence.
+
 ---
 
 ## 1. Goal
@@ -250,15 +254,24 @@ Phase 18A is implemented. See Phase 18A/B below.
 - 80 self-tests pass
 - Estimated: 3 days — DONE
 
-### Phase 21B — Full-text Review + Trusted Stage Rerun (future)
-- Human review of closest prior work (ICR Probe, INSIDE, Unsupervised Real-Time Detection)
-- Update review_notes.md with findings
-- Rerun trusted stages (literature_search, novelty_check, method_refinement)
-- Advance readiness gate if reviews confirm gap
+### Phase 21B — Full-text Review + Trusted Stage Rerun
+- DONE (Phase 21B implemented)
+- Trusted full-text review via trusted_role_runner
+- Review found high_risk_overlap with ICR Probe (ftq_006)
 
-### Phase 21C — experiment_plan Unblocked (future)
-- Only after Phase 21B completes and readiness gate advances
-- experiment_plan stage execution
+### Phase 21C — PDF Extraction + Alternative Acquisition
+- DONE (command support implemented)
+
+### Phase 21D — collect_more_full_text
+- DONE — ftq_004/ftq_010 extracted, ftq_007/ftq_009 confirmed paywall
+
+### Phase 21E — close remaining evidence gaps
+- DONE — exhaustive OA search confirms no legal open access for ftq_007/ftq_009
+
+### Phase 22 — experiment_plan Unblocked (future)
+- Requires either: (a) resolving paywall papers via institutional access, or (b) choosing a different regression test case with sufficient evidence
+- This is a test case limitation, not a system limitation
+- Generic system can proceed with any idea that has sufficient literature evidence
 
 ---
 

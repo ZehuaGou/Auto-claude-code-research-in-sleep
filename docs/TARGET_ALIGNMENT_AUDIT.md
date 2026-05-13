@@ -95,7 +95,7 @@ Gaps:
 
 ### Literature Layer
 
-**Status: PARTIAL — multi-source + full-text acquisition + status classification + trusted review + PDF extraction command support (Phase 20 + 21A + 21A fix + 21B + 21C). Live PDF review blocked by missing PDF extraction library. experiment_plan remains blocked.**
+**Status: PARTIAL — multi-source + full-text acquisition + status classification + trusted review + PDF extraction (Phase 20 + 21A-C). Phase 21D/E: 8/10 papers reviewable, ftq_007/009 paywall_blocked. full_text_review found high_risk_overlap with ICR Probe. experiment_plan remains blocked for current test case.**
 
 Completed:
 - OpenAlex adapter (`openalex_fetch.py`)
@@ -123,10 +123,11 @@ Completed:
 
 Gaps:
 - Semantic Scholar deferred (LRQ-016)
-- Full-text review of closest prior work pending (LRQ-018)
 - No citation graph / ranking (LRQ-008)
 - Keyword scoring not semantic (LRQ-003)
-- experiment_plan blocked until critical paper reviews completed
+- ftq_007/ftq_009 IEEE paywall fully blocked — no open access exists (LRQ-023)
+- full_text_review found high_risk_overlap with ICR Probe (ftq_006) — current test case blocked from experiment_plan
+- Manual local full-text ingestion not yet supported
 
 ### Status Tracking Layer
 
@@ -148,7 +149,7 @@ Gaps:
 | input_normalization | Workflow config exists, model executed | Yes | Good (DeepSeek Flash) | No trusted output in current run | Re-run if needed |
 | research_contract | Workflow config exists, model executed, trusted output exists | Yes | Good (DeepSeek Pro) | Complete | Ready |
 | literature evidence acquisition | Multi-source pipeline complete (arXiv+Crossref+OpenAlex), top_k exists, full-text acquisition MVP (Phase 21A) | Yes | Improved (3 sources, metadata + open-access full text for 10 papers) | Full-text review pending, Semantic Scholar deferred | Phase 21A done; review closest prior work |
-| literature_search | Trusted output exists | Yes | Bounded by OpenAlex only | Single source | Ready for current scope |
+| literature_search | Trusted output exists | Yes | Bounded by OpenAlex only (original run); multi-source pipeline available but not rerun | Single source in current output | Ready for current scope |
 | novelty_check | Trusted output exists, contract-enforced | Yes | Insufficient_evidence (OpenAlex only, no full text) | Needs broader search for strong claims | Ready for risk assessment |
 | method_refinement | Trusted output refreshed (Phase 20B), contract-enforced, validator PASS | Yes | evidence-bounded (needs_more_literature_evidence, multi-source) | readiness gate: needs_more_literature_evidence — blocked from experiment_plan | Refreshed with multi-source evidence; full-text verification of closest prior work needed |
 | experiment_plan | Workflow config exists, no execution | N/A | N/A | Blocked by needs_more_literature_evidence from method_refinement | Wait for more literature evidence |
