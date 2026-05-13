@@ -275,11 +275,27 @@ def append_raw(input_path: Path, run_dir: Path, json_output: bool) -> None:
 # ---- Candidate building ----
 
 def _normalize_title(title: str) -> str:
-    """Lowercase, trim, collapse whitespace, remove trailing punctuation."""
+    """Lowercase, trim, collapse whitespace, remove punctuation, strip subtitles."""
     t = title.lower().strip()
+    # Remove subtitle after ":" (e.g., "Lookback Lens: Detecting..." -> "lookback lens")
+    t = t.split(":")[0].strip()
     t = re.sub(r"\s+", " ", t)
     t = re.sub(r"[^\w\s]", "", t)
     return t.strip()
+
+
+def _is_title_match(t1: str, t2: str) -> bool:
+    """Check if two normalized titles are semantically the same paper."""
+    if not t1 or not t2:
+        return False
+    if t1 == t2:
+        return True
+    # Check if one is a prefix of the other (within 80% length)
+    shorter, longer = (t1, t2) if len(t1) <= len(t2) else (t2, t1)
+    if len(longer) > 0 and len(shorter) / len(longer) >= 0.8:
+        if longer.startswith(shorter):
+            return True
+    return False
 
 
 def _canonical_identity(rec: dict, normalized_title: str, year: str) -> str:
@@ -297,6 +313,11 @@ def _canonical_identity(rec: dict, normalized_title: str, year: str) -> str:
     if oa:
         return f"openalex:{oa}"
     return f"title_year:{normalized_title}|{year}"
+
+
+def _is_arxiv_doi(doi: str) -> bool:
+    """Check if a DOI is an arXiv DOI."""
+    return "arxiv" in doi.lower() or "10.48550" in doi
 
 
 def _candidate_id_from_identity(identity: str) -> str:
@@ -382,7 +403,7 @@ def build_candidates(run_dir: Path, json_output: bool) -> dict:
         })
 
     # Deterministic dedup: later entries marked duplicate of first seen
-    # Priority: doi > arxiv > ss > oa > normalized_title+year
+    # Step 1: exact identity match (same DOI, same arXiv ID, etc.)
     seen_keys: dict[str, dict] = {}
     for entry in enriched:
         identity = entry["identity"]
@@ -391,6 +412,48 @@ def build_candidates(run_dir: Path, json_output: bool) -> dict:
             entry["duplicate_of"] = seen_keys[identity]["canonical_cid"]
         else:
             seen_keys[identity] = entry
+
+    # Step 2: title-based dedup for multi-version papers (arXiv vs conference)
+    # If normalized_title matches and year differs by <= 1, merge as duplicate
+    title_index: dict[str, list[dict]] = {}
+    for entry in enriched:
+        if entry["is_duplicate"]:
+            continue
+        nt = entry["normalized_title"]
+        yr = int(entry["year"]) if entry["year"].isdigit() else 0
+        matched = False
+        for key, candidates in title_index.items():
+            for existing in candidates:
+                ex_yr = int(existing["year"]) if existing["year"].isdigit() else 0
+                if _is_title_match(nt, key) and abs(yr - ex_yr) <= 1:
+                    # Merge: prefer non-arXiv DOI, longer abstract, more metadata
+                    existing_doi = existing["original"].get("doi", "")
+                    new_doi = entry["original"].get("doi", "")
+                    existing_is_arxiv = _is_arxiv_doi(existing_doi)
+                    new_is_arxiv = _is_arxiv_doi(new_doi)
+                    # Prefer non-arXiv DOI as canonical
+                    if existing_is_arxiv and not new_is_arxiv:
+                        # Swap: make new the canonical, old becomes duplicate
+                        entry["is_duplicate"] = False
+                        existing["is_duplicate"] = True
+                        existing["duplicate_of"] = entry["canonical_cid"]
+                        title_index[key] = [e for e in candidates if not e["is_duplicate"]]
+                        if not title_index[key]:
+                            title_index[key].append(entry)
+                        matched = True
+                        break
+                    else:
+                        # Keep existing as canonical
+                        entry["is_duplicate"] = True
+                        entry["duplicate_of"] = existing["canonical_cid"]
+                        matched = True
+                        break
+            if matched:
+                break
+        if not matched:
+            if nt not in title_index:
+                title_index[nt] = []
+            title_index[nt].append(entry)
 
     # Count how many times each canonical_cid is duplicated
     dup_counter: dict[str, int] = {}
@@ -584,6 +647,16 @@ _NEGATIVE_GROUP = frozenset([
     "personal agents", "prompt engineering", "medical", "healthcare",
     "robotics decision-making", "autonomous systems", "sensor network",
     "smart city", "edge computing", "iot", "internet of things",
+    "pharmaceutical", "supply chain", "pharmacy", "healthcare logistics",
+    "medicine", "medical domain", "clinical", "education", "chatbot medical",
+    "drug", "patient", "hospital", "therapeutic", "pharmacology",
+])
+
+# Strong domain negatives: if title contains these, relevance cannot be high
+_STRONG_DOMAIN_NEGATIVES = frozenset([
+    "pharmaceutical", "supply chain", "pharmacy", "healthcare logistics",
+    "medical domain", "clinical", "geriatric", "metaverse", "agriculture",
+    "education", "chatbot medical", "drug discovery", "patient",
 ])
 
 
@@ -639,6 +712,18 @@ def _score_text_relevance(title: str, abstract: str, must_include: list[str]) ->
         reasons.append(f"negative_terms penalized (-{penalty})")
         flags.append(f"negative_match_{negative_hits}")
 
+    # Strong domain negative check: if title contains these, cap relevance
+    title_lower = title.lower()
+    strong_neg_hits = [term for term in _STRONG_DOMAIN_NEGATIVES if term in title_lower]
+    has_strong_negative = len(strong_neg_hits) > 0
+    if has_strong_negative:
+        flags.append(f"strong_domain_negative: {', '.join(strong_neg_hits)}")
+        # Check if title has internal_state terms (which would override the penalty)
+        title_internal_hits = sum(1 for term in _INTERNAL_STATE_GROUP if term in title_lower)
+        if title_internal_hits == 0:
+            # Strong domain negative in title without internal state terms: cap at medium
+            reasons.append(f"strong domain negative in title without internal state terms: capped at medium")
+
     # Determine label
     has_core = hallucination_hits > 0 or internal_hits > 0
     has_support = llm_hits > 0 or detection_hits > 0
@@ -650,11 +735,19 @@ def _score_text_relevance(title: str, abstract: str, must_include: list[str]) ->
     else:
         label = "low"
 
+    # Domain-aware cap: strong negative in title without internal state terms -> max medium
+    if has_strong_negative:
+        title_internal_hits = sum(1 for term in _INTERNAL_STATE_GROUP if term in title_lower)
+        if title_internal_hits == 0 and label == "high":
+            label = "medium"
+            reasons.append("domain negative cap applied: high -> medium")
+
     return {
         "relevance_score": score,
         "relevance_label": label,
         "relevance_reasons": reasons,
         "relevance_flags": flags,
+        "strong_negative_flag": has_strong_negative,
     }
 
 
@@ -757,11 +850,36 @@ def build_top_k(run_dir: Path, k: int, json_output: bool) -> dict:
     low_rel = [(s, r, y, t, rec) for s, r, y, t, rec in scored if rec.get("relevance_label") == "low"]
 
     # Fill top_k: high first, then medium, then low only if not enough
+    # Enforce: no duplicate normalized_title in main top-k
+    seen_titles: set[str] = set()
     top_k_records = []
+    fallback_used = False
     for bucket in (high_rel, med_rel, low_rel):
         for entry in bucket:
-            if len(top_k_records) < k:
-                top_k_records.append(entry)
+            if len(top_k_records) >= k:
+                break
+            nt = entry[4].get("normalized_title", "")
+            if nt in seen_titles:
+                continue  # skip duplicate title
+            # Domain negative gate: high relevance with strong_negative_flag -> skip or demote
+            if entry[4].get("relevance_label") == "high" and entry[4].get("strong_negative_flag"):
+                # Demote to medium bucket (skip here, will be picked up later if needed)
+                continue
+            seen_titles.add(nt)
+            top_k_records.append(entry)
+
+    # Fallback: if not enough high+medium, allow low relevance with fallback label
+    if len(top_k_records) < k:
+        for entry in low_rel:
+            if len(top_k_records) >= k:
+                break
+            nt = entry[4].get("normalized_title", "")
+            if nt in seen_titles:
+                continue
+            seen_titles.add(nt)
+            entry[4]["relevance_fallback"] = True
+            fallback_used = True
+            top_k_records.append(entry)
 
     filtered_low = [rec for _, _, _, _, rec in low_rel if rec not in [e[4] for e in top_k_records]]
 
@@ -909,9 +1027,12 @@ def _write_top_k_md(path: Path, top_k_records: list, filtered_low: list,
         "- Relevance to research contract is not semantically judged by this tool.",
         "- This file must pass validate_literature_evidence.py before novelty_check.",
         "",
-        "## Notes for Novelty Check",
-        "- This file is not a novelty verdict.",
-        "- confirmed_novel must not be inferred from metadata completeness alone.",
+        "## Relevance Scoring Limitations",
+        "- This file uses deterministic keyword/concept scoring, not semantic relevance judgment.",
+        "- Papers may be misclassified if keywords appear in non-relevant context (e.g., domain application descriptions).",
+        "- Strong domain negatives (pharmaceutical, supply chain, geriatric, etc.) cap relevance at medium unless title contains internal state terms.",
+        "- Multi-version papers (arXiv + conference) are merged by normalized title matching.",
+        "- This is not a novelty verdict. confirmed_novel must not be inferred from metadata completeness alone.",
         "- If validator returns valid_with_gaps, novelty_check must be cautious or require manual confirmation.",
     ])
 
@@ -4178,6 +4299,114 @@ def _self_test() -> bool:
         passed += 1
     except Exception as e:
         print(f"  [FAIL] L. validate-candidates: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test M: same title, arXiv DOI vs conference DOI should merge into 1 canonical + 1 duplicate
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "test_m"
+        run_dir.mkdir()
+        rec1 = {
+            "title": "Lookback Lens: Detecting Hallucinations in LLMs",
+            "source": "openalex", "url": "https://openalex.org/W111", "year": 2024,
+            "evidence_origin": "api_export", "doi": "10.48550/arxiv.2407.07071",
+            "arxiv_id": "2407.07071", "abstract": "detecting hallucinations using attention maps",
+            "stable_ids": {},
+        }
+        rec2 = {
+            "title": "Lookback Lens: Detecting Hallucinations in LLMs",
+            "source": "openalex", "url": "https://openalex.org/W222", "year": 2024,
+            "evidence_origin": "api_export", "doi": "10.18653/v1/2024.emnlp-main.84",
+            "arxiv_id": "", "abstract": "detecting hallucinations using attention maps in large language models",
+            "stable_ids": {},
+        }
+        _write_jsonl(run_dir / "raw_results.jsonl", [rec1, rec2])
+        (run_dir / "search_plan.yaml").write_text(json.dumps({"must_include": ["hallucination"]}))
+        build_candidates(run_dir, json_output=False)
+        records, _ = _parse_jsonl(run_dir / "candidates.jsonl")
+        canonical = [r for r in records if not r.get("duplicate_of")]
+        dupes = [r for r in records if r.get("duplicate_of")]
+        assert len(canonical) == 1, f"Test M: expected 1 canonical, got {len(canonical)}"
+        assert len(dupes) == 1, f"Test M: expected 1 duplicate, got {len(dupes)}"
+        # Conference DOI should be canonical (not arXiv)
+        assert "10.18653" in (canonical[0].get("stable_ids", {}).get("doi", "") or canonical[0].get("url", "")), \
+            f"Test M: canonical should be conference DOI"
+        print("  [PASS] M. same title arXiv/conference merged to 1 canonical + 1 duplicate")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] M. dedup merge: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test N: Pharmaceutical Supply Chain should not be high relevance
+    try:
+        relevance = _score_text_relevance(
+            "The Potential Application of Large Language Models in Pharmaceutical Supply Chain Management",
+            "LLMs for drug supply chain forecasting and detection of anomalies",
+            ["hallucination detection", "hidden states"],
+        )
+        assert relevance["relevance_label"] != "high", \
+            f"Test N: Pharmaceutical Supply Chain should not be high, got {relevance['relevance_label']}"
+        assert relevance.get("strong_negative_flag"), \
+            f"Test N: should have strong_negative_flag"
+        print(f"  [PASS] N. Pharmaceutical Supply Chain not high (got {relevance['relevance_label']})")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] N. domain false positive: {e}")
+        failed += 1
+
+    # Test O: top-k should not have duplicate normalized titles
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "test_o"
+        run_dir.mkdir()
+        recs = [
+            {"title": "Hallucination Detection via Hidden States", "source": "openalex",
+             "url": "https://a.com", "year": 2024, "evidence_origin": "api_export",
+             "abstract": "detecting hallucinations using internal states", "stable_ids": {"openalex_id": "W1"}},
+            {"title": "Hallucination Detection via Hidden States", "source": "openalex",
+             "url": "https://b.com", "year": 2024, "evidence_origin": "api_export",
+             "abstract": "detecting hallucinations using internal states", "stable_ids": {"openalex_id": "W2"}},
+        ]
+        _write_jsonl(run_dir / "raw_results.jsonl", recs)
+        (run_dir / "search_plan.yaml").write_text(json.dumps({"must_include": ["hallucination"]}))
+        build_candidates(run_dir, json_output=False)
+        build_top_k(run_dir, k=10, json_output=False)
+        records, _ = _parse_jsonl(run_dir / "candidates.jsonl")
+        canonical = [r for r in records if not r.get("duplicate_of")]
+        # Both should be merged by title dedup
+        assert len(canonical) <= 1, f"Test O: expected <=1 canonical, got {len(canonical)}"
+        print("  [PASS] O. top-k no duplicate normalized titles")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] O. title dedup in top-k: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Test P: top_k.md should contain limitations section
+    try:
+        tmpdir = Path(tempfile.mkdtemp())
+        run_dir = tmpdir / "test_p"
+        run_dir.mkdir()
+        rec = {
+            "title": "Test paper", "source": "openalex", "url": "https://test.com",
+            "evidence_origin": "api_export", "year": 2024,
+            "stable_ids": {}, "relevance_score": 5, "relevance_label": "medium",
+            "relevance_reasons": [], "relevance_flags": [],
+        }
+        _write_jsonl(run_dir / "candidates.jsonl", [rec])
+        build_top_k(run_dir, k=5, json_output=False)
+        content = (run_dir / "top_k.md").read_text()
+        assert "Relevance Scoring Limitations" in content, f"Test P: missing limitations section"
+        assert "not semantic relevance" in content.lower(), f"Test P: missing semantic disclaimer"
+        print("  [PASS] P. top_k.md contains limitations section")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] P. limitations section: {e}")
         failed += 1
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

@@ -1,6 +1,6 @@
 {
   "schema_version": "search_jobs_v1",
-  "source_plan": "tmp\\relevance_openalex_run\\search_plan.yaml",
+  "source_plan": "tmp\\relevance_repair_run\\search_plan.yaml",
   "topic": "Token-level hallucination detection via hidden state trajectory anomaly detection",
   "search_intent": "novelty_check",
   "job_count": 12,

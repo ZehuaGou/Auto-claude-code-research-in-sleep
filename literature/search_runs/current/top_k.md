@@ -8,10 +8,10 @@ Status: populated_by_tool
 - Selection method: deterministic relevance scoring (keyword/concept matching) + metadata completeness + recency
 - Relevance scoring: keyword/concept based only, not semantic judgment
 - Total candidates: 50
-- Canonical candidates: 40
-- Duplicate records: 10
+- Canonical candidates: 39
+- Duplicate records: 11
 - Selected top_k: 10
-- Filtered low-relevance: 22
+- Filtered low-relevance: 25
 - Warning: This file is literature evidence summary, not a novelty verdict.
 
 ## Candidate Papers
@@ -37,26 +37,6 @@ method_or_finding_relevant_to_claim: abstract available; full method not assesse
 evidence_gap: full text not verified; relevance not manually assessed
 
 ### Paper 2
-title: Lookback Lens: Detecting and Mitigating Contextual Hallucinations in Large Language Models Using Only Attention Maps
-authors: ['Yung-Sung Chuang', 'Linlu Qiu', 'Cheng-Yu Hsieh', 'Ranjay Krishna', 'Yoon Kim', 'James Glass']
-year: 2024
-source: openalex
-url: https://openalex.org/W4400519165
-doi: 10.48550/arxiv.2407.07071
-arxiv_id: 
-semantic_scholar_id: 
-openalex_id: W4400519165
-fetched_or_manual: api_export
-full_text_available: unknown
-evidence_strength: medium
-relevance_score: 14
-relevance_label: high
-relevance_reasons: hallucination_group matched (4 terms), llm_group matched (4 terms), internal_state_group matched (2 terms), token_group matched (2 terms), detection_group matched (3 terms), must_include matched (2/5)
-relevance_to_research_contract: not assessed by tool
-method_or_finding_relevant_to_claim: abstract available; full method not assessed
-evidence_gap: full text not verified; relevance not manually assessed
-
-### Paper 3
 title: Semantic Entropy Probes: Robust and Cheap Hallucination Detection in LLMs
 authors: ['Jannik Kossen', 'Jiatong Han', 'Muhammed Razzak', 'Lisa Schut', 'Shreshth A. Malik', 'Yarin Gal']
 year: 2024
@@ -76,7 +56,7 @@ relevance_to_research_contract: not assessed by tool
 method_or_finding_relevant_to_claim: abstract available; full method not assessed
 evidence_gap: full text not verified; relevance not manually assessed
 
-### Paper 4
+### Paper 3
 title: INSIDE: LLMs' Internal States Retain the Power of Hallucination Detection
 authors: ['Chao Chen', 'Kai Liu', 'Ze Chen', 'Yi Gu', 'Yue Wu', 'Mingyuan Tao', 'Zhihang Fu', 'Jieping Ye']
 year: 2024
@@ -96,7 +76,7 @@ relevance_to_research_contract: not assessed by tool
 method_or_finding_relevant_to_claim: abstract available; full method not assessed
 evidence_gap: full text not verified; relevance not manually assessed
 
-### Paper 5
+### Paper 4
 title: LLMs Know More Than They Show: On the Intrinsic Representation of LLM Hallucinations
 authors: ['Hadas Orgad', 'Michael Toker', 'Zorik Gekhman', 'Roi Reichart', 'Idan Szpektor', 'Hadas Kotek', 'Yonatan Belinkov']
 year: 2024
@@ -116,7 +96,7 @@ relevance_to_research_contract: not assessed by tool
 method_or_finding_relevant_to_claim: abstract available; full method not assessed
 evidence_gap: full text not verified; relevance not manually assessed
 
-### Paper 6
+### Paper 5
 title: MixHD: A Method for Detecting Hallucinations Based on the Internal State and Output Probability of Large Language Models
 authors: ['Chuang Li', 'Bingnan Xing', 'Dongdong Huo', 'Qihui Zhou', 'Zhen Xu', 'Yu Wang']
 year: 2025
@@ -136,7 +116,7 @@ relevance_to_research_contract: not assessed by tool
 method_or_finding_relevant_to_claim: abstract available; full method not assessed
 evidence_gap: full text not verified; relevance not manually assessed
 
-### Paper 7
+### Paper 6
 title: Prompt-Guided Internal States for Hallucination Detection of Large Language Models
 authors: ['Fengyi Zhang', 'Peng Yu', 'Biao Yi', 'Baolei Zhang', 'Tong Li', 'Zheli Liu']
 year: 2024
@@ -156,7 +136,7 @@ relevance_to_research_contract: not assessed by tool
 method_or_finding_relevant_to_claim: abstract available; full method not assessed
 evidence_gap: full text not verified; relevance not manually assessed
 
-### Paper 8
+### Paper 7
 title: Unsupervised Real-Time Hallucination Detection based on the Internal States of Large Language Models
 authors: ['Weihang Su', 'Changyue Wang', 'Qingyao Ai', 'Yiran HU', 'Zhijing Wu', 'Yujia Zhou', 'Yiqun Liu']
 year: 2024
@@ -176,27 +156,7 @@ relevance_to_research_contract: not assessed by tool
 method_or_finding_relevant_to_claim: abstract available; full method not assessed
 evidence_gap: full text not verified; relevance not manually assessed
 
-### Paper 9
-title: The Potential Application of Large Language Models in Pharmaceutical Supply Chain Management
-authors: ['David Aguero', 'Scott D. Nelson']
-year: 2024
-source: openalex
-url: https://openalex.org/W4394581225
-doi: 10.5863/1551-6776-29.2.200
-arxiv_id: 
-semantic_scholar_id: 
-openalex_id: W4394581225
-fetched_or_manual: api_export
-full_text_available: unknown
-evidence_strength: medium
-relevance_score: 10
-relevance_label: high
-relevance_reasons: hallucination_group matched (2 terms), llm_group matched (6 terms), internal_state_group matched (3 terms), token_group matched (2 terms), detection_group matched (4 terms), negative_terms penalized (-2)
-relevance_to_research_contract: not assessed by tool
-method_or_finding_relevant_to_claim: abstract available; full method not assessed
-evidence_gap: full text not verified; relevance not manually assessed
-
-### Paper 10
+### Paper 8
 title: HaluGNN: Hallucination detection in large language models using graph neural network
 authors: ['Linggang Kong', 'Yunlong Zhang', 'Xiaofeng Zhong', 'Haoran Fu', 'Yongjie Wang', 'Huijun Liu']
 year: 2025
@@ -216,24 +176,69 @@ relevance_to_research_contract: not assessed by tool
 method_or_finding_relevant_to_claim: 
 evidence_gap: full text not verified; relevance not manually assessed
 
+### Paper 9
+title: SelfCheckGPT: Zero-Resource Black-Box Hallucination Detection for Generative Large Language Models
+authors: ['Potsawee Manakul', 'Adian Liusie', 'Mark Gales']
+year: 2023
+source: openalex
+url: https://openalex.org/W4389520749
+doi: 10.18653/v1/2023.emnlp-main.557
+arxiv_id: 
+semantic_scholar_id: 
+openalex_id: W4389520749
+fetched_or_manual: api_export
+full_text_available: unknown
+evidence_strength: medium
+relevance_score: 8
+relevance_label: high
+relevance_reasons: hallucination_group matched (5 terms), llm_group matched (6 terms), detection_group matched (2 terms), must_include matched (1/5)
+relevance_to_research_contract: not assessed by tool
+method_or_finding_relevant_to_claim: abstract available; full method not assessed
+evidence_gap: full text not verified; relevance not manually assessed
+
+### Paper 10
+title: Detecting hallucinations in large language models using semantic entropy
+authors: ['Sebastian Farquhar', 'Jannik Kossen', 'Lorenz Kuhn', 'Yarin Gal']
+year: 2024
+source: openalex
+url: https://openalex.org/W4399803256
+doi: 10.1038/s41586-024-07421-0
+arxiv_id: 
+semantic_scholar_id: 
+openalex_id: W4399803256
+fetched_or_manual: api_export
+full_text_available: unknown
+evidence_strength: medium
+relevance_score: 7
+relevance_label: high
+relevance_reasons: hallucination_group matched (3 terms), llm_group matched (4 terms), detection_group matched (2 terms)
+relevance_to_research_contract: not assessed by tool
+method_or_finding_relevant_to_claim: abstract available; full method not assessed
+evidence_gap: full text not verified; relevance not manually assessed
+
 ## Duplicate Records
-- Total duplicate records: 10
+- Total duplicate records: 11
   - cand_33f4b1ef657b: 1 duplicate(s)
   - cand_448a60bb6d72: 3 duplicate(s)
   - cand_81a2666d7cb2: 1 duplicate(s)
   - cand_8913187be484: 2 duplicate(s)
   - cand_a0261d69f348: 1 duplicate(s)
   - cand_b888a619a635: 1 duplicate(s)
+  - cand_e082c4f5f29f: 1 duplicate(s)
   - cand_eef32df9a9e0: 1 duplicate(s)
 
 ## Filtered Low-Relevance Candidates
-- Total filtered: 22
+- Total filtered: 25
 - These papers were excluded from top-k due to low relevance score.
 - They remain in candidates.jsonl for completeness.
   - [low, score=3] A Survey of Large Language Models
     reasons: llm_group matched (4 terms), internal_state_group matched (1 terms), negative_terms penalized (-2)
+  - [low, score=3] Large language models (LLMs): survey, technical frameworks, and future challenges
+    reasons: llm_group matched (5 terms), internal_state_group matched (2 terms), negative_terms penalized (-2)
   - [low, score=3] A Metaverse: Taxonomy, Components, Applications, and Open Challenges
-    reasons: internal_state_group matched (1 terms), detection_group matched (1 terms), negative_terms penalized (-2)
+    reasons: internal_state_group matched (1 terms), detection_group matched (1 terms), negative_terms penalized (-2), strong domain negative in title without internal state terms: capped at medium
+  - [low, score=2] Can Open Large Language Models Catch Vulnerabilities?
+    reasons: llm_group matched (5 terms), detection_group matched (3 terms), negative_terms penalized (-2)
   - [low, score=2] Hallucination Detection in Foundation Models for Decision-Making: A Flexible Definition and Review of the State of the Art
     reasons: hallucination_group matched (3 terms), llm_group matched (1 terms), detection_group matched (2 terms), must_include matched (1/5), negative_terms penalized (-6)
   - [low, score=2] A survey on large language model based autonomous agents
@@ -250,35 +255,41 @@ evidence_gap: full text not verified; relevance not manually assessed
     reasons: llm_group matched (4 terms)
   - [low, score=2] Challenges and Applications of Large Language Models
     reasons: llm_group matched (4 terms)
-  - [low, score=2] ChatGPT and large language models in academia: opportunities and challenges
-    reasons: llm_group matched (6 terms)
   - [low, score=2] Generative AI
     reasons: llm_group matched (1 terms)
   - [low, score=2] The Rise and Potential of Large Language Model Based Agents: A Survey
     reasons: llm_group matched (4 terms)
-  - [low, score=1] The future landscape of large language models in medicine
-    reasons: hallucination_group matched (1 terms), llm_group matched (6 terms), negative_terms penalized (-4)
-  - [low, score=0] Toward expert-level medical question answering with large language models
-    reasons: llm_group matched (4 terms), negative_terms penalized (-2)
-  - [low, score=0] Generative Artificial Intelligence in Education: From Deceptive to Disruptive.
   - [low, score=0] Personal LLM Agents: Insights and Survey about the Capability, Efficiency and Security
     reasons: llm_group matched (5 terms), negative_terms penalized (-2)
-  - [low, score=0] ChatDoctor: A Medical Chat Model Fine-Tuned on a Large Language Model Meta-AI (LLaMA) Using Medical Domain Knowledge
-    reasons: llm_group matched (7 terms), negative_terms penalized (-2)
+  - [low, score=0] ChatGPT and large language models in academia: opportunities and challenges
+    reasons: llm_group matched (6 terms), negative_terms penalized (-2)
   - [low, score=0] Consciousness in Artificial Intelligence: Insights from the Science of Consciousness
   - [low, score=0] Unleashing the potential of prompt engineering for large language models
     reasons: llm_group matched (5 terms), negative_terms penalized (-2)
-  - [low, score=-4] A Review on Large Language Models: Architectures, Applications, Taxonomies, Open Issues and Challenges
-    reasons: llm_group matched (5 terms), negative_terms penalized (-6)
-  - [low, score=-6] A comprehensive review of machine learning algorithms and their application in geriatric medicine: present and future
-    reasons: negative_terms penalized (-6)
+  - [low, score=-2] Generative Artificial Intelligence in Education: From Deceptive to Disruptive.
+    reasons: negative_terms penalized (-2), strong domain negative in title without internal state terms: capped at medium
+  - [low, score=-4] Toward expert-level medical question answering with large language models
+    reasons: llm_group matched (4 terms), negative_terms penalized (-6)
+  - [low, score=-4] ChatDoctor: A Medical Chat Model Fine-Tuned on a Large Language Model Meta-AI (LLaMA) Using Medical Domain Knowledge
+    reasons: llm_group matched (7 terms), negative_terms penalized (-6), strong domain negative in title without internal state terms: capped at medium
+  - [low, score=-5] The future landscape of large language models in medicine
+    reasons: hallucination_group matched (1 terms), llm_group matched (6 terms), negative_terms penalized (-10)
+  - [low, score=-6] A Review on Large Language Models: Architectures, Applications, Taxonomies, Open Issues and Challenges
+    reasons: llm_group matched (5 terms), negative_terms penalized (-8)
+  - [low, score=-8] The Potential Application of Large Language Models in Pharmaceutical Supply Chain Management
+    reasons: hallucination_group matched (2 terms), llm_group matched (6 terms), internal_state_group matched (3 terms), token_group matched (2 terms), detection_group matched (4 terms), negative_terms penalized (-20), strong domain negative in title without internal state terms: capped at medium
+  - [low, score=-12] A comprehensive review of machine learning algorithms and their application in geriatric medicine: present and future
+    reasons: negative_terms penalized (-12), strong domain negative in title without internal state terms: capped at medium
 
 ## Evidence Gaps
 - Full text is not verified by this tool.
 - Relevance to research contract is not semantically judged by this tool.
 - This file must pass validate_literature_evidence.py before novelty_check.
 
-## Notes for Novelty Check
-- This file is not a novelty verdict.
-- confirmed_novel must not be inferred from metadata completeness alone.
+## Relevance Scoring Limitations
+- This file uses deterministic keyword/concept scoring, not semantic relevance judgment.
+- Papers may be misclassified if keywords appear in non-relevant context (e.g., domain application descriptions).
+- Strong domain negatives (pharmaceutical, supply chain, geriatric, etc.) cap relevance at medium unless title contains internal state terms.
+- Multi-version papers (arXiv + conference) are merged by normalized title matching.
+- This is not a novelty verdict. confirmed_novel must not be inferred from metadata completeness alone.
 - If validator returns valid_with_gaps, novelty_check must be cautious or require manual confirmation.
