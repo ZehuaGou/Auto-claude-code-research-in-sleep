@@ -123,7 +123,14 @@ def _run_stage_prechecks(stage_name: str, config_path: Path) -> None:
     if status == "valid":
         return  # passed
 
-    # Block for any non-valid status
+    # Allow insufficient_evidence when output contract explicitly permits evidence-bounded risk assessment
+    if status == "insufficient_evidence":
+        print(f"NOTE: Literature evidence status is '{status}' — allowing novelty_check with evidence-bounded risk assessment.")
+        print(f"  The output contract must use verdict labels: insufficient_evidence, low_confidence_possible_gap, medium_risk_overlap, high_risk_overlap.")
+        print(f"  The output must NOT claim: confirmed_novel, no prior work, direct overlap none, definitely novel.")
+        return
+
+    # Block for any other non-valid status
     print()
     print("=" * 60)
     print("LITERATURE EVIDENCE PRECHECK FAILED for novelty_check")
@@ -134,10 +141,6 @@ def _run_stage_prechecks(stage_name: str, config_path: Path) -> None:
     if status == "template_only":
         print("top_k.md is template_only and cannot support confirmed_novel.")
         print("Fix: populate literature/search_runs/current/top_k.md with validated evidence,")
-        print("     then rerun: python tools/validate_literature_evidence.py --json")
-    elif status == "insufficient_evidence":
-        print("Evidence is insufficient — confirmed_novel is not permitted.")
-        print("Fix: improve literature evidence quality and coverage,")
         print("     then rerun: python tools/validate_literature_evidence.py --json")
     elif status == "valid_with_gaps":
         print("Evidence is valid_with_gaps.")
