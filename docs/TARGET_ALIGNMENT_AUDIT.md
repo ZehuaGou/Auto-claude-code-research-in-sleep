@@ -19,14 +19,16 @@ The system is useful but incomplete. The primary gap is user experience: there i
 
 ### Native Command Layer
 
-**Status: PARTIAL (Phase 18A/B implemented)**
+**Status: MOSTLY COMPLETE (Phase 18A/B/C implemented)**
 
-- `tools/research_cli.py` implemented with `status`, `validate`, and `repair-queue` subcommands.
+- `tools/research_cli.py` implemented with `status`, `validate`, `repair-queue`, and `start` subcommands.
+- `start --idea "..." --mode novelty_risk --dry-run` shows full planned workflow (15 stages, 5 validators, 12 outputs, 10 stop conditions).
+- `start` validates: non-empty idea, only novelty_risk mode, --dry-run required (live execution not yet implemented).
 - `status` reads all trusted outputs, aggregates validator results, summarizes evidence, parses repair queue, computes next allowed stage.
 - `validate` runs all checks and exits 0 only if no blocking issues.
 - `repair-queue` parses and displays the full repair queue table.
 - `/status` slash command still via `register_slash_commands.py` + `skills/status/SKILL.md` but research_cli.py provides the core functionality.
-- One-command `start --idea` and `continue --stage` remain future work (Phase 18C/D).
+- One-command `continue --stage` and live `start` remain future work (Phase 18D).
 
 ### Skill Method Layer
 
@@ -150,8 +152,8 @@ Gaps:
 
 | Requirement | Target Section | Current Status |
 |------------|---------------|----------------|
-| Native command layer | Section 5 | Not implemented |
-| One-command user experience | Section 5 | Not implemented |
+| Native command layer | Section 5 | Mostly complete (Phase 18A/B/C) |
+| One-command user experience | Section 5 | Mostly complete (dry-run) |
 | Skill specs for all stages | Section 6 | Partial (contracts only) |
 | Multi-source search | Section 8.3 | Only OpenAlex |
 | Full-text acquisition | Section 8.8 | Not implemented |
@@ -159,7 +161,7 @@ Gaps:
 | Literature material store | Section 8.10 | Partial (search_runs only) |
 | Manual acquisition workflow | Section 8.8 | Not implemented |
 | Method refinement stage | Section 12 | Not in workflow config |
-| Status tracking | Section 12.10 | Partial (research_status.py) |
+| Status tracking | Section 12.10 | Mostly complete (Phase 18A/B/C) |
 | Core workflow tests | Section 9 | Limited (LRQ-010) |
 | Codex MCP route | Section 10.7 | Not usable (self-test failures) |
 | Call age / route drift policy | Section 10 | Needs formal definition |
@@ -170,9 +172,8 @@ Gaps:
 
 | Gap | Classification | Blocking? | Reason | Proposed Fix |
 |-----|---------------|-----------|--------|-------------|
-| Native command missing | near_term_mvp | Yes for usability | User must copy commands manually | Phase 18: research_cli.py |
 | method_refinement missing | fix_now | Yes before experiment_plan | No generic method refinement exists | Phase 19: add workflow stage |
-| Status tracking incomplete | near_term_mvp | Yes for automation | No unified status view | Phase 18A: status command |
+| Status tracking incomplete | near_term_mvp | Was blocking, now mostly done | Phase 18A/B/C implemented | Phase 18A/B/C done |
 | OpenAlex only | repair_queue | No for risk assessment, yes for strong novelty | Single source limits coverage | Phase 20: multi-source bundle |
 | No full text | repair_queue | Yes for strong novelty claims | Evidence is metadata-only | Phase 21: manual acquisition |
 | No paper parsing | repair_queue | Yes for paper writing | Cannot read PDFs programmatically | Phase 21: parser MVP |

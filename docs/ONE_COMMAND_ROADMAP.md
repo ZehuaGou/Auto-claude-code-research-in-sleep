@@ -1,7 +1,7 @@
 # One-Command Trusted Research Automation Roadmap
 
 **Date:** 2026-05-13
-**Phase 18A/B Status:** IMPLEMENTED — `tools/research_cli.py` provides `status`, `validate`, and `repair-queue` commands. No model calls. No network calls. One-command `start` remains future work.
+**Phase 18A/B/C Status:** IMPLEMENTED — `tools/research_cli.py` provides `status`, `validate`, `repair-queue`, and `start --dry-run` commands. No model calls. No network calls. One-command `start --dry-run` plan shows 15 stages, 5 validators, 12 planned outputs, 10 stop conditions. Phase 18D (live start) remains future work.
 
 ---
 
