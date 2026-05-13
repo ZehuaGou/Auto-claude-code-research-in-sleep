@@ -19,12 +19,14 @@ A schema-level MVP skeleton for the Literature Search & Acquisition Layer. It pr
 - Acquisition status schema validation
 - Manual acquisition queue building
 - Run summarization (no network calls)
-- Self-tests (42 tests, tempfile-based, no network)
+- Self-tests (88 tests, tempfile-based, no network)
 - Open-access full-text acquisition MVP (Phase 21A): arXiv LaTeX source, arXiv PDF, open HTML/PDF
 - LaTeX-to-Markdown extraction (rough conversion)
 - Full-text store with manifest, queue, and review notes
+- PDF extraction support (Phase 21C): PyMuPDF/pypdf/pdfminer.six with graceful tool_missing fallback
+- Alternative full-text acquisition (Phase 21C): arXiv DOI resolver, ACL Anthology DOI resolver
 
-This is **not** a full implementation. It has no citation dedup/ranking. It now includes real search execution via OpenAlex, arXiv, and Crossref source adapters (Phase 20) and open-access full-text acquisition with local Markdown extraction (Phase 21A). Generated Markdown is local evidence-support material, not a paper claim. No paywall bypass. No committed PDFs or full text.
+This is **not** a full implementation. It has no citation dedup/ranking. It now includes real search execution via OpenAlex, arXiv, and Crossref source adapters (Phase 20), open-access full-text acquisition with local Markdown extraction (Phase 21A), and alternative full-text acquisition with DOI resolvers (Phase 21C). Generated Markdown is local evidence-support material, not a paper claim. No paywall bypass. No committed PDFs or full text.
 
 ---
 

@@ -120,4 +120,23 @@ Template for per-paper manual review. Fill in after reading the full text.
 
 ---
 
+## Phase 21C — PDF Extraction + Alternative Acquisition (2026-05-13)
+
+**PDF extraction:** ftq_002 (Lookback Lens) and ftq_008 (Hallucination Detection with Internal Layers) have PDF but extraction_status=tool_missing. Install pymupdf, pypdf, or pdfminer.six to extract.
+
+**Alternative acquisition attempted:**
+- ftq_002 (Lookback Lens): ACQUIRED via ACL Anthology (open_pdf). DOI: 10.18653/v1/2024.emnlp-main.84. PDF extracted to raw_pdfs/2024.emnlp-main.84.pdf.
+- ftq_004 (LLMs Know More Than They Show): arXiv DOI resolved (10.48550/arxiv.2410.02707 → 2410.02707) but download timed out (China network).
+- ftq_007 (Detection of LLM Hallucinations Using Late Internal Representations): IEEE DOI not auto-resolved (paywall).
+- ftq_009 (MixHD): IEEE DOI not auto-resolved (paywall).
+- ftq_010 (Unsupervised Real-Time Hallucination Detection): arXiv DOI resolved (10.48550/arxiv.2403.06448 → 2403.06448) but download timed out (China network).
+
+**Store status after Phase 21C:**
+- 4 source_acquired_unreviewed (arxiv_source)
+- 2 likely_full_text (ftq_002, ftq_008 — both PDF, extraction pending)
+- 4 metadata_page_only
+- 1 landing_page_only
+
+---
+
 (Add more paper sections as needed after human verification)

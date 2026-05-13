@@ -26,8 +26,8 @@
       "doi": "10.18653/v1/2024.emnlp-main.84",
       "priority": "critical",
       "acquisition_status": "acquired",
-      "full_text_status": "metadata_page_only",
-      "acquisition_method": "open_html",
+      "full_text_status": "likely_full_text",
+      "acquisition_method": "open_pdf",
       "review_status": "pending",
       "notes": "OpenAlex metadata page, not full text. Need alternative source."
     },

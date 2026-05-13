@@ -13,6 +13,8 @@
 
 **Phase 21B Status:** IMPLEMENTED — trusted full-text review MVP. full_text_review stage added to research_default.yaml. full_text_reviewer role (DS_PRO_HIGH, deepseek-v4-pro). Bounded review input from local extracted materials (22KB). Trusted role runner executed (call_e2a8e48a2d35). Validation PASS. Review found high_risk_overlap with ICR Probe (ftq_006). 4/10 papers reviewable, 5/10 not reviewable (metadata/landing page only), 1/10 PDF extraction pending. Readiness: needs_more_full_text_acquisition. Next: collect_more_full_text. experiment_plan remains blocked.
 
+**Phase 21C Status:** IMPLEMENTED — PDF extraction support + alternative full-text acquisition. extract-fulltext-store command attempts PDF extraction (PyMuPDF/pypdf/pdfminer.six with graceful tool_missing). acquire-alternative-fulltext command resolves arXiv DOIs (10.48550/arxiv.*) and ACL Anthology DOIs (10.18653/v1/*). 88 self-tests pass. ftq_002 acquired via ACL Anthology (open_pdf). ftq_004/010 arXiv DOIs resolved but downloads timeout in China. ftq_007/009 IEEE DOIs not auto-resolved (paywall). Store: 4 source_acquired_unreviewed, 2 likely_full_text, 4 metadata_page_only, 1 landing_page_only. experiment_plan remains blocked until full-text review of closest prior work completes.
+
 ---
 
 ## 1. Goal

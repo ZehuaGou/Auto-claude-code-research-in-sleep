@@ -238,6 +238,42 @@ python tools/literature_evidence_landing.py summarize-fulltext-store \
 
 **Critical distinction:** `acquired` does NOT mean `full_text_available`. OpenAlex URLs are metadata pages, not full text. DOI landing pages are typically not full text. Only arXiv LaTeX source and arXiv PDF provide actual full text potential.
 
+### Extract PDF text (Phase 21C)
+
+Extract text from PDFs in the full-text store that have not been extracted:
+
+```bash
+python tools/literature_evidence_landing.py extract-fulltext-store \
+  --store literature/full_text_store/current \
+  --only-missing --json
+```
+
+**Requirements:** Install one of: pymupdf, pypdf, pdfminer.six
+
+**Behavior:** If no PDF extraction library is installed, returns `tool_missing` status with install suggestions.
+
+### Acquire alternative full text (Phase 21C)
+
+Acquire alternative open-access full text for non-reviewable papers via DOI resolvers:
+
+```bash
+python tools/literature_evidence_landing.py acquire-alternative-fulltext \
+  --store literature/full_text_store/current \
+  --target-status metadata_page_only \
+  --target-status landing_page_only \
+  --allow-arxiv --allow-acl-anthology \
+  --allow-open-pdf --allow-open-html --json
+```
+
+**Supported resolvers:**
+- arXiv DOI: `10.48550/arxiv.xxxx` → arXiv source/PDF
+- ACL Anthology DOI: `10.18653/v1/...` → ACL Anthology PDF
+
+**Limitations:**
+- arXiv downloads may timeout in China (use VPN/proxy)
+- IEEE/ACM/publisher DOIs not auto-resolved (paywall protection)
+- Papers with no safe open-access path marked as `no_resolver_matched`
+
 ---
 
 ## 6. Runtime File Policy

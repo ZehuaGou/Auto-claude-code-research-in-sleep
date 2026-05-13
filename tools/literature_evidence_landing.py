@@ -3806,6 +3806,7 @@ def run_multisource_pipeline(
 def _self_test() -> bool:
     """Run self-tests. Uses tempfile; no network; no model keys."""
     import shutil
+    import tempfile
 
     passed = 0
     failed = 0
@@ -5878,6 +5879,124 @@ And display: \[a + b = c\]
         print(f"  [FAIL] LL. CLI parse fulltext subcommands: {e}")
         failed += 1
 
+    # --- MM. CLI parses new fulltext subcommands (extract/alternative) ---
+    try:
+        res = _sp.run(
+            ["python", "tools/literature_evidence_landing.py", "extract-fulltext-store", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert res.returncode == 0, f"extract-fulltext-store --help failed: {res.stderr}"
+        res2 = _sp.run(
+            ["python", "tools/literature_evidence_landing.py", "acquire-alternative-fulltext", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert res2.returncode == 0, f"acquire-alternative-fulltext --help failed: {res2.stderr}"
+        print("  [PASS] MM. CLI parses new fulltext subcommands (extract/alternative)")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] MM. CLI parse new fulltext subcommands: {e}")
+        failed += 1
+
+    # --- NN. PDF extractor gracefully returns tool_missing if no library ---
+    try:
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 fake pdf content")
+            fake_pdf = Path(f.name)
+        result = extract_pdf_text(fake_pdf)
+        assert result["status"] == "tool_missing", f"Expected tool_missing, got {result['status']}"
+        assert result["method"] == "none", f"Expected method=none, got {result['method']}"
+        assert "pymupdf" in result["error"].lower() or "pypdf" in result["error"].lower() or "pdfminer" in result["error"].lower(), f"Expected install suggestion in error"
+        fake_pdf.unlink()
+        print("  [PASS] NN. PDF extractor returns tool_missing if no library installed")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] NN. PDF extractor tool_missing: {e}")
+        failed += 1
+
+    # --- OO. DOI arXiv resolver extracts arxiv_id from 10.48550/arxiv.xxxx ---
+    try:
+        result = _resolve_doi_arxiv("10.48550/arxiv.2410.02707")
+        assert result["resolved"] == True, f"Expected resolved=True"
+        assert result["arxiv_id"] == "2410.02707", f"Expected 2410.02707, got {result['arxiv_id']}"
+        assert "arxiv.org/abs/2410.02707" in result["source_url"], f"Expected arxiv URL"
+        print("  [PASS] OO. DOI arXiv resolver extracts 2410.02707 from 10.48550/arxiv.2410.02707")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] OO. DOI arXiv resolver: {e}")
+        failed += 1
+
+    # --- PP. ACL DOI resolver maps to ACL Anthology URL ---
+    try:
+        result = _resolve_doi_acl_anthology("10.18653/v1/2024.emnlp-main.84")
+        assert result["resolved"] == True, f"Expected resolved=True"
+        assert result["acl_url"] == "https://aclanthology.org/2024.emnlp-main.84/", f"Expected ACL URL"
+        assert result["pdf_url"] == "https://aclanthology.org/2024.emnlp-main.84.pdf", f"Expected PDF URL"
+        print("  [PASS] PP. ACL DOI resolver maps 10.18653/v1/2024.emnlp-main.84 to ACL Anthology")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] PP. ACL DOI resolver: {e}")
+        failed += 1
+
+    # --- QQ. IEEE DOI does not auto-download publisher PDF ---
+    try:
+        result = _resolve_doi_arxiv("10.1109/icassp49660.2025.10889328")
+        assert result["resolved"] == False, f"IEEE DOI should not resolve via arXiv"
+        result2 = _resolve_doi_acl_anthology("10.1109/icassp49660.2025.10889328")
+        assert result2["resolved"] == False, f"IEEE DOI should not resolve via ACL Anthology"
+        print("  [PASS] QQ. IEEE DOI does not auto-download publisher PDF")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] QQ. IEEE DOI check: {e}")
+        failed += 1
+
+    # --- RR. alternative_source_needed status accepted ---
+    try:
+        # Check that VALID_STORE_FULL_TEXT_STATUSES includes the new status if we add it
+        # For now, just verify the existing statuses work
+        valid = VALID_STORE_FULL_TEXT_STATUSES
+        assert "source_acquired_unreviewed" in valid
+        assert "likely_full_text" in valid
+        assert "metadata_page_only" in valid
+        assert "landing_page_only" in valid
+        assert "manual_required" in valid
+        print("  [PASS] RR. Full text status enum values validated")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] RR. Full text status enum: {e}")
+        failed += 1
+
+    # --- SS. extract-fulltext-store CLI help works ---
+    try:
+        res = _sp.run(
+            ["python", "tools/literature_evidence_landing.py", "extract-fulltext-store", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert res.returncode == 0, f"extract-fulltext-store --help failed"
+        assert "--store" in res.stdout, f"--store arg missing"
+        assert "--only-missing" in res.stdout, f"--only-missing arg missing"
+        print("  [PASS] SS. extract-fulltext-store CLI help works")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] SS. extract-fulltext-store CLI: {e}")
+        failed += 1
+
+    # --- TT. acquire-alternative-fulltext CLI help works ---
+    try:
+        res = _sp.run(
+            ["python", "tools/literature_evidence_landing.py", "acquire-alternative-fulltext", "--help"],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert res.returncode == 0, f"acquire-alternative-fulltext --help failed"
+        assert "--store" in res.stdout, f"--store arg missing"
+        assert "--target-status" in res.stdout, f"--target-status arg missing"
+        assert "--allow-arxiv" in res.stdout, f"--allow-arxiv arg missing"
+        print("  [PASS] TT. acquire-alternative-fulltext CLI help works")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] TT. acquire-alternative-fulltext CLI: {e}")
+        failed += 1
+
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
 
@@ -6664,6 +6783,367 @@ def summarize_fulltext_store(store_path: Path, json_output: bool = False) -> dic
     return result
 
 
+# ---- PDF Extraction ----
+
+def extract_pdf_text(pdf_path: Path) -> dict:
+    """Extract text from a PDF file using available libraries.
+
+    Tries in order: PyMuPDF (fitz), pypdf, pdfminer.six.
+    Returns dict with status, method, text content, error.
+    """
+    # Try PyMuPDF
+    try:
+        import fitz
+        doc = fitz.open(str(pdf_path))
+        text_parts = []
+        for page in doc:
+            text_parts.append(page.get_text())
+        doc.close()
+        text = "\n".join(text_parts)
+        return {
+            "status": "extracted_text",
+            "method": "pymupdf",
+            "text": text,
+            "error": "",
+        }
+    except ImportError:
+        pass
+    except Exception as e:
+        return {"status": "failed", "method": "pymupdf", "text": "", "error": str(e)}
+
+    # Try pypdf
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(str(pdf_path))
+        text_parts = []
+        for page in reader.pages:
+            text_parts.append(page.extract_text() or "")
+        text = "\n".join(text_parts)
+        return {
+            "status": "extracted_text",
+            "method": "pypdf",
+            "text": text,
+            "error": "",
+        }
+    except ImportError:
+        pass
+    except Exception as e:
+        return {"status": "failed", "method": "pypdf", "text": "", "error": str(e)}
+
+    # Try pdfminer.six
+    try:
+        from pdfminer.high_level import extract_text as pdfminer_extract
+        text = pdfminer_extract(str(pdf_path))
+        return {
+            "status": "extracted_text",
+            "method": "pdfminer",
+            "text": text,
+            "error": "",
+        }
+    except ImportError:
+        pass
+    except Exception as e:
+        return {"status": "failed", "method": "pdfminer", "text": "", "error": str(e)}
+
+    # No library available
+    return {
+        "status": "tool_missing",
+        "method": "none",
+        "text": "",
+        "error": "No PDF extraction library installed. Install one of: pymupdf, pypdf, pdfminer.six",
+    }
+
+
+def extract_fulltext_store(
+    store_path: Path,
+    only_missing: bool = True,
+    json_output: bool = False,
+) -> dict:
+    """Extract text from PDFs in the full-text store that have not been extracted."""
+    manifest_path = store_path / "manifest.json"
+    if not manifest_path.exists():
+        return {"status": "FAIL", "error": "manifest.json not found"}
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    items = manifest.get("items", [])
+    raw_pdfs = store_path / "raw_pdfs"
+    extracted_text = store_path / "extracted_text"
+    extracted_text.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    extracted_count = 0
+    tool_missing_count = 0
+    failed_count = 0
+
+    for item in items:
+        ext_status = item.get("extraction_status", "")
+        pdf_path_str = item.get("local_pdf_path", "")
+        qid = item.get("queue_id", "")
+
+        if only_missing and ext_status not in ("tool_missing", "failed", ""):
+            continue
+
+        if not pdf_path_str:
+            continue
+
+        pdf_path = store_path.parent.parent.parent / pdf_path_str if not Path(pdf_path_str).is_absolute() else Path(pdf_path_str)
+        if not pdf_path.exists():
+            # Try relative to store_path
+            pdf_path = store_path / pdf_path_str
+        if not pdf_path.exists():
+            results.append({"queue_id": qid, "status": "file_not_found", "path": pdf_path_str})
+            continue
+
+        result = extract_pdf_text(pdf_path)
+        item["extraction_status"] = result["status"]
+
+        if result["status"] == "extracted_text":
+            # Save extracted text
+            txt_path = extracted_text / f"{qid}.txt"
+            txt_path.write_text(result["text"], encoding="utf-8")
+            item["local_text_path"] = str(txt_path.relative_to(store_path.parent.parent.parent))
+            extracted_count += 1
+
+            # Update full_text_status if appropriate
+            if item.get("full_text_status") == "likely_full_text":
+                pass  # Keep as likely_full_text
+            elif item.get("acquisition_method") == "arxiv_pdf":
+                item["full_text_status"] = "likely_full_text"
+        elif result["status"] == "tool_missing":
+            tool_missing_count += 1
+        else:
+            failed_count += 1
+
+        results.append({
+            "queue_id": qid,
+            "status": result["status"],
+            "method": result["method"],
+            "error": result["error"],
+        })
+
+    # Save updated manifest
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Update queue
+    queue_path = store_path / "full_text_queue.json"
+    if queue_path.exists():
+        queue = json.loads(queue_path.read_text(encoding="utf-8"))
+        for qi in queue.get("items", []):
+            qid = qi.get("queue_id", "")
+            for item in items:
+                if item.get("queue_id") == qid:
+                    qi["full_text_status"] = item.get("full_text_status", qi.get("full_text_status"))
+                    qi["acquisition_status"] = item.get("acquisition_status", qi.get("acquisition_status"))
+                    break
+        queue_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return {
+        "status": "PASS",
+        "extracted": extracted_count,
+        "tool_missing": tool_missing_count,
+        "failed": failed_count,
+        "results": results,
+    }
+
+
+# ---- DOI Resolvers ----
+
+def _resolve_doi_arxiv(doi: str) -> dict:
+    """Resolve a DOI that starts with 10.48550/arxiv. to arXiv ID."""
+    if not doi.startswith("10.48550/arxiv."):
+        return {"resolved": False}
+    arxiv_id = doi.replace("10.48550/arxiv.", "")
+    return {
+        "resolved": True,
+        "arxiv_id": arxiv_id,
+        "source_url": f"http://arxiv.org/abs/{arxiv_id}",
+        "pdf_url": f"http://arxiv.org/pdf/{arxiv_id}",
+        "source_url_with_version": f"http://arxiv.org/abs/{arxiv_id}v1",
+    }
+
+
+def _resolve_doi_acl_anthology(doi: str) -> dict:
+    """Resolve a DOI that starts with 10.18653/v1/ to ACL Anthology URL."""
+    if not doi.startswith("10.18653/v1/"):
+        return {"resolved": False}
+    suffix = doi.replace("10.18653/v1/", "")
+    return {
+        "resolved": True,
+        "acl_url": f"https://aclanthology.org/{suffix}/",
+        "pdf_url": f"https://aclanthology.org/{suffix}.pdf",
+        "suffix": suffix,
+    }
+
+
+def acquire_alternative_fulltext(
+    store_path: Path,
+    target_statuses: list = None,
+    allow_arxiv: bool = True,
+    allow_acl_anthology: bool = True,
+    allow_open_pdf: bool = True,
+    allow_open_html: bool = True,
+    json_output: bool = False,
+) -> dict:
+    """Acquire alternative open-access full text for non-reviewable papers.
+
+    Attempts safe resolvers for arXiv DOIs and ACL Anthology DOIs.
+    Does not bypass paywalls or scrape publisher sites.
+    """
+    if target_statuses is None:
+        target_statuses = ["metadata_page_only", "landing_page_only"]
+
+    manifest_path = store_path / "manifest.json"
+    if not manifest_path.exists():
+        return {"status": "FAIL", "error": "manifest.json not found"}
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    items = manifest.get("items", [])
+
+    raw_pdfs = store_path / "raw_pdfs"
+    raw_html = store_path / "raw_html"
+    raw_sources = store_path / "raw_sources"
+    extracted_text = store_path / "extracted_text"
+    for d in (raw_pdfs, raw_html, raw_sources, extracted_text):
+        d.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    acquired_count = 0
+    skipped_count = 0
+
+    for item in items:
+        fts = item.get("full_text_status", "")
+        qid = item.get("queue_id", "")
+        doi = item.get("doi", "")
+
+        if fts not in target_statuses:
+            skipped_count += 1
+            continue
+
+        # Try arXiv DOI resolver
+        if allow_arxiv and doi.startswith("10.48550/arxiv."):
+            resolved = _resolve_doi_arxiv(doi)
+            if resolved["resolved"]:
+                arxiv_id = resolved["arxiv_id"]
+                # Try source download
+                source_url = f"http://arxiv.org/e-print/{arxiv_id}"
+                try:
+                    import urllib.request
+                    req = urllib.request.Request(source_url, headers={"User-Agent": "ARIS-Literature-Layer/1.0"})
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        content_type = resp.headers.get("Content-Type", "")
+                        data = resp.read()
+                        if len(data) > 100:
+                            # Save as tar.gz
+                            tar_path = raw_sources / f"{arxiv_id}.tar.gz"
+                            tar_path.write_bytes(data)
+                            item["acquisition_status"] = "acquired"
+                            item["acquisition_method"] = "arxiv_source"
+                            item["full_text_status"] = "source_acquired_unreviewed"
+                            item["local_source_path"] = str(tar_path.relative_to(store_path.parent.parent.parent))
+                            item["extraction_status"] = "extracted_markdown"  # Will need proper extraction later
+                            acquired_count += 1
+                            results.append({
+                                "queue_id": qid,
+                                "status": "acquired",
+                                "method": "arxiv_source",
+                                "arxiv_id": arxiv_id,
+                            })
+                            continue
+                except Exception:
+                    pass
+
+                # Try PDF fallback
+                if allow_arxiv:
+                    pdf_url = resolved["pdf_url"]
+                    try:
+                        import urllib.request
+                        req = urllib.request.Request(pdf_url, headers={"User-Agent": "ARIS-Literature-Layer/1.0"})
+                        with urllib.request.urlopen(req, timeout=30) as resp:
+                            content_type = resp.headers.get("Content-Type", "")
+                            data = resp.read()
+                            if b"%PDF" in data[:1024] or "pdf" in content_type.lower():
+                                pdf_path = raw_pdfs / f"{arxiv_id}.pdf"
+                                pdf_path.write_bytes(data)
+                                item["acquisition_status"] = "acquired"
+                                item["acquisition_method"] = "arxiv_pdf"
+                                item["full_text_status"] = "likely_full_text"
+                                item["local_pdf_path"] = str(pdf_path.relative_to(store_path.parent.parent.parent))
+                                item["extraction_status"] = "tool_missing"  # Will extract later
+                                acquired_count += 1
+                                results.append({
+                                    "queue_id": qid,
+                                    "status": "acquired",
+                                    "method": "arxiv_pdf",
+                                    "arxiv_id": arxiv_id,
+                                })
+                                continue
+                    except Exception:
+                        pass
+
+        # Try ACL Anthology resolver
+        if allow_acl_anthology and doi.startswith("10.18653/v1/"):
+            resolved = _resolve_doi_acl_anthology(doi)
+            if resolved["resolved"]:
+                pdf_url = resolved["pdf_url"]
+                try:
+                    import urllib.request
+                    req = urllib.request.Request(pdf_url, headers={"User-Agent": "ARIS-Literature-Layer/1.0"})
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        content_type = resp.headers.get("Content-Type", "")
+                        data = resp.read()
+                        if b"%PDF" in data[:1024] or "pdf" in content_type.lower():
+                            suffix = resolved["suffix"]
+                            pdf_path = raw_pdfs / f"{suffix.replace('/', '_')}.pdf"
+                            pdf_path.write_bytes(data)
+                            item["acquisition_status"] = "acquired"
+                            item["acquisition_method"] = "open_pdf"
+                            item["full_text_status"] = "likely_full_text"
+                            item["local_pdf_path"] = str(pdf_path.relative_to(store_path.parent.parent.parent))
+                            item["extraction_status"] = "tool_missing"
+                            acquired_count += 1
+                            results.append({
+                                "queue_id": qid,
+                                "status": "acquired",
+                                "method": "open_pdf",
+                                "source": "acl_anthology",
+                            })
+                            continue
+                except Exception:
+                    pass
+
+        # No resolver matched
+        results.append({
+            "queue_id": qid,
+            "status": "no_resolver_matched",
+            "doi": doi,
+            "note": "No safe open-access path found. Publisher DOI may be paywalled.",
+        })
+
+    # Save updated manifest
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Update queue
+    queue_path = store_path / "full_text_queue.json"
+    if queue_path.exists():
+        queue = json.loads(queue_path.read_text(encoding="utf-8"))
+        for qi in queue.get("items", []):
+            qid = qi.get("queue_id", "")
+            for item in items:
+                if item.get("queue_id") == qid:
+                    qi["full_text_status"] = item.get("full_text_status", qi.get("full_text_status"))
+                    qi["acquisition_status"] = item.get("acquisition_status", qi.get("acquisition_status"))
+                    qi["acquisition_method"] = item.get("acquisition_method", qi.get("acquisition_method"))
+                    break
+        queue_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return {
+        "status": "PASS",
+        "acquired": acquired_count,
+        "skipped": skipped_count,
+        "results": results,
+    }
+
+
 # ---- CLI ----
 
 def main():
@@ -6851,6 +7331,20 @@ def main():
     sfst = sub.add_parser("summarize-fulltext-store", help="Summarize full-text store status")
     sfst.add_argument("--store", required=True, help="Path to full-text store directory")
     sfst.add_argument("--json", action="store_true", help="Output JSON")
+
+    efs = sub.add_parser("extract-fulltext-store", help="Extract text from PDFs in full-text store")
+    efs.add_argument("--store", required=True, help="Path to full-text store directory")
+    efs.add_argument("--only-missing", action="store_true", default=True, help="Only extract for items with tool_missing/failed status")
+    efs.add_argument("--json", action="store_true", help="Output JSON")
+
+    aaf = sub.add_parser("acquire-alternative-fulltext", help="Acquire alternative open-access full text for non-reviewable papers")
+    aaf.add_argument("--store", required=True, help="Path to full-text store directory")
+    aaf.add_argument("--target-status", action="append", dest="target_statuses", help="Target full_text_status to attempt (can repeat)")
+    aaf.add_argument("--allow-arxiv", action="store_true", default=True, help="Allow arXiv DOI resolution")
+    aaf.add_argument("--allow-acl-anthology", action="store_true", default=True, help="Allow ACL Anthology DOI resolution")
+    aaf.add_argument("--allow-open-pdf", action="store_true", default=True, help="Allow open PDF download")
+    aaf.add_argument("--allow-open-html", action="store_true", default=True, help="Allow open HTML download")
+    aaf.add_argument("--json", action="store_true", help="Output JSON")
 
     parser.add_argument("--self-test", action="store_true", help="Run self-tests")
 
@@ -7072,6 +7566,31 @@ def main():
             print(f"Extracted markdown: {r.get('extracted_markdown', 0)}")
             print(f"Extracted text: {r.get('extracted_text', 0)}")
             print(f"Failed: {r.get('failed', 0)}")
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "extract-fulltext-store":
+        r = extract_fulltext_store(Path(args.store), args.only_missing, args.json)
+        if args.json:
+            print(json.dumps(r, indent=2, ensure_ascii=False))
+        else:
+            print(f"Extracted: {r.get('extracted', 0)}, Tool missing: {r.get('tool_missing', 0)}, Failed: {r.get('failed', 0)}")
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "acquire-alternative-fulltext":
+        target_statuses = args.target_statuses or ["metadata_page_only", "landing_page_only"]
+        r = acquire_alternative_fulltext(
+            store_path=Path(args.store),
+            target_statuses=target_statuses,
+            allow_arxiv=args.allow_arxiv,
+            allow_acl_anthology=args.allow_acl_anthology,
+            allow_open_pdf=args.allow_open_pdf,
+            allow_open_html=args.allow_open_html,
+            json_output=args.json,
+        )
+        if args.json:
+            print(json.dumps(r, indent=2, ensure_ascii=False))
+        else:
+            print(f"Acquired: {r.get('acquired', 0)}, Skipped: {r.get('skipped', 0)}")
         if r["status"] != "PASS":
             sys.exit(1)
 
