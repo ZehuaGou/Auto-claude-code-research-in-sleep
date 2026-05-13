@@ -32,7 +32,7 @@
       "full_text_status": "likely_full_text",
       "acquisition_method": "open_pdf",
       "review_status": "pending",
-      "notes": "PDF acquired via ACL Anthology (open_pdf). Extraction pending (tool_missing).",
+      "notes": "PDF text extracted; pending trusted review ingestion.",
       "extraction_status": "extracted_text",
       "local_text_path": "literature\\full_text_store\\current\\extracted_text\\ftq_002.txt",
       "extraction_method": "pdf_text"
@@ -134,7 +134,7 @@
       "full_text_status": "likely_full_text",
       "acquisition_method": "arxiv_pdf",
       "review_status": "pending",
-      "notes": "PDF downloaded, needs text extraction (pdf tool missing) and human review",
+      "notes": "PDF text extracted; pending trusted review ingestion.",
       "extraction_status": "extracted_text",
       "local_text_path": "literature\\full_text_store\\current\\extracted_text\\ftq_008.txt",
       "extraction_method": "pdf_text"
@@ -178,7 +178,8 @@
     "total_items": 10,
     "likely_full_text": 2,
     "source_acquired_unreviewed": 4,
-    "landing_or_metadata_only": 4,
+    "metadata_page_only": 3,
+    "landing_page_only": 1,
     "manual_required": 0,
     "extracted_markdown": 4,
     "extracted_text": 6,

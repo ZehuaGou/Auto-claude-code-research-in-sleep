@@ -6602,7 +6602,8 @@ def acquire_open_fulltext(
             "total_items": summary["total_items"],
             "likely_full_text": summary["likely_full_text"],
             "source_acquired_unreviewed": summary["source_acquired_unreviewed"],
-            "landing_or_metadata_only": summary["landing_or_metadata_only"],
+            "metadata_page_only": summary["metadata_page_only"],
+            "landing_page_only": summary["landing_page_only"],
             "manual_required": summary["manual_required"],
         },
     }
@@ -6875,6 +6876,69 @@ def recompute_fulltext_store_summary(manifest: dict) -> dict:
     return summary
 
 
+def _compact_trusted_review_excerpt(text: str, limit: int = 2400) -> str:
+    compact = re.sub(r"\s+", " ", text).strip()
+    return compact[:limit]
+
+
+def _build_trusted_review_summary(text: str) -> str:
+    """Build a deterministic local summary for trusted review ingestion."""
+    lowered = text.lower()
+    abstract_idx = lowered.find("abstract")
+    intro_idx = lowered.find("introduction")
+    start_idx = abstract_idx if abstract_idx >= 0 else 0
+    end_idx = intro_idx + 1400 if intro_idx >= 0 else start_idx + 2800
+    chunks = [
+        "Abstract and early-section excerpt:",
+        _compact_trusted_review_excerpt(text[start_idx:end_idx], 2600),
+    ]
+
+    keywords = [
+        "attention",
+        "hidden state",
+        "hidden layer",
+        "classifier",
+        "probe",
+        "trajectory",
+        "anomaly",
+        "reference distribution",
+    ]
+    excerpts = []
+    for keyword in keywords:
+        idx = lowered.find(keyword)
+        if idx < 0:
+            continue
+        span_start = max(0, idx - 300)
+        span_end = min(len(text), idx + 700)
+        excerpt = _compact_trusted_review_excerpt(text[span_start:span_end], 1000)
+        excerpts.append(f"[{keyword}] {excerpt}")
+        if len(excerpts) >= 4:
+            break
+    if excerpts:
+        chunks.append("Keyword windows:")
+        chunks.extend(excerpts)
+
+    return "\n".join(chunks).strip()
+
+
+def refresh_trusted_review_summaries(store_path: Path, manifest: dict) -> None:
+    """Populate deterministic trusted review summaries from local extracted text."""
+    root = store_path.parent.parent.parent
+    for item in manifest.get("items", []):
+        if item.get("full_text_status") != "likely_full_text":
+            continue
+        if item.get("extraction_status") != "extracted_text":
+            continue
+        local_text_path = item.get("local_text_path", "")
+        if not local_text_path:
+            continue
+        text_path = root / local_text_path
+        if not text_path.exists():
+            continue
+        text = text_path.read_text(encoding="utf-8", errors="ignore")
+        item["trusted_review_summary"] = _build_trusted_review_summary(text)
+
+
 def extract_pdf_text(pdf_path: Path) -> dict:
     """Extract text from a PDF file using available libraries.
 
@@ -7018,6 +7082,7 @@ def extract_fulltext_store(
             "error": result["error"],
         })
 
+    refresh_trusted_review_summaries(store_path, manifest)
     recompute_fulltext_store_summary(manifest)
 
     # Save updated manifest
@@ -7041,10 +7106,8 @@ def extract_fulltext_store(
             "total_items": manifest["summary"].get("total_items", len(items)),
             "likely_full_text": manifest["summary"].get("likely_full_text", 0),
             "source_acquired_unreviewed": manifest["summary"].get("source_acquired_unreviewed", 0),
-            "landing_or_metadata_only": (
-                manifest["summary"].get("landing_page_only", 0)
-                + manifest["summary"].get("metadata_page_only", 0)
-            ),
+            "metadata_page_only": manifest["summary"].get("metadata_page_only", 0),
+            "landing_page_only": manifest["summary"].get("landing_page_only", 0),
             "manual_required": manifest["summary"].get("manual_required", 0),
             "extracted_markdown": manifest["summary"].get("extracted_markdown", 0),
             "extracted_text": manifest["summary"].get("extracted_text", 0),
