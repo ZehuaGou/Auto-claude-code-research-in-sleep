@@ -77,7 +77,8 @@ stages:
 
   novelty_check:
     role: novelty_checker
-    description: 新颖性检查 — verify the idea is genuinely novel before investing in experiments
+    description: 新颖性检查 — evidence-bounded novelty risk assessment (not final novelty proof)
+    allow_insufficient_evidence_risk_assessment: true
     allowed_input_files:
       - research/current/input_normalization.md
       - research/current/trusted_outputs/research_contract.md
@@ -96,6 +97,61 @@ stages:
       - mock/dry-run artifact
     output_file: research/current/trusted_outputs/novelty_check.md
     require_validate: true
+    stage_output_contract: |
+      ROLE BOUNDARY — novelty_check OUTPUT CONTRACT
+      You are novelty_checker. Your task is an evidence-bounded novelty risk assessment.
+      This is NOT a final novelty proof. This is NOT a publication decision.
+
+      HARD CONSTRAINTS (violation = artifact rejected):
+      1. Document title MUST be "Novelty Check — Evidence-Bounded Risk Assessment".
+      2. Do NOT use forbidden phrases as conclusions:
+         - "confirmed novel", "no prior work", "direct overlap none", "no direct overlap found"
+         - "definitely novel", "publishable novelty", "novelty proven"
+         - "potentially novel", "likely novel"
+      3. You MAY use these phrases only inside a "forbidden phrases / not allowed" explanation section.
+      4. Allowed verdict labels ONLY:
+         - high_risk_overlap
+         - medium_risk_overlap
+         - low_confidence_possible_gap
+         - insufficient_evidence
+      5. Required sections:
+         - Scope and Evidence Boundary
+         - Closest Prior Work and Overlap Risks
+         - Risk Labels
+         - Evidence-Bounded Assessment
+         - Required Repairs Before Stronger Claim
+         - Allowed Next Stage Recommendation
+      6. Scope and Evidence Boundary MUST state:
+         - This is not a final novelty proof.
+         - OpenAlex only.
+         - Metadata/abstract only.
+         - No full text verified.
+         - No arXiv/Crossref/Semantic Scholar.
+         - No experiments.
+      7. Closest Prior Work section MUST:
+         - List each closest work with apparent relation, risk type, evidence limitation.
+         - Use "No explicit trajectory-level formulation was visible in the retrieved abstracts."
+         - NEVER use "no direct overlap found" or "direct overlap none" as conclusions.
+         - Always qualify: "This does not establish absence of direct overlap."
+      8. Risk Labels section MUST assign labels to dimensions:
+         - internal-state hallucination detection
+         - token-level detection
+         - trajectory-level anomaly framing
+         - unsupervised/real-time detection
+         - black-box alternatives
+      9. Evidence-Bounded Assessment MUST conclude with:
+         - internal-state hallucination detection: medium_risk_overlap
+         - trajectory-level anomaly framing: low_confidence_possible_gap
+         - overall novelty confidence: insufficient_evidence
+      10. Allowed Next Stage Recommendation MUST be one of:
+          - continue_to_method_refinement_only
+          - continue_to_experiment_plan_with_high_caution
+          - do_not_continue
+          Do NOT recommend paper writing.
+      11. End the document with a boundary statement:
+          "This artifact is an evidence-bounded risk assessment, not a novelty proof.
+           It must be re-evaluated when full-text evidence becomes available."
+      12. Preserve uncertainty: use "no evidence found in searched sources" instead of "does not exist".
 
   experiment_plan:
     role: experiment_auditor

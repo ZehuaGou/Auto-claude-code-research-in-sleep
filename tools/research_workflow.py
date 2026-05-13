@@ -123,14 +123,20 @@ def _run_stage_prechecks(stage_name: str, config_path: Path) -> None:
     if status == "valid":
         return  # passed
 
-    # Allow insufficient_evidence when output contract explicitly permits evidence-bounded risk assessment
+    # Allow insufficient_evidence ONLY when stage config explicitly enables risk assessment mode
     if status == "insufficient_evidence":
-        print(f"NOTE: Literature evidence status is '{status}' — allowing novelty_check with evidence-bounded risk assessment.")
-        print(f"  The output contract must use verdict labels: insufficient_evidence, low_confidence_possible_gap, medium_risk_overlap, high_risk_overlap.")
-        print(f"  The output must NOT claim: confirmed_novel, no prior work, direct overlap none, definitely novel.")
-        return
+        with open(config_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        stage_cfg = cfg.get("stages", {}).get(stage_name, {})
+        if stage_cfg.get("allow_insufficient_evidence_risk_assessment", False):
+            print(f"NOTE: Literature evidence status is '{status}' — stage config allows evidence-bounded risk assessment.")
+            print(f"  allow_insufficient_evidence_risk_assessment: true")
+            print(f"  Output MUST use verdict labels: insufficient_evidence, low_confidence_possible_gap, medium_risk_overlap, high_risk_overlap.")
+            print(f"  Output must NOT claim: confirmed_novel, no prior work, direct overlap none, potentially novel, definitely novel.")
+            return
+        # Falls through to FAIL below
 
-    # Block for any other non-valid status
+    # Block for any non-valid status
     print()
     print("=" * 60)
     print("LITERATURE EVIDENCE PRECHECK FAILED for novelty_check")
@@ -142,6 +148,10 @@ def _run_stage_prechecks(stage_name: str, config_path: Path) -> None:
         print("top_k.md is template_only and cannot support confirmed_novel.")
         print("Fix: populate literature/search_runs/current/top_k.md with validated evidence,")
         print("     then rerun: python tools/validate_literature_evidence.py --json")
+    elif status == "insufficient_evidence":
+        print("Evidence is insufficient and stage config does not allow risk assessment mode.")
+        print("Fix: either improve literature evidence to 'valid' status,")
+        print("     or set allow_insufficient_evidence_risk_assessment: true in workflow config.")
     elif status == "valid_with_gaps":
         print("Evidence is valid_with_gaps.")
         print("Manual confirmation for valid_with_gaps is not implemented yet.")
