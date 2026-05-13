@@ -15,7 +15,10 @@
       "full_text_status": "source_acquired_unreviewed",
       "acquisition_method": "arxiv_source",
       "review_status": "pending",
-      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review"
+      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review",
+      "extraction_status": "extracted_markdown",
+      "local_text_path": "",
+      "extraction_method": "latex_to_markdown_mvp"
     },
     {
       "queue_id": "ftq_002",
@@ -29,7 +32,10 @@
       "full_text_status": "likely_full_text",
       "acquisition_method": "open_pdf",
       "review_status": "pending",
-      "notes": "PDF acquired via ACL Anthology (open_pdf). Extraction pending (tool_missing)."
+      "notes": "PDF acquired via ACL Anthology (open_pdf). Extraction pending (tool_missing).",
+      "extraction_status": "extracted_text",
+      "local_text_path": "literature\\full_text_store\\current\\extracted_text\\ftq_002.txt",
+      "extraction_method": "pdf_text"
     },
     {
       "queue_id": "ftq_003",
@@ -43,7 +49,10 @@
       "full_text_status": "source_acquired_unreviewed",
       "acquisition_method": "arxiv_source",
       "review_status": "pending",
-      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review"
+      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review",
+      "extraction_status": "extracted_markdown",
+      "local_text_path": "",
+      "extraction_method": "latex_to_markdown_mvp"
     },
     {
       "queue_id": "ftq_004",
@@ -57,7 +66,10 @@
       "full_text_status": "metadata_page_only",
       "acquisition_method": "open_html",
       "review_status": "pending",
-      "notes": "OpenAlex metadata page, not full text. Need alternative source."
+      "notes": "OpenAlex metadata page, not full text. Need alternative source.",
+      "extraction_status": "extracted_text",
+      "local_text_path": "",
+      "extraction_method": "html_text"
     },
     {
       "queue_id": "ftq_005",
@@ -71,7 +83,10 @@
       "full_text_status": "source_acquired_unreviewed",
       "acquisition_method": "arxiv_source",
       "review_status": "pending",
-      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review"
+      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review",
+      "extraction_status": "extracted_markdown",
+      "local_text_path": "",
+      "extraction_method": "latex_to_markdown_mvp"
     },
     {
       "queue_id": "ftq_006",
@@ -85,7 +100,10 @@
       "full_text_status": "source_acquired_unreviewed",
       "acquisition_method": "arxiv_source",
       "review_status": "pending",
-      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review"
+      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review",
+      "extraction_status": "extracted_markdown",
+      "local_text_path": "",
+      "extraction_method": "latex_to_markdown_mvp"
     },
     {
       "queue_id": "ftq_007",
@@ -99,7 +117,10 @@
       "full_text_status": "landing_page_only",
       "acquisition_method": "open_html",
       "review_status": "pending",
-      "notes": "DOI landing page, not full text. Need alternative source."
+      "notes": "DOI landing page, not full text. Need alternative source.",
+      "extraction_status": "extracted_text",
+      "local_text_path": "",
+      "extraction_method": "html_text"
     },
     {
       "queue_id": "ftq_008",
@@ -113,7 +134,10 @@
       "full_text_status": "likely_full_text",
       "acquisition_method": "arxiv_pdf",
       "review_status": "pending",
-      "notes": "PDF downloaded, needs text extraction (pdf tool missing) and human review"
+      "notes": "PDF downloaded, needs text extraction (pdf tool missing) and human review",
+      "extraction_status": "extracted_text",
+      "local_text_path": "literature\\full_text_store\\current\\extracted_text\\ftq_008.txt",
+      "extraction_method": "pdf_text"
     },
     {
       "queue_id": "ftq_009",
@@ -127,7 +151,10 @@
       "full_text_status": "metadata_page_only",
       "acquisition_method": "open_html",
       "review_status": "pending",
-      "notes": "OpenAlex metadata page, not full text. Need alternative source."
+      "notes": "OpenAlex metadata page, not full text. Need alternative source.",
+      "extraction_status": "extracted_text",
+      "local_text_path": "",
+      "extraction_method": "html_text"
     },
     {
       "queue_id": "ftq_010",
@@ -141,16 +168,21 @@
       "full_text_status": "metadata_page_only",
       "acquisition_method": "open_html",
       "review_status": "pending",
-      "notes": "OpenAlex metadata page, not full text. Need alternative source."
+      "notes": "OpenAlex metadata page, not full text. Need alternative source.",
+      "extraction_status": "extracted_text",
+      "local_text_path": "",
+      "extraction_method": "html_text"
     }
   ],
   "summary": {
     "total_items": 10,
-    "source_acquired_unreviewed": 4,
     "likely_full_text": 2,
-    "metadata_page_only": 3,
-    "landing_page_only": 1,
+    "source_acquired_unreviewed": 4,
+    "landing_or_metadata_only": 4,
     "manual_required": 0,
-    "pending_review": 10
+    "extracted_markdown": 4,
+    "extracted_text": 6,
+    "tool_missing": 0,
+    "failed": 0
   }
 }

@@ -6843,6 +6843,38 @@ def summarize_fulltext_store(store_path: Path, json_output: bool = False) -> dic
 
 # ---- PDF Extraction ----
 
+def recompute_fulltext_store_summary(manifest: dict) -> dict:
+    """Recompute manifest summary counts from current full-text store items."""
+    items = manifest.get("items", [])
+    summary = dict(manifest.get("summary", {}))
+    summary["total_items"] = len(items)
+
+    count_keys = [
+        "source_acquired_unreviewed",
+        "likely_full_text",
+        "metadata_page_only",
+        "landing_page_only",
+        "manual_required",
+        "extracted_markdown",
+        "extracted_text",
+        "tool_missing",
+        "failed",
+    ]
+    for key in count_keys:
+        summary[key] = 0
+
+    for item in items:
+        fts = item.get("full_text_status", "")
+        if fts in summary:
+            summary[fts] += 1
+        ext = item.get("extraction_status", "")
+        if ext in summary:
+            summary[ext] += 1
+
+    manifest["summary"] = summary
+    return summary
+
+
 def extract_pdf_text(pdf_path: Path) -> dict:
     """Extract text from a PDF file using available libraries.
 
@@ -6960,6 +6992,7 @@ def extract_fulltext_store(
             txt_path = extracted_text / f"{qid}.txt"
             txt_path.write_text(result["text"], encoding="utf-8")
             item["local_text_path"] = str(txt_path.relative_to(store_path.parent.parent.parent))
+            item["extraction_method"] = result["method"]
             extracted_count += 1
 
             # Update full_text_status if appropriate
@@ -6972,12 +7005,20 @@ def extract_fulltext_store(
         else:
             failed_count += 1
 
+        if result["status"] in ("tool_missing", "failed"):
+            item["extraction_method"] = result["method"]
+            item["extraction_error"] = result["error"]
+        else:
+            item["extraction_error"] = ""
+
         results.append({
             "queue_id": qid,
             "status": result["status"],
             "method": result["method"],
             "error": result["error"],
         })
+
+    recompute_fulltext_store_summary(manifest)
 
     # Save updated manifest
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -6992,7 +7033,24 @@ def extract_fulltext_store(
                 if item.get("queue_id") == qid:
                     qi["full_text_status"] = item.get("full_text_status", qi.get("full_text_status"))
                     qi["acquisition_status"] = item.get("acquisition_status", qi.get("acquisition_status"))
+                    qi["extraction_status"] = item.get("extraction_status", qi.get("extraction_status"))
+                    qi["local_text_path"] = item.get("local_text_path", qi.get("local_text_path", ""))
+                    qi["extraction_method"] = item.get("extraction_method", qi.get("extraction_method", ""))
                     break
+        queue["summary"] = {
+            "total_items": manifest["summary"].get("total_items", len(items)),
+            "likely_full_text": manifest["summary"].get("likely_full_text", 0),
+            "source_acquired_unreviewed": manifest["summary"].get("source_acquired_unreviewed", 0),
+            "landing_or_metadata_only": (
+                manifest["summary"].get("landing_page_only", 0)
+                + manifest["summary"].get("metadata_page_only", 0)
+            ),
+            "manual_required": manifest["summary"].get("manual_required", 0),
+            "extracted_markdown": manifest["summary"].get("extracted_markdown", 0),
+            "extracted_text": manifest["summary"].get("extracted_text", 0),
+            "tool_missing": manifest["summary"].get("tool_missing", 0),
+            "failed": manifest["summary"].get("failed", 0),
+        }
         queue_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return {
