@@ -29,7 +29,7 @@
       "full_text_status": "likely_full_text",
       "acquisition_method": "open_pdf",
       "review_status": "pending",
-      "notes": "OpenAlex metadata page, not full text. Need alternative source."
+      "notes": "PDF acquired via ACL Anthology (open_pdf). Extraction pending (tool_missing)."
     },
     {
       "queue_id": "ftq_003",
@@ -147,8 +147,8 @@
   "summary": {
     "total_items": 10,
     "source_acquired_unreviewed": 4,
-    "likely_full_text": 1,
-    "metadata_page_only": 4,
+    "likely_full_text": 2,
+    "metadata_page_only": 3,
     "landing_page_only": 1,
     "manual_required": 0,
     "pending_review": 10

@@ -5758,6 +5758,7 @@ And display: \[a + b = c\]
                 "priority": "critical",
                 "acquisition_status": "manual_required",
                 "acquisition_method": "manual_required",
+                "full_text_status": "manual_required",
                 "extraction_status": "not_attempted",
                 "extraction_method": "none",
                 "local_source_path": "",
@@ -5772,7 +5773,10 @@ And display: \[a + b = c\]
                 "notes": "",
             }],
             "summary": {"total_items": 1, "acquired": 0, "manual_required": 1,
-                        "extracted_markdown": 0, "extracted_text": 0, "failed": 0},
+                        "source_acquired_unreviewed": 0, "likely_full_text": 0,
+                        "metadata_page_only": 0, "landing_page_only": 0,
+                        "extracted_markdown": 0, "extracted_text": 0,
+                        "tool_missing": 0, "failed": 0},
         }
         with tempfile.TemporaryDirectory() as td:
             store = Path(td)
@@ -5837,12 +5841,16 @@ And display: \[a + b = c\]
             "paywall_bypass_used": False, "model_used": False,
             "pdfs_committed": False, "full_text_committed": False,
             "items": [{"queue_id": "ftq_001", "acquisition_status": "manual_required",
-                        "acquisition_method": "manual_required", "extraction_status": "not_attempted",
+                        "acquisition_method": "manual_required", "full_text_status": "manual_required",
+                        "extraction_status": "not_attempted",
                         "extraction_method": "none", "priority": "high",
                         "local_source_path": "", "local_pdf_path": "", "local_html_path": "",
                         "local_text_path": "", "local_markdown_path": ""}],
             "summary": {"total_items": 1, "acquired": 0, "manual_required": 1,
-                        "extracted_markdown": 0, "extracted_text": 0, "failed": 0},
+                        "source_acquired_unreviewed": 0, "likely_full_text": 0,
+                        "metadata_page_only": 0, "landing_page_only": 0,
+                        "extracted_markdown": 0, "extracted_text": 0,
+                        "tool_missing": 0, "failed": 0},
         }
         with tempfile.TemporaryDirectory() as td:
             store = Path(td)
@@ -5897,19 +5905,38 @@ And display: \[a + b = c\]
         print(f"  [FAIL] MM. CLI parse new fulltext subcommands: {e}")
         failed += 1
 
-    # --- NN. PDF extractor gracefully returns tool_missing if no library ---
+    # --- NN. PDF extractor gracefully returns tool_missing when imports fail ---
     try:
         import tempfile
+        import sys
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             f.write(b"%PDF-1.4 fake pdf content")
             fake_pdf = Path(f.name)
-        result = extract_pdf_text(fake_pdf)
-        assert result["status"] == "tool_missing", f"Expected tool_missing, got {result['status']}"
-        assert result["method"] == "none", f"Expected method=none, got {result['method']}"
-        assert "pymupdf" in result["error"].lower() or "pypdf" in result["error"].lower() or "pdfminer" in result["error"].lower(), f"Expected install suggestion in error"
-        fake_pdf.unlink()
-        print("  [PASS] NN. PDF extractor returns tool_missing if no library installed")
-        passed += 1
+        # Mock import failure by temporarily blocking pdf libraries
+        blocked = {}
+        for mod_name in ["fitz", "pypdf", "pdfminer", "pdfminer.six",
+                         "pdfminer.high_level", "pdfminer.pdfparser",
+                         "pdfminer.cmapdb", "pdfminer.converter",
+                         "pdfminer.layout", "pdfminer.pdfdocument",
+                         "pdfminer.pdfpage", "pdfminer.psparser"]:
+            if mod_name in sys.modules:
+                blocked[mod_name] = sys.modules.pop(mod_name)
+            sys.modules[mod_name] = None  # None causes ImportError on import
+        try:
+            result = extract_pdf_text(fake_pdf)
+            assert result["status"] == "tool_missing", f"Expected tool_missing, got {result['status']}"
+            assert result["method"] == "none", f"Expected method=none, got {result['method']}"
+            assert "pymupdf" in result["error"].lower() or "pypdf" in result["error"].lower() or "pdfminer" in result["error"].lower(), f"Expected install suggestion in error"
+            print("  [PASS] NN. PDF extractor returns tool_missing when imports blocked")
+            passed += 1
+        finally:
+            # Restore original modules
+            for mod_name in list(sys.modules.keys()):
+                if sys.modules[mod_name] is None:
+                    del sys.modules[mod_name]
+            for mod_name, mod_val in blocked.items():
+                sys.modules[mod_name] = mod_val
+            fake_pdf.unlink()
     except Exception as e:
         print(f"  [FAIL] NN. PDF extractor tool_missing: {e}")
         failed += 1
@@ -6696,6 +6723,37 @@ def validate_fulltext_store(store_path: Path, json_output: bool = False) -> dict
                         )
         except Exception:
             warnings.append("cannot parse full_text_queue.json for consistency check")
+
+    # Check summary consistency with items
+    summary = manifest.get("summary", {})
+    if items and summary:
+        # Count from items
+        counts = {
+            "source_acquired_unreviewed": 0,
+            "likely_full_text": 0,
+            "metadata_page_only": 0,
+            "landing_page_only": 0,
+            "manual_required": 0,
+            "extracted_markdown": 0,
+            "extracted_text": 0,
+            "tool_missing": 0,
+            "failed": 0,
+        }
+        for item in items:
+            fts = item.get("full_text_status", "")
+            if fts in counts:
+                counts[fts] += 1
+            ext = item.get("extraction_status", "")
+            if ext in counts:
+                counts[ext] += 1
+
+        # Compare with summary
+        for key, expected in counts.items():
+            actual = summary.get(key, -1)
+            if actual != expected:
+                errors.append(
+                    f"summary.{key}={actual} but items count={expected}"
+                )
 
     # check for tracked full-text files
     import subprocess

@@ -49,12 +49,12 @@
       "acquisition_method": "open_pdf",
       "full_text_status": "likely_full_text",
       "extraction_status": "tool_missing",
-      "extraction_method": "html_text",
+      "extraction_method": "pdf_text",
       "local_source_path": "",
       "local_pdf_path": "literature\\full_text_store\\current\\raw_pdfs\\2024.emnlp-main.84.pdf",
       "local_html_path": "literature\\full_text_store\\current\\raw_html\\ftq_002.html",
       "local_text_path": "",
-      "local_markdown_path": "literature\\full_text_store\\current\\raw_html\\ftq_002.md",
+      "local_markdown_path": "",
       "should_commit_raw": false,
       "should_commit_extracted_full_text": false,
       "blocking_for": [
@@ -62,7 +62,7 @@
         "experiment_plan"
       ],
       "review_questions": [],
-      "notes": ""
+      "notes": "PDF acquired via ACL Anthology (open_pdf). Extraction pending (tool_missing)."
     },
     {
       "queue_id": "ftq_003",
@@ -294,12 +294,12 @@
     "acquired": 10,
     "manual_required": 0,
     "source_acquired_unreviewed": 4,
-    "likely_full_text": 1,
-    "metadata_page_only": 4,
+    "likely_full_text": 2,
+    "metadata_page_only": 3,
     "landing_page_only": 1,
     "extracted_markdown": 4,
-    "extracted_text": 5,
-    "tool_missing": 1,
+    "extracted_text": 4,
+    "tool_missing": 2,
     "failed": 0
   }
 }
