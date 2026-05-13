@@ -19,13 +19,14 @@ The system is useful but incomplete. The primary gap is user experience: there i
 
 ### Native Command Layer
 
-**Status: NOT IMPLEMENTED**
+**Status: PARTIAL (Phase 18A/B implemented)**
 
-- No `research_cli.py` exists.
-- No single entry point for `start`, `status`, `continue`, `validate`.
-- User must manually copy `python tools/research_workflow.py prepare <stage>` commands.
-- `/status` slash command exists via `register_slash_commands.py` + `skills/status/SKILL.md` but is not integrated into a unified CLI.
-- The target document specifies `/idea-discovery`, `/novelty-check`, `/experiment-plan`, `/status` — none of these exist as stable user-facing commands.
+- `tools/research_cli.py` implemented with `status`, `validate`, and `repair-queue` subcommands.
+- `status` reads all trusted outputs, aggregates validator results, summarizes evidence, parses repair queue, computes next allowed stage.
+- `validate` runs all checks and exits 0 only if no blocking issues.
+- `repair-queue` parses and displays the full repair queue table.
+- `/status` slash command still via `register_slash_commands.py` + `skills/status/SKILL.md` but research_cli.py provides the core functionality.
+- One-command `start --idea` and `continue --stage` remain future work (Phase 18C/D).
 
 ### Skill Method Layer
 
@@ -116,11 +117,13 @@ Gaps:
 
 ### Status Tracking Layer
 
-**Status: PARTIAL**
+**Status: PARTIAL (Phase 18A/B implemented)**
 
-- `research_status.py` exists as CLI status viewer
-- `/status` slash command registered
-- No unified status showing current stage, validators, blockers, repair queue, next allowed stage
+- `research_cli.py status` provides unified status with current stage, completed stages, trusted outputs, validator results, evidence summary, repair queue, blockers, warnings, and next allowed stage.
+- `research_cli.py validate` provides strict validation gate.
+- `research_cli.py repair-queue` provides full repair queue display.
+- `research_status.py` still exists as standalone viewer.
+- Full autonomous status tracking with history still incomplete.
 
 ---
 

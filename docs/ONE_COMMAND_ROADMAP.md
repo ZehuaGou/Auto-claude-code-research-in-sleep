@@ -1,6 +1,7 @@
 # One-Command Trusted Research Automation Roadmap
 
 **Date:** 2026-05-13
+**Phase 18A/B Status:** IMPLEMENTED — `tools/research_cli.py` provides `status`, `validate`, and `repair-queue` commands. No model calls. No network calls. One-command `start` remains future work.
 
 ---
 
@@ -186,6 +187,10 @@ This stage must be **generic** — not hardcoded to hallucination trajectory.
 ## 8. Implementation Phases
 
 ### Phase 18A — Status Summary Command
+
+Phase 18A is implemented. See Phase 18A/B below.
+
+### Phase 18B — Research CLI Skeleton
 - Read existing artifacts from `research/current/trusted_outputs/`
 - Run validators (`validate_model_invocation` for each completed stage)
 - Print current state as JSON
