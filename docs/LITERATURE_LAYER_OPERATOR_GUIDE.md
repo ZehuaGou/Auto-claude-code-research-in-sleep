@@ -226,6 +226,18 @@ python tools/literature_evidence_landing.py summarize-fulltext-store \
   --store literature/full_text_store/current --json
 ```
 
+**Understanding full_text_status:**
+
+| Status | Meaning | Can provide evidence after review? |
+|--------|---------|-----------------------------------|
+| `source_acquired_unreviewed` | arXiv LaTeX source downloaded, rough Markdown extraction done | Yes (after human review) |
+| `likely_full_text` | PDF downloaded, likely contains full text | Yes (after extraction + review) |
+| `metadata_page_only` | OpenAlex metadata page, NOT full text | No — need alternative source |
+| `landing_page_only` | DOI/publisher landing page, NOT full text | No — need alternative source |
+| `manual_required` | Could not be acquired automatically | No — need manual acquisition |
+
+**Critical distinction:** `acquired` does NOT mean `full_text_available`. OpenAlex URLs are metadata pages, not full text. DOI landing pages are typically not full text. Only arXiv LaTeX source and arXiv PDF provide actual full text potential.
+
 ---
 
 ## 6. Runtime File Policy

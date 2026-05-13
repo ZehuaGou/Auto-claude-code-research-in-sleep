@@ -283,21 +283,34 @@ Priority: critical (papers 1-3), high (papers 4-7), medium (papers 8-10).
 
 ### validate-fulltext-store
 
-Validates full-text store manifest. Checks schema, safety flags (no paywall bypass, no model used, no committed full text), queue_id uniqueness, status enums, and gitignore rules.
+Validates full-text store manifest. Checks schema, safety flags (no paywall bypass, no model used, no committed full text), queue_id uniqueness, status enums, manifest/queue consistency, and gitignore rules.
 
 ```bash
 python tools/literature_evidence_landing.py validate-fulltext-store \
   --store literature/full_text_store/current
 ```
 
+Valid full_text_status values: `source_acquired_unreviewed`, `likely_full_text`, `metadata_page_only`, `landing_page_only`, `manual_required`, `unknown`
+
+Validation checks:
+- Manifest schema valid
+- All safety flags correct (no paywall_bypass_used, no model_used, no committed full text)
+- queue_id uniqueness
+- full_text_status enum valid
+- Manifest/queue consistency (queue items match manifest items)
+- OpenAlex URLs classified as metadata_page_only
+- DOI landing pages classified as landing_page_only
+
 ### summarize-fulltext-store
 
-Summarizes full-text store status: total items, acquired, manual required, extracted markdown/text, failed.
+Summarizes full-text store status with full_text_status breakdown: source_acquired_unreviewed, likely_full_text, metadata_page_only, landing_page_only, manual_required, extracted_markdown, extracted_text, tool_missing, failed.
 
 ```bash
 python tools/literature_evidence_landing.py summarize-fulltext-store \
   --store literature/full_text_store/current --json
 ```
+
+Key insight: `acquired` does NOT mean `full_text_available`. Many acquired items are metadata pages or landing pages, not actual full text. Only `source_acquired_unreviewed` and `likely_full_text` provide potential full text after human review.
 
 ---
 

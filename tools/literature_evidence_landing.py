@@ -65,6 +65,11 @@ VALID_FULL_TEXT_STATUSES = frozenset([
     "available", "metadata_only", "manual_required", "failed"
 ])
 
+VALID_STORE_FULL_TEXT_STATUSES = frozenset([
+    "likely_full_text", "landing_page_only", "metadata_page_only",
+    "source_acquired_unreviewed", "manual_required", "unknown"
+])
+
 VALID_PARSE_STATUSES = frozenset([
     "not_started", "parsed", "failed", "not_applicable"
 ])
@@ -5892,6 +5897,9 @@ VALID_EXTRACTION_STATUSES = frozenset([
 VALID_EXTRACTION_METHODS = frozenset([
     "latex_to_markdown_mvp", "pdf_text", "html_text", "none"
 ])
+
+OPENALEX_HOST_PATTERNS = ("openalex.org", "openalex.org/")
+DOI_HOST_PATTERNS = ("doi.org", "dx.doi.org")
 VALID_PRIORITIES = frozenset(["critical", "high", "medium"])
 
 ARXIV_SOURCE_URL = "https://arxiv.org/e-print/{arxiv_id}"
@@ -6226,6 +6234,40 @@ def _acquire_open_url(url: str, output_dir: Path, queue_id: str) -> dict:
         return {"status": "failed", "error": str(e)}
 
 
+def _classify_full_text_status(acquisition_method: str, url: str,
+                                extraction_status: str) -> str:
+    """Classify full_text_status based on acquisition method and URL.
+
+    Rules:
+    - arxiv_source with extracted_markdown => source_acquired_unreviewed
+    - arxiv_pdf => likely_full_text (PDF downloaded)
+    - open_html from openalex.org => metadata_page_only
+    - DOI landing page / publisher page => landing_page_only
+    - manual_required => manual_required
+    """
+    if acquisition_method == "arxiv_source":
+        if extraction_status == "extracted_markdown":
+            return "source_acquired_unreviewed"
+        return "source_acquired_unreviewed"
+    if acquisition_method == "arxiv_pdf":
+        return "likely_full_text"
+    if acquisition_method in ("open_html", "open_pdf"):
+        url_lower = url.lower()
+        # OpenAlex pages are metadata, not full text
+        for pattern in OPENALEX_HOST_PATTERNS:
+            if pattern in url_lower:
+                return "metadata_page_only"
+        # DOI landing pages are typically not full text
+        for pattern in DOI_HOST_PATTERNS:
+            if pattern in url_lower:
+                return "landing_page_only"
+        # Other publisher pages: assume landing page unless proven otherwise
+        return "landing_page_only"
+    if acquisition_method == "manual_required":
+        return "manual_required"
+    return "unknown"
+
+
 def acquire_open_fulltext(
     top_k_path: Path,
     output_dir: Path,
@@ -6340,14 +6382,36 @@ def acquire_open_fulltext(
             entry["acquisition_method"] = "manual_required"
             entry["notes"] = "no legal open-access full text found automatically"
 
+        # Classify full_text_status
+        entry["full_text_status"] = _classify_full_text_status(
+            entry["acquisition_method"], url, entry["extraction_status"]
+        )
+        entry["review_status"] = "not_reviewed"
+
         results.append(entry)
 
     summary = {
         "total_items": len(results),
-        "acquired": sum(1 for r in results if r["acquisition_status"] == "acquired"),
-        "manual_required": sum(1 for r in results if r["acquisition_status"] == "manual_required"),
-        "extracted_markdown": sum(1 for r in results if r["extraction_status"] == "extracted_markdown"),
-        "extracted_text": sum(1 for r in results if r["extraction_status"] == "extracted_text"),
+        "source_or_pdf_acquired": sum(1 for r in results
+            if r["acquisition_method"] in ("arxiv_source", "arxiv_pdf")),
+        "likely_full_text": sum(1 for r in results
+            if r.get("full_text_status") == "likely_full_text"),
+        "source_acquired_unreviewed": sum(1 for r in results
+            if r.get("full_text_status") == "source_acquired_unreviewed"),
+        "landing_or_metadata_only": sum(1 for r in results
+            if r.get("full_text_status") in ("landing_page_only", "metadata_page_only")),
+        "metadata_page_only": sum(1 for r in results
+            if r.get("full_text_status") == "metadata_page_only"),
+        "landing_page_only": sum(1 for r in results
+            if r.get("full_text_status") == "landing_page_only"),
+        "manual_required": sum(1 for r in results
+            if r.get("full_text_status") == "manual_required"),
+        "extracted_markdown": sum(1 for r in results
+            if r["extraction_status"] == "extracted_markdown"),
+        "extracted_text": sum(1 for r in results
+            if r["extraction_status"] == "extracted_text"),
+        "tool_missing": sum(1 for r in results
+            if r["extraction_status"] == "tool_missing"),
         "failed": sum(1 for r in results if r["acquisition_status"] == "failed"),
     }
 
@@ -6365,6 +6429,40 @@ def acquire_open_fulltext(
     }
 
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Generate full_text_queue.json from manifest items
+    queue_items = []
+    for r in results:
+        queue_items.append({
+            "queue_id": r["queue_id"],
+            "title": r["title"],
+            "acquisition_status": r["acquisition_status"],
+            "acquisition_method": r["acquisition_method"],
+            "extraction_status": r["extraction_status"],
+            "full_text_status": r.get("full_text_status", "unknown"),
+            "review_status": r.get("review_status", "not_reviewed"),
+            "local_source_path": r["local_source_path"],
+            "local_pdf_path": r["local_pdf_path"],
+            "local_html_path": r["local_html_path"],
+            "local_markdown_path": r["local_markdown_path"],
+            "manual_required_reason": r.get("notes", "") if r["acquisition_status"] == "manual_required" else "",
+        })
+
+    queue = {
+        "schema_version": "full_text_queue_v1",
+        "source_manifest": str(manifest_path),
+        "items": queue_items,
+        "summary": {
+            "total_items": summary["total_items"],
+            "likely_full_text": summary["likely_full_text"],
+            "source_acquired_unreviewed": summary["source_acquired_unreviewed"],
+            "landing_or_metadata_only": summary["landing_or_metadata_only"],
+            "manual_required": summary["manual_required"],
+        },
+    }
+
+    queue_path = output_dir / "full_text_queue.json"
+    queue_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return {"status": "PASS", "summary": summary, "manifest": str(manifest_path)}
 
@@ -6427,6 +6525,25 @@ def validate_fulltext_store(store_path: Path, json_output: bool = False) -> dict
         if priority not in VALID_PRIORITIES:
             errors.append(f"invalid priority '{priority}' for {qid}")
 
+        # full_text_status validation
+        fts = item.get("full_text_status", "")
+        if fts and fts not in VALID_STORE_FULL_TEXT_STATUSES:
+            errors.append(f"invalid full_text_status '{fts}' for {qid}")
+
+        # Check: open_html from openalex.org must not be likely_full_text
+        url = item.get("url", "").lower()
+        if method == "open_html" and fts == "likely_full_text":
+            if any(p in url for p in OPENALEX_HOST_PATTERNS):
+                errors.append(
+                    f"open_html from openalex.org cannot be likely_full_text for {qid}; "
+                    f"should be metadata_page_only"
+                )
+            elif any(p in url for p in DOI_HOST_PATTERNS):
+                warnings.append(
+                    f"open_html from DOI landing page may not be full text for {qid}; "
+                    f"consider landing_page_only"
+                )
+
         if status == "acquired":
             has_path = (item.get("local_source_path") or item.get("local_pdf_path")
                         or item.get("local_html_path"))
@@ -6436,6 +6553,30 @@ def validate_fulltext_store(store_path: Path, json_output: bool = False) -> dict
         if ext_status == "extracted_markdown":
             if not item.get("local_markdown_path"):
                 warnings.append(f"extracted_markdown item {qid} has no local_markdown_path")
+
+    # Check manifest/queue consistency
+    queue_path = store_path / "full_text_queue.json"
+    if queue_path.exists():
+        try:
+            queue = json.loads(queue_path.read_text(encoding="utf-8"))
+            queue_items = {qi["queue_id"]: qi for qi in queue.get("items", [])}
+            for item in items:
+                qid = item.get("queue_id", "")
+                if qid in queue_items:
+                    qi = queue_items[qid]
+                    # Status must agree
+                    if item.get("acquisition_status") != qi.get("acquisition_status"):
+                        errors.append(
+                            f"manifest/queue disagree on acquisition_status for {qid}: "
+                            f"manifest={item.get('acquisition_status')} queue={qi.get('acquisition_status')}"
+                        )
+                    if item.get("full_text_status") != qi.get("full_text_status"):
+                        errors.append(
+                            f"manifest/queue disagree on full_text_status for {qid}: "
+                            f"manifest={item.get('full_text_status')} queue={qi.get('full_text_status')}"
+                        )
+        except Exception:
+            warnings.append("cannot parse full_text_queue.json for consistency check")
 
     # check for tracked full-text files
     import subprocess
@@ -6493,10 +6634,16 @@ def summarize_fulltext_store(store_path: Path, json_output: bool = False) -> dic
         "status": "PASS",
         "schema_version": manifest.get("schema_version"),
         "total_items": summary.get("total_items", len(items)),
-        "acquired": summary.get("acquired", 0),
+        "source_or_pdf_acquired": summary.get("source_or_pdf_acquired", 0),
+        "likely_full_text": summary.get("likely_full_text", 0),
+        "source_acquired_unreviewed": summary.get("source_acquired_unreviewed", 0),
+        "landing_or_metadata_only": summary.get("landing_or_metadata_only", 0),
+        "metadata_page_only": summary.get("metadata_page_only", 0),
+        "landing_page_only": summary.get("landing_page_only", 0),
         "manual_required": summary.get("manual_required", 0),
         "extracted_markdown": summary.get("extracted_markdown", 0),
         "extracted_text": summary.get("extracted_text", 0),
+        "tool_missing": summary.get("tool_missing", 0),
         "failed": summary.get("failed", 0),
         "paywall_bypass_used": manifest.get("paywall_bypass_used", False),
         "model_used": manifest.get("model_used", False),
@@ -6511,6 +6658,7 @@ def summarize_fulltext_store(store_path: Path, json_output: bool = False) -> dic
             "acquisition_status": item.get("acquisition_status"),
             "acquisition_method": item.get("acquisition_method"),
             "extraction_status": item.get("extraction_status"),
+            "full_text_status": item.get("full_text_status", "unknown"),
         })
 
     return result

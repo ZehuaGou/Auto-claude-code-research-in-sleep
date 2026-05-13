@@ -38,6 +38,7 @@ No issue may be silently ignored. Every issue must be recorded in the table belo
 | LRQ-016 | Semantic Scholar adapter deferred | 2026-05-13 | medium | repair_queue | Add Semantic Scholar adapter with aggressive rate-limit handling | open | no for current scope, yes for broader coverage | Deferred from Phase 20 due to aggressive rate limits. arXiv + Crossref + OpenAlex sufficient for MVP. |
 | LRQ-017 | Forbidden-token false positive in top_k limitation text | 2026-05-13 | high | fix_now | Removed confirmed_novel from generated limitation wording | fixed in Phase 20B | yes — can trigger boundary/contamination false positive | Replaced with safe wording in literature_evidence_landing.py top_k generator. |
 | LRQ-018 | Full-text review automation not yet trusted | 2026-05-13 | high | repair_queue | Review critical papers, then rerun trusted stages | open | yes before experiment_plan | Acquisition store exists with 10 papers acquired; human review of closest prior work (ICR Probe, INSIDE, Unsupervised Real-Time Detection) required before experiment_plan can advance. |
+| LRQ-019 | OpenAlex URLs are metadata pages, not full text | 2026-05-13 | high | fix_now | Added full_text_status classification: source_acquired_unreviewed, likely_full_text, metadata_page_only, landing_page_only, manual_required | fixed | no, but clarifies evidence quality | 4/10 papers from openalex.org are metadata_page_only, 1 from DOI is landing_page_only. Only 4 arxiv_source + 1 arxiv_pdf provide actual full text potential. Manifest/queue consistency validated. |
 
 ---
 

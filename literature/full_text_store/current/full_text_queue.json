@@ -11,8 +11,11 @@
       "arxiv_id": "2506.09886",
       "doi": "",
       "priority": "critical",
-      "acquisition_status": "manual_required",
-      "notes": "acquisition not yet attempted"
+      "acquisition_status": "acquired",
+      "full_text_status": "source_acquired_unreviewed",
+      "acquisition_method": "arxiv_source",
+      "review_status": "pending",
+      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review"
     },
     {
       "queue_id": "ftq_002",
@@ -22,8 +25,11 @@
       "arxiv_id": "",
       "doi": "10.18653/v1/2024.emnlp-main.84",
       "priority": "critical",
-      "acquisition_status": "manual_required",
-      "notes": "acquisition not yet attempted"
+      "acquisition_status": "acquired",
+      "full_text_status": "metadata_page_only",
+      "acquisition_method": "open_html",
+      "review_status": "pending",
+      "notes": "OpenAlex metadata page, not full text. Need alternative source."
     },
     {
       "queue_id": "ftq_003",
@@ -33,8 +39,11 @@
       "arxiv_id": "2402.03744",
       "doi": "",
       "priority": "critical",
-      "acquisition_status": "manual_required",
-      "notes": "acquisition not yet attempted"
+      "acquisition_status": "acquired",
+      "full_text_status": "source_acquired_unreviewed",
+      "acquisition_method": "arxiv_source",
+      "review_status": "pending",
+      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review"
     },
     {
       "queue_id": "ftq_004",
@@ -44,8 +53,11 @@
       "arxiv_id": "",
       "doi": "10.48550/arxiv.2410.02707",
       "priority": "high",
-      "acquisition_status": "manual_required",
-      "notes": "acquisition not yet attempted"
+      "acquisition_status": "acquired",
+      "full_text_status": "metadata_page_only",
+      "acquisition_method": "open_html",
+      "review_status": "pending",
+      "notes": "OpenAlex metadata page, not full text. Need alternative source."
     },
     {
       "queue_id": "ftq_005",
@@ -55,8 +67,11 @@
       "arxiv_id": "2604.06277",
       "doi": "",
       "priority": "high",
-      "acquisition_status": "manual_required",
-      "notes": "acquisition not yet attempted"
+      "acquisition_status": "acquired",
+      "full_text_status": "source_acquired_unreviewed",
+      "acquisition_method": "arxiv_source",
+      "review_status": "pending",
+      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review"
     },
     {
       "queue_id": "ftq_006",
@@ -66,8 +81,11 @@
       "arxiv_id": "2507.16488",
       "doi": "",
       "priority": "high",
-      "acquisition_status": "manual_required",
-      "notes": "acquisition not yet attempted"
+      "acquisition_status": "acquired",
+      "full_text_status": "source_acquired_unreviewed",
+      "acquisition_method": "arxiv_source",
+      "review_status": "pending",
+      "notes": "LaTeX source acquired, rough Markdown extraction done, needs human review"
     },
     {
       "queue_id": "ftq_007",
@@ -77,8 +95,11 @@
       "arxiv_id": "",
       "doi": "10.1109/icmla66185.2025.00214",
       "priority": "high",
-      "acquisition_status": "manual_required",
-      "notes": "acquisition not yet attempted"
+      "acquisition_status": "acquired",
+      "full_text_status": "landing_page_only",
+      "acquisition_method": "open_html",
+      "review_status": "pending",
+      "notes": "DOI landing page, not full text. Need alternative source."
     },
     {
       "queue_id": "ftq_008",
@@ -88,8 +109,11 @@
       "arxiv_id": "2509.14254",
       "doi": "",
       "priority": "medium",
-      "acquisition_status": "manual_required",
-      "notes": "acquisition not yet attempted"
+      "acquisition_status": "acquired",
+      "full_text_status": "likely_full_text",
+      "acquisition_method": "arxiv_pdf",
+      "review_status": "pending",
+      "notes": "PDF downloaded, needs text extraction (pdf tool missing) and human review"
     },
     {
       "queue_id": "ftq_009",
@@ -99,8 +123,11 @@
       "arxiv_id": "",
       "doi": "10.1109/icassp49660.2025.10889328",
       "priority": "medium",
-      "acquisition_status": "manual_required",
-      "notes": "acquisition not yet attempted"
+      "acquisition_status": "acquired",
+      "full_text_status": "metadata_page_only",
+      "acquisition_method": "open_html",
+      "review_status": "pending",
+      "notes": "OpenAlex metadata page, not full text. Need alternative source."
     },
     {
       "queue_id": "ftq_010",
@@ -110,8 +137,20 @@
       "arxiv_id": "",
       "doi": "10.48550/arxiv.2403.06448",
       "priority": "medium",
-      "acquisition_status": "manual_required",
-      "notes": "acquisition not yet attempted"
+      "acquisition_status": "acquired",
+      "full_text_status": "metadata_page_only",
+      "acquisition_method": "open_html",
+      "review_status": "pending",
+      "notes": "OpenAlex metadata page, not full text. Need alternative source."
     }
-  ]
+  ],
+  "summary": {
+    "total_items": 10,
+    "source_acquired_unreviewed": 4,
+    "likely_full_text": 1,
+    "metadata_page_only": 4,
+    "landing_page_only": 1,
+    "manual_required": 0,
+    "pending_review": 10
+  }
 }

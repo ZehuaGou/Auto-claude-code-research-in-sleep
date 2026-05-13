@@ -9,7 +9,7 @@
 
 **Phase 20B Status:** IMPLEMENTED — forbidden-token `confirmed_novel` removed from top_k generator. Trusted stages refreshed via trusted_role_runner: literature_search (deepseek-v4-flash, call_1aa9746795ae), novelty_check (deepseek-v4-pro, call truncated but file written), method_refinement (deepseek-v4-pro, needs_more_literature_evidence). experiment_plan remains blocked. Full-text verification of closest prior work (ICR Probe, INSIDE, Unsupervised Real-Time Detection) required before readiness gate can advance.
 
-**Phase 21A Status:** IMPLEMENTED — open-access full-text acquisition MVP. 10/10 top-k papers acquired (5 arxiv_source, 1 arxiv_pdf, 4 open_html). 4 extracted_markdown, 5 extracted_text, 1 tool_missing (no PDF extraction library). No paywall bypass. No committed PDFs/full text. Full-text store with manifest, queue, review notes. 80 self-tests pass. experiment_plan remains blocked until human review of closest prior work completes (Phase 21B).
+**Phase 21A Status:** IMPLEMENTED — open-access full-text acquisition MVP. 10/10 top-k papers acquired (5 arxiv_source, 1 arxiv_pdf, 4 open_html). 4 extracted_markdown, 5 extracted_text, 1 tool_missing (no PDF extraction library). No paywall bypass. No committed PDFs/full text. Full-text store with manifest, queue, review notes. 80 self-tests pass. **Phase 21A fix:** full_text_status classification added (source_acquired_unreviewed: 4, likely_full_text: 1, metadata_page_only: 4, landing_page_only: 1). OpenAlex metadata pages correctly classified as metadata_page_only. Manifest/queue consistency validated. experiment_plan remains blocked until human review of closest prior work completes (Phase 21B).
 
 ---
 

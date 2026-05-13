@@ -2,6 +2,20 @@
 
 This store holds open-access or user-provided full text for papers in the current top-k evidence.
 
+## Critical Distinction: Acquired ≠ Reviewed ≠ Trusted
+
+- **acquired** = file downloaded from source (does NOT mean full text verified)
+- **full_text_status** = classification of what was actually acquired:
+  - `source_acquired_unreviewed` — arXiv LaTeX source downloaded, rough Markdown extraction done, needs human review
+  - `likely_full_text` — PDF downloaded, likely contains full text, needs extraction + review
+  - `metadata_page_only` — OpenAlex metadata page, NOT full text
+  - `landing_page_only` — DOI/publisher landing page, NOT full text
+  - `manual_required` — could not be acquired automatically
+- **reviewed** = human has verified the content is actual full text and extracted key information
+- **trusted** = review notes updated and trusted stages rerun
+
+Only `source_acquired_unreviewed` and `likely_full_text` papers can provide evidence for novelty claims after human review.
+
 ## Rules
 
 - Do not bypass paywalls. Do not use Sci-Hub, login scraping, or cookie-based access.
