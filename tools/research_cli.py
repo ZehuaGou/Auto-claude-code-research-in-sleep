@@ -34,6 +34,7 @@ STAGE_PATHS = {
     "literature_search": "research/current/trusted_outputs/literature_search.md",
     "novelty_check": "research/current/trusted_outputs/novelty_check.md",
     "method_refinement": "research/current/trusted_outputs/method_refinement.md",
+    "idea_pivot": "research/current/trusted_outputs/idea_pivot.md",
     "experiment_plan": "research/current/trusted_outputs/experiment_plan.md",
     "implementation_plan": "research/current/trusted_outputs/implementation_plan.md",
     "result_judge": "research/current/trusted_outputs/result_judge.md",
@@ -49,6 +50,7 @@ STAGE_ORDER = [
     "literature_search",
     "novelty_check",
     "method_refinement",
+    "idea_pivot",
     "experiment_plan",
     "implementation_plan",
     "result_judge",
@@ -62,6 +64,7 @@ ROLE_TO_STAGE = {
     "literature_scout": "literature_search",
     "novelty_checker": "novelty_check",
     "method_refiner": "method_refinement",
+    "idea_pivoter": "idea_pivot",
 }
 
 
@@ -1077,6 +1080,7 @@ def _stage_execution_type(stage: str) -> str:
         "literature_search": "trusted_model",
         "novelty_check": "trusted_model",
         "method_refinement": "trusted_model",
+        "idea_pivot": "trusted_model",
         "experiment_plan": "trusted_model",
         "implementation_plan": "trusted_model",
         "result_judge": "trusted_model",
@@ -1095,6 +1099,7 @@ def _stage_command(stage: str) -> str:
         "literature_search": "python tools/trusted_role_runner.py --role literature_scout ...",
         "novelty_check": "python tools/trusted_role_runner.py --role novelty_checker ...",
         "method_refinement": "python tools/trusted_role_runner.py --role method_refiner ...",
+        "idea_pivot": "python tools/trusted_role_runner.py --role idea_pivoter ...",
         "experiment_plan": "python tools/trusted_role_runner.py --role experiment_planner ...",
         "implementation_plan": "python tools/trusted_role_runner.py --role implementation_planner ...",
         "result_judge": "python tools/trusted_role_runner.py --role result_judge ...",
@@ -1133,6 +1138,16 @@ def _stage_inputs(stage: str) -> list[str]:
             "literature/search_runs/current/top_k.md",
             "docs/LITERATURE_REPAIR_QUEUE.md",
         ],
+        "idea_pivot": [
+            "research/current/input_normalization.md",
+            "research/current/trusted_outputs/research_contract.md",
+            "research/current/literature_notes.md",
+            "research/current/trusted_outputs/literature_search.md",
+            "research/current/trusted_outputs/novelty_check.md",
+            "research/current/trusted_outputs/method_refinement.md",
+            "literature/search_runs/current/top_k.md",
+            "docs/LITERATURE_REPAIR_QUEUE.md",
+        ],
         "experiment_plan": [
             "research/current/input_normalization.md",
             "research/current/trusted_outputs/research_contract.md",
@@ -1155,6 +1170,7 @@ def _stage_outputs(stage: str) -> list[str]:
         "literature_search": ["research/current/trusted_outputs/literature_search.md"],
         "novelty_check": ["research/current/trusted_outputs/novelty_check.md"],
         "method_refinement": ["research/current/trusted_outputs/method_refinement.md"],
+        "idea_pivot": ["research/current/trusted_outputs/idea_pivot.md"],
         "experiment_plan": ["research/current/trusted_outputs/experiment_plan.md"],
     }
     return outputs.get(stage, [])
@@ -1168,6 +1184,7 @@ def _stage_validator(stage: str) -> str | None:
         "literature_search": "validate_model_invocation --role literature_scout",
         "novelty_check": "validate_model_invocation --role novelty_checker",
         "method_refinement": "validate_model_invocation --role method_refiner",
+        "idea_pivot": "validate_model_invocation --role idea_pivoter",
     }
     return validators.get(stage)
 
@@ -1182,6 +1199,7 @@ def _stage_mutation_type(stage: str) -> str:
         "literature_search": "trusted_output",
         "novelty_check": "trusted_output",
         "method_refinement": "trusted_output",
+        "idea_pivot": "trusted_output",
         "experiment_plan": "trusted_output",
     }
     return types.get(stage, "none")
@@ -1430,17 +1448,17 @@ def self_test() -> bool:
         print(f"  [FAIL] 6. compute_next_allowed, got: {result}")
         failed += 1
 
-    # Test 7: compute_next_allowed allows experiment_plan after method_refinement
+    # Test 7: compute_next_allowed allows experiment_plan after method_refinement and idea_pivot
     trusted2 = {stage: {"exists": False} for stage in STAGE_ORDER}
     for stage in STAGE_ORDER:
         if stage in ("raw_user_input", "input_normalization", "research_contract",
                       "literature_notes", "literature_search", "novelty_check",
-                      "method_refinement", "experiment_plan"):
+                      "method_refinement", "idea_pivot", "experiment_plan"):
             trusted2[stage] = {"exists": True, "allowed_next_stage": "True"}
     trusted2["implementation_plan"] = {"exists": False}
     result2 = compute_next_allowed(trusted2, {}, {"high_severity_open": 0})
     if result2["next_allowed_stage"] == "implementation_plan":
-        print("  [PASS] 7. compute_next_allowed allows experiment_plan after method_refinement")
+        print("  [PASS] 7. compute_next_allowed allows experiment_plan after method_refinement and idea_pivot")
         passed += 1
     else:
         print(f"  [FAIL] 7. compute_next_allowed, got: {result2}")
@@ -1809,23 +1827,25 @@ def self_test() -> bool:
         print(f"  [FAIL] 31. build_continue_plan for experiment_plan, got: {result31}")
         failed += 1
 
-    # Test 32: build_continue_plan execution_steps includes completed and will_execute
+    # Test 32: build_continue_plan execution_steps are all will_execute (current case is blocked)
     steps32 = result31.get("execution_steps", [])
     statuses32 = [s["status"] for s in steps32]
-    if "completed" in statuses32 and "will_execute" in statuses32:
-        print("  [PASS] 32. build_continue_plan includes both completed and will_execute steps")
+    # Current case has method_refinement completed but experiment_plan not, so
+    # continue to experiment_plan should include idea_pivot and experiment_plan as will_execute
+    if all(s == "will_execute" for s in statuses32):
+        print("  [PASS] 32. build_continue_plan steps are all will_execute for blocked case")
         passed += 1
     else:
-        print(f"  [FAIL] 32. expected completed and will_execute in steps, got: {statuses32}")
+        print(f"  [FAIL] 32. expected all will_execute, got: {statuses32}")
         failed += 1
 
-    # Test 33: build_continue_plan for experiment_plan has method_refinement in steps
+    # Test 33: build_continue_plan for experiment_plan has idea_pivot and experiment_plan in steps
     stage_ids33 = [s["stage_id"] for s in steps32]
-    if "method_refinement" in stage_ids33 and "experiment_plan" in stage_ids33:
-        print("  [PASS] 33. build_continue_plan includes method_refinement and experiment_plan steps")
+    if "idea_pivot" in stage_ids33 and "experiment_plan" in stage_ids33:
+        print("  [PASS] 33. build_continue_plan includes idea_pivot and experiment_plan steps")
         passed += 1
     else:
-        print(f"  [FAIL] 33. expected method_refinement and experiment_plan in steps, got: {stage_ids33}")
+        print(f"  [FAIL] 33. expected idea_pivot and experiment_plan in steps, got: {stage_ids33}")
         failed += 1
 
     # Test 34: build_continue_plan plan has safety flags False
