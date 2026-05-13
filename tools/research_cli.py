@@ -490,6 +490,19 @@ def build_status() -> dict[str, Any]:
 
     blocked = len(next_allowed["blockers"]) > 0
 
+    # Compute system health: are all validators passing? Any broken tools?
+    system_health = "healthy"
+    system_issues = []
+    for stage, v in validators.items():
+        if v.get("validation_status") == "error":
+            system_health = "degraded"
+            system_issues.append(f"{stage}: validator error")
+        elif v.get("validation_status") == "parsed":
+            allowed = v.get("allowed_next_stage")
+            if allowed is False or str(allowed).lower() == "false":
+                system_health = "degraded"
+                system_issues.append(f"{stage}: allowed_next_stage=false")
+
     return {
         "schema_version": "research_cli_status_v1",
         "current_stage": next_allowed.get("next_allowed_stage", "unknown"),
@@ -503,6 +516,8 @@ def build_status() -> dict[str, Any]:
         "warnings": next_allowed["warnings"],
         "next_allowed_stage": next_allowed["next_allowed_stage"],
         "recommended_action": next_allowed["recommended_action"],
+        "system_health": system_health,
+        "system_issues": system_issues,
     }
 
 
@@ -519,38 +534,46 @@ def cmd_status(json_output: bool = False) -> None:
 
 
 def cmd_validate(json_output: bool = False) -> None:
-    """Run validation checks. Exit 0 if no blocking issues."""
-    status = build_status()
+    """Run validation checks. Exit 0 if system is healthy (no validator failures).
 
-    blockers = status.get("blockers", [])
-    blocked = status.get("blocked", False)
+    Exit 1 only on SYSTEM failures (validator errors, missing outputs).
+    Case-level blocks (e.g., needs_more_literature_evidence) are reported
+    as warnings, not failures — they indicate the case isn't ready, not
+    that the system is broken.
+    """
+    status = build_status()
 
     if json_output:
         print(json.dumps(status, indent=2))
     else:
         _print_status_text(status)
 
-    if blocked:
-        print("\n[FAIL] Blocking issues found.")
-        sys.exit(1)
-
-    # Also check validator failures
-    validator_blockers = []
+    # System-level failures: validator errors or allowed_next_stage=false
+    system_failures = []
     for stage, v in status.get("validators", {}).items():
         if v.get("validation_status") == "parsed":
             allowed = v.get("allowed_next_stage")
             if allowed is False or str(allowed).lower() == "false":
-                validator_blockers.append(f"{stage}: allowed_next_stage=false")
+                system_failures.append(f"{stage}: allowed_next_stage=false")
         elif v.get("validation_status") == "error":
-            validator_blockers.append(f"{stage}: validator error — {v.get('reason', 'unknown')[:100]}")
+            system_failures.append(f"{stage}: validator error — {v.get('reason', 'unknown')[:100]}")
 
-    if validator_blockers:
-        print("\n[FAIL] Validator failures:")
-        for vb in validator_blockers:
-            print(f"  - {vb}")
+    if system_failures:
+        print("\n[FAIL] System failures (validator errors):")
+        for sf in system_failures:
+            print(f"  - {sf}")
         sys.exit(1)
 
-    print("\n[PASS] No blocking issues.")
+    # Case-level blocks are warnings, not failures
+    blockers = status.get("blockers", [])
+    if blockers:
+        print("\n[WARN] Case not ready (not a system failure):")
+        for b in blockers:
+            print(f"  - {b}")
+        # Exit 0 — system is healthy, case just isn't ready
+        sys.exit(0)
+
+    print("\n[PASS] System healthy, no blocking issues.")
     sys.exit(0)
 
 
