@@ -58,7 +58,10 @@ credentials/
 
 # ===== Local papers / literature =====
 papers/
-literature/
+literature/*
+!literature/search_runs/
+literature/search_runs/*
+!literature/search_runs/current/
 literature-md/
 *.pdf
 
