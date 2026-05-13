@@ -28,6 +28,7 @@ No issue may be silently ignored. Every issue must be recorded in the table belo
 | LRQ-006 | Title subtitle stripping may over-normalize | 2026-05-13 | low | accepted_limitation | Subtitle after ":" is stripped for dedup; may merge genuinely different papers | accepted for MVP | no | e.g., "X: A Survey" and "X: A Method" would merge |
 | LRQ-007 | Year tolerance of ±1 may merge different papers | 2026-05-13 | low | accepted_limitation | Papers within 1 year with same normalized title are merged | accepted for MVP | no | Rare edge case for papers published in consecutive years |
 | LRQ-008 | No citation-based ranking | 2026-05-13 | low | repair_queue | Add citation count when available from OpenAlex | open | no | Current ranking uses metadata completeness + recency only |
+| LRQ-009 | Path separator mismatch causes contamination scan false positive | 2026-05-13 | high | fix_now | Add normalize_path() helper to context_isolation_check.py for cross-platform comparison | fixed in this module | yes — blocks every prepare on Windows when manifest uses backslashes and input uses forward slashes | Windows Path() produces backslashes; input files use forward slashes; equality check fails |
 
 ---
 

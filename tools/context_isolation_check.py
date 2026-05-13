@@ -15,6 +15,11 @@ import json
 import sys
 from pathlib import Path
 
+def normalize_path(path: str) -> str:
+    """Normalize a path to forward slashes for cross-platform comparison."""
+    return path.replace("\\", "/")
+
+
 FORBIDDEN_MARKERS = [
     "old conclusion",
     "old conclusions",
@@ -217,8 +222,10 @@ def check(manifest_path: Path, input_path: Path) -> dict:
             if len(parts) >= 2:
                 ref_path = parts[1].strip().strip("'\"")
                 # Check if this path is in allowed_input_files
+                norm_ref = normalize_path(ref_path)
                 allowed_any = any(
-                    ref_path == f or (f.split("/")[-1] and ref_path.endswith("/" + f.split("/")[-1]))
+                    norm_ref == normalize_path(f)
+                    or (normalize_path(f).split("/")[-1] and norm_ref.endswith("/" + normalize_path(f).split("/")[-1]))
                     for f in allowed_input_files
                 )
                 if not allowed_any and ref_path and not ref_path.startswith("/tmp/") and not ref_path.startswith("tmp/") and not any(ref_path.startswith(pre.rstrip('/')) for pre in ("research/current", "idea-stage", "novelty-stage", "review-stage")):
@@ -372,6 +379,66 @@ def self_test() -> bool:
         failed += 1
     os.unlink(body_manifest)
     os.unlink(body_input)
+
+    # Test 7: Windows backslash in manifest, forward slash in input → should PASS
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({
+            "allowed_input_files": ["research\\current\\brief.md"],
+            "forbidden_context": ["old conclusions"]
+        }, f)
+        win_manifest = f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("# File: research/current/brief.md\n\nClean content.")
+        fwd_input = f.name
+    result = check(Path(win_manifest), Path(fwd_input))
+    if result["status"] == "PASS" and result["contamination_scan_status"] == "checked":
+        print("  [PASS] 7. Windows backslash in manifest matches forward slash in input")
+        passed += 1
+    else:
+        print(f"  [FAIL] 7. Expected PASS for mixed separators, got: {result}")
+        failed += 1
+    os.unlink(win_manifest)
+    os.unlink(fwd_input)
+
+    # Test 8: Forward slash in manifest, backslash in input → should PASS
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({
+            "allowed_input_files": ["research/current/brief.md"],
+            "forbidden_context": ["old conclusions"]
+        }, f)
+        fwd_manifest = f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("# File: research\\current\\brief.md\n\nClean content.")
+        win_input = f.name
+    result = check(Path(fwd_manifest), Path(win_input))
+    if result["status"] == "PASS" and result["contamination_scan_status"] == "checked":
+        print("  [PASS] 8. Forward slash in manifest matches backslash in input")
+        passed += 1
+    else:
+        print(f"  [FAIL] 8. Expected PASS for mixed separators, got: {result}")
+        failed += 1
+    os.unlink(fwd_manifest)
+    os.unlink(win_input)
+
+    # Test 9: Mixed backslash subpath in manifest, forward slash in input → should PASS
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({
+            "allowed_input_files": ["literature\\search_runs\\current\\top_k.md"],
+            "forbidden_context": ["old conclusions"]
+        }, f)
+        deep_win_manifest = f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("# File: literature/search_runs/current/top_k.md\n\nClean content.")
+        deep_fwd_input = f.name
+    result = check(Path(deep_win_manifest), Path(deep_fwd_input))
+    if result["status"] == "PASS" and result["contamination_scan_status"] == "checked":
+        print("  [PASS] 9. Deep Windows subpath matches forward slash in input")
+        passed += 1
+    else:
+        print(f"  [FAIL] 9. Expected PASS for mixed deep subpath, got: {result}")
+        failed += 1
+    os.unlink(deep_win_manifest)
+    os.unlink(deep_fwd_input)
 
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
