@@ -6,6 +6,8 @@ Usage:
     python tools/research_cli.py status [--json]
     python tools/research_cli.py validate [--json]
     python tools/research_cli.py repair-queue [--json]
+    python tools/research_cli.py start --idea '...' --mode novelty_risk --dry-run [--json]
+    python tools/research_cli.py continue --stage <stage> --dry-run [--json]
     python tools/research_cli.py --self-test
 """
 from __future__ import annotations
@@ -965,6 +967,271 @@ def build_novelty_risk_plan(idea: str) -> dict[str, Any]:
 
 
 # ─────────────────────────────────────────────────────────
+# Continue dry-run plan builder
+# ─────────────────────────────────────────────────────────
+def build_continue_plan(target_stage: str, json_output: bool = False) -> dict[str, Any]:
+    """Build a dry-run plan for continuing to a specific stage. No model calls, no file writes."""
+    if target_stage not in STAGE_ORDER:
+        return {"error": f"Unknown stage: {target_stage}. Valid stages: {', '.join(STAGE_ORDER)}"}
+
+    status = build_status()
+    completed = status.get("completed_stages", [])
+    next_allowed = status.get("next_allowed_stage")
+
+    # Check if target stage is behind current stage (already completed)
+    if target_stage in completed:
+        return {"error": f"Stage '{target_stage}' is already completed. Cannot continue to a completed stage."}
+
+    # Find target stage index
+    target_idx = STAGE_ORDER.index(target_stage)
+
+    # Build execution plan from next allowed to target
+    execution_steps = []
+    warnings = status.get("warnings", [])
+    blockers = status.get("blockers", [])
+
+    # Check if we can reach the target stage
+    if next_allowed and next_allowed != target_stage:
+        next_idx = STAGE_ORDER.index(next_allowed) if next_allowed in STAGE_ORDER else -1
+        if next_idx > target_idx:
+            return {
+                "error": f"Cannot continue to '{target_stage}' — next allowed stage is '{next_allowed}' which is after '{target_stage}' in the workflow.",
+                "next_allowed_stage": next_allowed,
+            }
+
+    # Build steps from next_allowed to target
+    start_stage = next_allowed or target_stage
+    start_idx = STAGE_ORDER.index(start_stage) if start_stage in STAGE_ORDER else 0
+
+    # For each stage from start to target, describe what would run
+    for i in range(start_idx, target_idx + 1):
+        stage = STAGE_ORDER[i]
+        is_completed = stage in completed
+
+        step = {
+            "stage_id": stage,
+            "status": "completed" if is_completed else "will_execute",
+            "execution_type": _stage_execution_type(stage),
+            "would_run_command": _stage_command(stage),
+            "planned_inputs": _stage_inputs(stage),
+            "planned_outputs": _stage_outputs(stage),
+            "validator_after": _stage_validator(stage),
+            "mutation_type": _stage_mutation_type(stage),
+        }
+        execution_steps.append(step)
+
+    # Check if we need method_refinement before experiment_plan
+    if target_stage == "experiment_plan" and "method_refinement" not in completed:
+        warnings.append("method_refinement is not completed — it will be executed before experiment_plan")
+
+    plan = {
+        "schema_version": "research_cli_continue_plan_v1",
+        "target_stage": target_stage,
+        "dry_run": True,
+        "will_mutate": False,
+        "will_call_model": False,
+        "will_call_network": False,
+        "current_status_summary": {
+            "current_stage": status.get("current_stage"),
+            "completed_stages": completed,
+            "next_allowed_stage": next_allowed,
+            "blocked": status.get("blocked"),
+        },
+        "execution_steps": execution_steps,
+        "warnings": warnings,
+        "blockers": blockers,
+    }
+    return plan
+
+
+def _stage_execution_type(stage: str) -> str:
+    """Return execution type for a stage."""
+    mapping = {
+        "raw_user_input": "file_write",
+        "input_normalization": "trusted_model",
+        "research_contract": "trusted_model",
+        "literature_notes": "no_model",
+        "literature_search": "trusted_model",
+        "novelty_check": "trusted_model",
+        "method_refinement": "trusted_model",
+        "experiment_plan": "trusted_model",
+        "implementation_plan": "trusted_model",
+        "result_judge": "trusted_model",
+        "paper_writing": "trusted_model",
+    }
+    return mapping.get(stage, "unknown")
+
+
+def _stage_command(stage: str) -> str:
+    """Return the command that would execute for a stage."""
+    commands = {
+        "raw_user_input": "write research/current/raw_user_input.md",
+        "input_normalization": "python tools/trusted_role_runner.py --role input_normalizer ...",
+        "research_contract": "python tools/trusted_role_runner.py --role contract_reviewer ...",
+        "literature_notes": "python tools/research_workflow.py prepare literature_notes ...",
+        "literature_search": "python tools/trusted_role_runner.py --role literature_scout ...",
+        "novelty_check": "python tools/trusted_role_runner.py --role novelty_checker ...",
+        "method_refinement": "python tools/trusted_role_runner.py --role method_refiner ...",
+        "experiment_plan": "python tools/trusted_role_runner.py --role experiment_planner ...",
+        "implementation_plan": "python tools/trusted_role_runner.py --role implementation_planner ...",
+        "result_judge": "python tools/trusted_role_runner.py --role result_judge ...",
+        "paper_writing": "python tools/trusted_role_runner.py --role paper_writer ...",
+    }
+    return commands.get(stage, "unknown")
+
+
+def _stage_inputs(stage: str) -> list[str]:
+    """Return input files for a stage."""
+    inputs = {
+        "raw_user_input": [],
+        "input_normalization": ["research/current/raw_user_input.md"],
+        "research_contract": ["research/current/input_normalization.md"],
+        "literature_notes": ["literature/search_runs/current/top_k.md"],
+        "literature_search": [
+            "research/current/input_normalization.md",
+            "research/current/trusted_outputs/research_contract.md",
+            "research/current/literature_notes.md",
+            "literature/search_runs/current/top_k.md",
+        ],
+        "novelty_check": [
+            "research/current/input_normalization.md",
+            "research/current/trusted_outputs/research_contract.md",
+            "research/current/literature_notes.md",
+            "research/current/trusted_outputs/literature_search.md",
+            "literature/search_runs/current/top_k.md",
+            "docs/LITERATURE_REPAIR_QUEUE.md",
+        ],
+        "method_refinement": [
+            "research/current/input_normalization.md",
+            "research/current/trusted_outputs/research_contract.md",
+            "research/current/literature_notes.md",
+            "research/current/trusted_outputs/literature_search.md",
+            "research/current/trusted_outputs/novelty_check.md",
+            "literature/search_runs/current/top_k.md",
+            "docs/LITERATURE_REPAIR_QUEUE.md",
+        ],
+        "experiment_plan": [
+            "research/current/input_normalization.md",
+            "research/current/trusted_outputs/research_contract.md",
+            "research/current/literature_notes.md",
+            "research/current/trusted_outputs/literature_search.md",
+            "research/current/trusted_outputs/novelty_check.md",
+            "research/current/trusted_outputs/method_refinement.md",
+        ],
+    }
+    return inputs.get(stage, [])
+
+
+def _stage_outputs(stage: str) -> list[str]:
+    """Return output files for a stage."""
+    outputs = {
+        "raw_user_input": ["research/current/raw_user_input.md"],
+        "input_normalization": ["research/current/input_normalization.md"],
+        "research_contract": ["research/current/trusted_outputs/research_contract.md"],
+        "literature_notes": ["research/current/literature_notes.md"],
+        "literature_search": ["research/current/trusted_outputs/literature_search.md"],
+        "novelty_check": ["research/current/trusted_outputs/novelty_check.md"],
+        "method_refinement": ["research/current/trusted_outputs/method_refinement.md"],
+        "experiment_plan": ["research/current/trusted_outputs/experiment_plan.md"],
+    }
+    return outputs.get(stage, [])
+
+
+def _stage_validator(stage: str) -> str | None:
+    """Return validator command for a stage, or None."""
+    validators = {
+        "input_normalization": "validate_model_invocation --role input_normalizer",
+        "research_contract": "validate_model_invocation --role contract_reviewer",
+        "literature_search": "validate_model_invocation --role literature_scout",
+        "novelty_check": "validate_model_invocation --role novelty_checker",
+        "method_refinement": "validate_model_invocation --role method_refiner",
+    }
+    return validators.get(stage)
+
+
+def _stage_mutation_type(stage: str) -> str:
+    """Return mutation type for a stage."""
+    types = {
+        "raw_user_input": "research_artifact",
+        "input_normalization": "trusted_output",
+        "research_contract": "trusted_output",
+        "literature_notes": "research_artifact",
+        "literature_search": "trusted_output",
+        "novelty_check": "trusted_output",
+        "method_refinement": "trusted_output",
+        "experiment_plan": "trusted_output",
+    }
+    return types.get(stage, "none")
+
+
+# ─────────────────────────────────────────────────────────
+# Continue dry-run command
+# ─────────────────────────────────────────────────────────
+def cmd_continue(target_stage: str, dry_run: bool, json_output: bool) -> None:
+    """Handle 'continue' command."""
+    if not dry_run:
+        print("ERROR: Live continue is not implemented.")
+        print("  Use: python tools/research_cli.py continue --stage <stage> --dry-run")
+        sys.exit(1)
+
+    if not target_stage:
+        print("ERROR: --stage is required.")
+        print(f"  Valid stages: {', '.join(STAGE_ORDER)}")
+        sys.exit(1)
+
+    plan = build_continue_plan(target_stage)
+
+    if "error" in plan:
+        print(f"ERROR: {plan['error']}")
+        sys.exit(1)
+
+    if json_output:
+        print(json.dumps(plan, indent=2))
+    else:
+        _print_continue_plan_text(plan)
+
+
+def _print_continue_plan_text(plan: dict) -> None:
+    """Print readable continue dry-run plan."""
+    print(f"=== Continue Dry-Run Plan ({plan['schema_version']}) ===")
+    print(f"Target stage: {plan['target_stage']}")
+    print(f"Safety:   will_mutate={plan['will_mutate']} will_call_model={plan['will_call_model']} will_call_network={plan['will_call_network']}")
+    print()
+
+    cs = plan.get("current_status_summary", {})
+    print(f"--- Current Status ---")
+    print(f"  current_stage:   {cs.get('current_stage','?')}")
+    print(f"  next_allowed:    {cs.get('next_allowed_stage','?')}")
+    print(f"  completed:       {', '.join(cs.get('completed_stages', []))}")
+    print(f"  blocked:         {cs.get('blocked','?')}")
+    print()
+
+    print(f"--- Execution Steps ({len(plan['execution_steps'])} steps) ---")
+    for i, step in enumerate(plan["execution_steps"], 1):
+        status_mark = "*" if step["status"] == "completed" else ">"
+        exec_type = step.get("execution_type", "?")
+        mut = step.get("mutation_type", "none")
+        print(f"  {i:2d}. [{exec_type}] {step['stage_id']}  ({mut})  {status_mark}")
+    print()
+    print("  Legend: * = already completed, > = will execute")
+    print()
+
+    if plan.get("warnings"):
+        print(f"--- Warnings ---")
+        for w in plan["warnings"]:
+            print(f"  ! {w}")
+        print()
+
+    if plan.get("blockers"):
+        print(f"--- Blockers ---")
+        for b in plan["blockers"]:
+            print(f"  X {b}")
+        print()
+
+    print("DRY-RUN: No files written, no models called, no network used.")
+
+
+# ─────────────────────────────────────────────────────────
 # Dry-run commands
 # ─────────────────────────────────────────────────────────
 def cmd_start(idea: str, mode: str, dry_run: bool, json_output: bool) -> None:
@@ -1488,6 +1755,106 @@ def self_test() -> bool:
         print(f"  [FAIL] 28. method_refinement.md not in planned outputs: {outputs}")
         failed += 1
 
+    # Test 29: build_continue_plan returns error for unknown stage
+    result29 = build_continue_plan("nonexistent_stage")
+    if "error" in result29 and "Unknown stage" in result29["error"]:
+        print("  [PASS] 29. build_continue_plan rejects unknown stage")
+        passed += 1
+    else:
+        print(f"  [FAIL] 29. expected error for unknown stage, got: {result29}")
+        failed += 1
+
+    # Test 30: build_continue_plan returns error for already completed stage
+    result30 = build_continue_plan("literature_search")
+    if "error" in result30 and "already completed" in result30["error"]:
+        print("  [PASS] 30. build_continue_plan rejects completed stage")
+        passed += 1
+    else:
+        print(f"  [FAIL] 30. expected error for completed stage, got: {result30}")
+        failed += 1
+
+    # Test 31: build_continue_plan returns valid plan for experiment_plan
+    result31 = build_continue_plan("experiment_plan")
+    if ("error" not in result31
+            and result31.get("schema_version") == "research_cli_continue_plan_v1"
+            and result31.get("target_stage") == "experiment_plan"
+            and result31.get("dry_run") is True
+            and result31.get("will_mutate") is False):
+        print("  [PASS] 31. build_continue_plan returns valid plan for experiment_plan")
+        passed += 1
+    else:
+        print(f"  [FAIL] 31. build_continue_plan for experiment_plan, got: {result31}")
+        failed += 1
+
+    # Test 32: build_continue_plan execution_steps includes completed and will_execute
+    steps32 = result31.get("execution_steps", [])
+    statuses32 = [s["status"] for s in steps32]
+    if "completed" in statuses32 and "will_execute" in statuses32:
+        print("  [PASS] 32. build_continue_plan includes both completed and will_execute steps")
+        passed += 1
+    else:
+        print(f"  [FAIL] 32. expected completed and will_execute in steps, got: {statuses32}")
+        failed += 1
+
+    # Test 33: build_continue_plan for experiment_plan has method_refinement in steps
+    stage_ids33 = [s["stage_id"] for s in steps32]
+    if "method_refinement" in stage_ids33 and "experiment_plan" in stage_ids33:
+        print("  [PASS] 33. build_continue_plan includes method_refinement and experiment_plan steps")
+        passed += 1
+    else:
+        print(f"  [FAIL] 33. expected method_refinement and experiment_plan in steps, got: {stage_ids33}")
+        failed += 1
+
+    # Test 34: build_continue_plan plan has safety flags False
+    if (result31.get("will_mutate") is False
+            and result31.get("will_call_model") is False
+            and result31.get("will_call_network") is False):
+        print("  [PASS] 34. build_continue_plan safety flags all False")
+        passed += 1
+    else:
+        print(f"  [FAIL] 34. safety flags: {result31.get('will_mutate')}, {result31.get('will_call_model')}, {result31.get('will_call_network')}")
+        failed += 1
+
+    # Test 35: cmd_continue rejects non-dry-run
+    old_stdout35 = sys.stdout
+    old_stderr35 = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    exit_code35 = 0
+    try:
+        cmd_continue(target_stage="experiment_plan", dry_run=False, json_output=False)
+    except SystemExit as e:
+        exit_code35 = e.code
+    finally:
+        sys.stdout = old_stdout35
+        sys.stderr = old_stderr35
+    if exit_code35 == 1:
+        print("  [PASS] 35. cmd_continue rejects non-dry-run")
+        passed += 1
+    else:
+        print(f"  [FAIL] 35. cmd_continue should exit 1 for non-dry-run, got: {exit_code35}")
+        failed += 1
+
+    # Test 36: cmd_continue rejects empty stage
+    old_stdout36 = sys.stdout
+    old_stderr36 = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    exit_code36 = 0
+    try:
+        cmd_continue(target_stage="", dry_run=True, json_output=False)
+    except SystemExit as e:
+        exit_code36 = e.code
+    finally:
+        sys.stdout = old_stdout36
+        sys.stderr = old_stderr36
+    if exit_code36 == 1:
+        print("  [PASS] 36. cmd_continue rejects empty stage")
+        passed += 1
+    else:
+        print(f"  [FAIL] 36. cmd_continue should exit 1 for empty stage, got: {exit_code36}")
+        failed += 1
+
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
 
@@ -1502,8 +1869,9 @@ def main() -> None:
 
     if len(sys.argv) < 2:
         print("Usage: python tools/research_cli.py <command> [options] [--json]")
-        print("Commands: status, validate, repair-queue, start")
+        print("Commands: status, validate, repair-queue, start, continue")
         print("Start usage: python tools/research_cli.py start --idea '...' --mode novelty_risk --dry-run [--json]")
+        print("Continue usage: python tools/research_cli.py continue --stage <stage> --dry-run [--json]")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -1534,6 +1902,21 @@ def main() -> None:
             else:
                 i += 1
         cmd_start(idea=idea, mode=mode, dry_run=dry_run, json_output=json_output)
+    elif cmd == "continue":
+        args = sys.argv[2:]
+        target_stage = ""
+        dry_run = False
+        i = 0
+        while i < len(args):
+            if args[i] == "--stage" and i + 1 < len(args):
+                target_stage = args[i + 1]
+                i += 2
+            elif args[i] == "--dry-run":
+                dry_run = True
+                i += 1
+            else:
+                i += 1
+        cmd_continue(target_stage=target_stage, dry_run=dry_run, json_output=json_output)
     else:
         print(f"Unknown command: {cmd}")
         print("Commands: status, validate, repair-queue, start")
