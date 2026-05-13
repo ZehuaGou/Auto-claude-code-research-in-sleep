@@ -6,13 +6,13 @@
 
 ## What This Is
 
-A schema-level interface definition for future source adapters that will execute search jobs against real APIs (OpenAlex, arXiv, Crossref, Semantic Scholar). This MVP does NOT implement real search. It only defines the data contract and provides no-network validation and normalization tools.
+A schema-level interface definition for source adapters that execute search jobs against real APIs. The OpenAlex adapter is now implemented. arXiv, Crossref, and Semantic Scholar adapters are planned. The interface provides no-network validation and normalization tools for all adapter output.
 
 ---
 
-## Source Adapters Are Future Components
+## Source Adapters
 
-Source adapters are executors that take a job from `search_jobs.json`, call a real API, and write results as a line in `job_results.jsonl`. No source adapter is implemented yet. When implemented, each adapter must:
+Source adapters are executors that take a job from `search_jobs.json`, call a real API, and write results as a line in `job_results.jsonl`. Each adapter must:
 
 1. Read one job from `search_jobs.json`
 2. Call the corresponding API (with proper rate limiting, auth, error handling)
@@ -145,6 +145,106 @@ No novelty judgment.
 
 ---
 
+## OpenAlex Adapter MVP
+
+The OpenAlex adapter is the first implemented source adapter. It executes planned OpenAlex search jobs from `search_jobs.json` and writes `source_job_result_v1` records to `job_results.jsonl`.
+
+### Commands
+
+#### run-openalex-job
+
+Execute a single OpenAlex job by job ID:
+
+```bash
+python tools/literature_evidence_landing.py run-openalex-job \
+  --job-id job_openalex_xxxxxxxx \
+  --search-jobs search_jobs.json \
+  --output job_results.jsonl \
+  --per-page 5 \
+  --mailto user@example.com
+```
+
+- Reads `search_jobs.json`, finds job by `job_id`
+- Requires `job.source == "openalex"` — rejects non-openalex jobs before any network call
+- Executes exactly one job, appends one `source_job_result_v1` line to output
+- Validates result before writing (fail-closed)
+- No PDF download, no model, no .env
+
+#### run-openalex-jobs
+
+Execute multiple OpenAlex jobs:
+
+```bash
+python tools/literature_evidence_landing.py run-openalex-jobs \
+  --search-jobs search_jobs.json \
+  --output job_results.jsonl \
+  --max-jobs 3 \
+  --per-page 5 \
+  --mailto user@example.com \
+  --overwrite
+```
+
+- Executes only `source == openalex` jobs
+- Respects `--max-jobs` limit
+- Appends by default; use `--overwrite` to replace output
+- Skips non-openalex jobs silently
+
+### API Details
+
+- **Endpoint:** `https://api.openalex.org/works`
+- **Query:** `search=<query>` with `per-page` and `sort=relevance_score:desc`
+- **Year filter:** `filter=publication_year:<start>-<end>` when time_range present
+- **No API key required** for MVP
+- **Optional `--mailto`:** for polite API pool (never from .env)
+- **Timeout:** 15 seconds
+- **User-Agent:** `literature-evidence-landing/1.0`
+
+### Record Mapping
+
+Each OpenAlex work is mapped to a raw record:
+
+| raw field | OpenAlex source |
+|-----------|----------------|
+| `source` | `"openalex"` |
+| `title` | `display_name` or `title` |
+| `authors` | `authorships[].author.display_name` |
+| `year` | `publication_year` |
+| `url` | `https://openalex.org/<W...>` |
+| `doi` | `doi` stripped of `https://doi.org/` prefix |
+| `arxiv_id` | `ids.arxiv` if present |
+| `openalex_id` | `W...` extracted from `id` URL |
+| `abstract` | Reconstructed from `abstract_inverted_index` |
+| `venue` | `primary_location.source.display_name` |
+| `evidence_origin` | `"api_export"` |
+
+Works with missing/empty `display_name` and `title` are skipped (not fabricated).
+
+### HTTP Status Handling
+
+| HTTP status | job result status |
+|-------------|-------------------|
+| 200 + results | `success` |
+| 200 + empty | `empty` |
+| 401 / 403 | `auth_failed` |
+| 402 | `blocked` |
+| 429 | `rate_limited` |
+| other | `failed` |
+| timeout / network error | `failed` |
+
+### Normalization Path
+
+```
+search_jobs.json
+  → run-openalex-job / run-openalex-jobs
+  → job_results.jsonl (source_job_result_v1 records)
+  → validate-job-results
+  → normalize-job-results
+  → raw_results.jsonl
+  → validate-raw
+```
+
+---
+
 ## Rules for Future Adapters
 
 1. **No fabrication.** Every record in `records` must come from the API response.
@@ -156,22 +256,22 @@ No novelty judgment.
 
 ---
 
-## Planned Adapters
+## Adapters
 
-| adapter | source | API | notes |
-|---------|--------|-----|-------|
-| OpenAlex adapter | `openalex` | OpenAlex Works API | free, no key required |
-| arXiv adapter | `arxiv` | arXiv API | free, rate-limited |
-| Crossref adapter | `crossref` | Crossref REST API | free, polite pool with key |
-| Semantic Scholar adapter | `semantic_scholar` | S2 API | free, aggressive rate limits |
+| adapter | source | API | status | notes |
+|---------|--------|-----|--------|-------|
+| OpenAlex adapter | `openalex` | OpenAlex Works API | **implemented** | free, no key required |
+| arXiv adapter | `arxiv` | arXiv API | planned | free, rate-limited |
+| Crossref adapter | `crossref` | Crossref REST API | planned | free, polite pool with key |
+| Semantic Scholar adapter | `semantic_scholar` | S2 API | planned | free, aggressive rate limits |
 
 ---
 
 ## What This Does NOT Do
 
-- No real search execution
-- No API calls
 - No PDF download or parsing
 - No model calls
 - No novelty judgment
 - No citation dedup or ranking (those happen downstream in build-candidates)
+- No arXiv/Crossref/Semantic Scholar adapters yet
+- No API key requirement (OpenAlex is free)

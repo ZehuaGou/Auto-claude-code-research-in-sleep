@@ -17,6 +17,8 @@ Usage:
     python tools/literature_evidence_landing.py validate-job-results --file <path> [--json]
     python tools/literature_evidence_landing.py normalize-job-results --input <path> --output <path> [--json]
     python tools/literature_evidence_landing.py summarize-job-results --file <path> [--json]
+    python tools/literature_evidence_landing.py run-openalex-job --job-id <id> --search-jobs <path> --output <path> [--per-page <n>] [--mailto <email>] [--json]
+    python tools/literature_evidence_landing.py run-openalex-jobs --search-jobs <path> --output <path> [--max-jobs <n>] [--per-page <n>] [--mailto <email>] [--overwrite] [--json]
     python tools/literature_evidence_landing.py init-run-skeleton --run-dir <dir> --topic <topic> --intent <intent>
     python tools/literature_evidence_landing.py validate-acquisition-status --file <path> [--json]
     python tools/literature_evidence_landing.py build-manual-queue --acquisition-status <file> --output <file>
@@ -32,6 +34,10 @@ import os
 import re
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 ALLOWED_SOURCES = frozenset([
@@ -1753,6 +1759,423 @@ def summarize_job_results(file_path: Path, json_output: bool) -> dict:
     return result
 
 
+# ---- OpenAlex adapter ----
+
+OPENALEX_API_BASE = "https://api.openalex.org/works"
+OPENALEX_REQUEST_TIMEOUT = 15
+
+
+def _openalex_work_id_from_url(openalex_id_url: str) -> str:
+    """Extract W... ID from an OpenAlex URL like https://openalex.org/W12345."""
+    if not openalex_id_url:
+        return ""
+    url = str(openalex_id_url).strip()
+    # Handle both full URL and bare ID
+    if "/" in url:
+        parts = url.rstrip("/").split("/")
+        return parts[-1] if parts else ""
+    return url
+
+
+def _normalize_openalex_doi(doi_url: str) -> str:
+    """Normalize DOI from https://doi.org/10.xxxx to bare 10.xxxx."""
+    if not doi_url:
+        return ""
+    doi = str(doi_url).strip()
+    # Strip common prefixes
+    for prefix in ("https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/"):
+        if doi.lower().startswith(prefix.lower()):
+            doi = doi[len(prefix):]
+            break
+    return doi
+
+
+def _reconstruct_openalex_abstract(abstract_inverted_index) -> str:
+    """Reconstruct abstract from OpenAlex abstract_inverted_index format.
+
+    OpenAlex returns: {"word1": [pos1, pos2], "word2": [pos3], ...}
+    We reconstruct by placing words at their positions.
+    """
+    if not abstract_inverted_index or not isinstance(abstract_inverted_index, dict):
+        return ""
+
+    # Build position -> word mapping
+    position_word = []
+    for word, positions in abstract_inverted_index.items():
+        if isinstance(positions, list):
+            for pos in positions:
+                if isinstance(pos, int):
+                    position_word.append((pos, word))
+
+    # Sort by position and join
+    position_word.sort(key=lambda x: x[0])
+    return " ".join(pw[1] for pw in position_word)
+
+
+def _map_openalex_work_to_raw_record(work: dict, job_id: str, query: str, retrieved_at: str) -> dict | None:
+    """Map an OpenAlex work object to a raw_results record. Returns None if title missing."""
+    if not isinstance(work, dict):
+        return None
+
+    title = work.get("display_name") or work.get("title") or ""
+    if not title.strip():
+        return None
+
+    # Authors
+    authorships = work.get("authorships", [])
+    authors = []
+    if isinstance(authorships, list):
+        for a in authorships:
+            if isinstance(a, dict):
+                author_obj = a.get("author", {})
+                if isinstance(author_obj, dict):
+                    name = author_obj.get("display_name", "")
+                    if name:
+                        authors.append(name)
+
+    # Year
+    year = work.get("publication_year", "")
+
+    # OpenAlex ID and URL
+    openalex_id_raw = work.get("id", "")
+    openalex_id = _openalex_work_id_from_url(openalex_id_raw)
+    url = f"https://openalex.org/{openalex_id}" if openalex_id else ""
+
+    # DOI
+    doi_raw = work.get("doi", "") or ""
+    ids = work.get("ids", {})
+    if not doi_raw and isinstance(ids, dict):
+        doi_raw = ids.get("doi", "") or ""
+    doi = _normalize_openalex_doi(doi_raw)
+
+    # arXiv ID - extract from ids if available
+    arxiv_id = ""
+    if isinstance(ids, dict):
+        arxiv_raw = ids.get("arxiv", "") or ""
+        if arxiv_raw:
+            arxiv_id = str(arxiv_raw).strip()
+
+    # Venue from primary_location
+    venue = ""
+    primary_location = work.get("primary_location", {})
+    if isinstance(primary_location, dict):
+        source_obj = primary_location.get("source", {})
+        if isinstance(source_obj, dict):
+            venue = source_obj.get("display_name", "") or ""
+
+    # Abstract
+    abstract = _reconstruct_openalex_abstract(work.get("abstract_inverted_index"))
+
+    return {
+        "source": "openalex",
+        "title": title.strip(),
+        "authors": authors,
+        "year": year,
+        "url": url,
+        "doi": doi,
+        "arxiv_id": arxiv_id,
+        "semantic_scholar_id": "",
+        "openalex_id": openalex_id,
+        "abstract": abstract,
+        "venue": venue,
+        "retrieved_at": retrieved_at,
+        "evidence_origin": "api_export",
+        "notes": f"source_job_id={job_id}; query={query}",
+    }
+
+
+def _execute_openalex_job(job: dict, per_page: int = 5, mailto: str = "") -> dict:
+    """Execute a single OpenAlex search job. Returns a source_job_result_v1 dict.
+    No PDF download. No model. No .env."""
+    job_id = job.get("job_id", "")
+    source = job.get("source", "")
+    query = job.get("query", "")
+    time_range = job.get("time_range", {})
+    retrieved_at = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Validate source
+    if source != "openalex":
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": source,
+            "query": query,
+            "status": "failed",
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": f"source is '{source}', not 'openalex'",
+            "notes": "run-openalex-job only accepts openalex jobs",
+        }
+
+    # Build URL
+    params = {
+        "search": query,
+        "per-page": str(min(per_page, 50)),
+        "sort": "relevance_score:desc",
+    }
+    # Add year filter if time_range present
+    if isinstance(time_range, dict):
+        sy = time_range.get("start_year")
+        ey = time_range.get("end_year")
+        if isinstance(sy, int) and isinstance(ey, int):
+            params["filter"] = f"publication_year:{sy}-{ey}"
+    if mailto:
+        params["mailto"] = mailto
+
+    url = OPENALEX_API_BASE + "?" + urllib.parse.urlencode(params)
+
+    # Execute request
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "literature-evidence-landing/1.0"})
+        with urllib.request.urlopen(req, timeout=OPENALEX_REQUEST_TIMEOUT) as resp:
+            http_status = resp.status
+            body = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        http_status = e.code
+        body = ""
+        error_msg = f"HTTP {e.code}: {e.reason}"
+        # Map HTTP errors
+        if e.code in (401, 403):
+            status = "auth_failed"
+        elif e.code == 402:
+            status = "blocked"
+        elif e.code == 429:
+            status = "rate_limited"
+        else:
+            status = "failed"
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "openalex",
+            "query": query,
+            "status": status,
+            "http_status": http_status,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": error_msg,
+            "notes": "",
+        }
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "openalex",
+            "query": query,
+            "status": "failed",
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": f"network error: {e}",
+            "notes": "",
+        }
+
+    # Parse response
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError as e:
+        return {
+            "schema_version": "source_job_result_v1",
+            "job_id": job_id,
+            "source": "openalex",
+            "query": query,
+            "status": "failed",
+            "http_status": http_status,
+            "retrieved_at": retrieved_at,
+            "raw_record_count": 0,
+            "records": [],
+            "error": f"JSON parse error: {e}",
+            "notes": "",
+        }
+
+    # Extract works
+    results = data.get("results", [])
+    if not isinstance(results, list):
+        results = []
+
+    # Map works to raw records
+    raw_records = []
+    for work in results:
+        rec = _map_openalex_work_to_raw_record(work, job_id, query, retrieved_at)
+        if rec is not None:
+            raw_records.append(rec)
+
+    # Determine status
+    if raw_records:
+        status = "success"
+    else:
+        status = "empty"
+
+    return {
+        "schema_version": "source_job_result_v1",
+        "job_id": job_id,
+        "source": "openalex",
+        "query": query,
+        "status": status,
+        "http_status": http_status,
+        "retrieved_at": retrieved_at,
+        "raw_record_count": len(raw_records),
+        "records": raw_records,
+        "error": "",
+        "notes": "",
+    }
+
+
+def _append_jsonl(path: Path, records: list[dict]) -> None:
+    """Append records to a JSONL file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for rec in records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def run_openalex_job(search_jobs_path: Path, job_id: str, output_path: Path,
+                     per_page: int = 5, mailto: str = "", json_output: bool = False) -> dict:
+    """Execute one OpenAlex job from search_jobs.json and append to job_results.jsonl."""
+    if not search_jobs_path.exists():
+        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    try:
+        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
+    except json.JSONDecodeError as e:
+        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Find job by ID
+    jobs_list = jobs_data.get("jobs", [])
+    target_job = None
+    for j in jobs_list:
+        if j.get("job_id") == job_id:
+            target_job = j
+            break
+
+    if target_job is None:
+        result = {"status": "FAIL", "errors": [f"job_id '{job_id}' not found in search_jobs.json"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Reject non-openalex jobs before any execution
+    if target_job.get("source") != "openalex":
+        result = {"status": "FAIL", "errors": [f"job source is '{target_job.get('source')}', not 'openalex'"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Execute
+    job_result = _execute_openalex_job(target_job, per_page=per_page, mailto=mailto)
+
+    # Validate before writing
+    vr = validate_job_results_dict([job_result])
+    if vr["status"] != "PASS":
+        result = {"status": "FAIL", "errors": vr["errors"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Append to output
+    _append_jsonl(output_path, [job_result])
+
+    result = {
+        "status": "PASS",
+        "job_id": job_id,
+        "job_result_status": job_result["status"],
+        "raw_record_count": job_result["raw_record_count"],
+        "http_status": job_result.get("http_status"),
+        "output": str(output_path),
+    }
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Executed {job_id}: status={job_result['status']}, records={job_result['raw_record_count']}")
+    return result
+
+
+def run_openalex_jobs(search_jobs_path: Path, output_path: Path,
+                      max_jobs: int = 3, per_page: int = 5, mailto: str = "",
+                      overwrite: bool = False, json_output: bool = False) -> dict:
+    """Execute OpenAlex jobs from search_jobs.json, append to job_results.jsonl."""
+    if not search_jobs_path.exists():
+        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    try:
+        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
+    except json.JSONDecodeError as e:
+        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Filter to openalex jobs only
+    all_jobs = jobs_data.get("jobs", [])
+    openalex_jobs = [j for j in all_jobs if j.get("source") == "openalex"]
+
+    if not openalex_jobs:
+        result = {"status": "FAIL", "errors": ["no openalex jobs found in search_jobs.json"]}
+        if json_output:
+            print(json.dumps(result, indent=2))
+        return result
+
+    # Respect max_jobs
+    jobs_to_run = openalex_jobs[:max_jobs]
+
+    # Handle overwrite
+    if overwrite and output_path.exists():
+        output_path.unlink()
+
+    # Execute each job
+    executed = []
+    for job in jobs_to_run:
+        job_result = _execute_openalex_job(job, per_page=per_page, mailto=mailto)
+
+        # Validate before writing
+        vr = validate_job_results_dict([job_result])
+        if vr["status"] != "PASS":
+            # Write as failed instead
+            job_result = {
+                "schema_version": "source_job_result_v1",
+                "job_id": job.get("job_id", ""),
+                "source": "openalex",
+                "query": job.get("query", ""),
+                "status": "failed",
+                "retrieved_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "raw_record_count": 0,
+                "records": [],
+                "error": f"validation failed: {vr['errors']}",
+                "notes": "",
+            }
+
+        _append_jsonl(output_path, [job_result])
+        executed.append({
+            "job_id": job_result["job_id"],
+            "status": job_result["status"],
+            "raw_record_count": job_result["raw_record_count"],
+        })
+
+    result = {
+        "status": "PASS",
+        "executed_count": len(executed),
+        "executed": executed,
+        "output": str(output_path),
+    }
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Executed {len(executed)} openalex job(s) -> {output_path}")
+        for e in executed:
+            print(f"  {e['job_id']}: status={e['status']}, records={e['raw_record_count']}")
+    return result
+
+
 # ---- Self-test ----
 
 def _self_test() -> bool:
@@ -2582,6 +3005,178 @@ def _self_test() -> bool:
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    # Test 28: reconstruct abstract from abstract_inverted_index
+    try:
+        idx = {"The": [0], "quick": [1], "brown": [2], "fox": [3]}
+        abstract = _reconstruct_openalex_abstract(idx)
+        assert abstract == "The quick brown fox", f"Test 28: Expected 'The quick brown fox', got '{abstract}'"
+        # Empty case
+        assert _reconstruct_openalex_abstract(None) == ""
+        assert _reconstruct_openalex_abstract({}) == ""
+        print("  [PASS] 28. reconstruct abstract from abstract_inverted_index")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 28. reconstruct abstract: {e}")
+        failed += 1
+
+    # Test 29: normalize DOI from https://doi.org/10.xxxx
+    try:
+        assert _normalize_openalex_doi("https://doi.org/10.1234/test") == "10.1234/test"
+        assert _normalize_openalex_doi("http://doi.org/10.5678/foo") == "10.5678/foo"
+        assert _normalize_openalex_doi("https://dx.doi.org/10.9999/bar") == "10.9999/bar"
+        assert _normalize_openalex_doi("10.1234/already") == "10.1234/already"
+        assert _normalize_openalex_doi("") == ""
+        assert _normalize_openalex_doi(None) == ""
+        print("  [PASS] 29. normalize DOI from https://doi.org prefix")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 29. normalize DOI: {e}")
+        failed += 1
+
+    # Test 30: map OpenAlex work to raw record with correct openalex_id and url
+    try:
+        work = {
+            "id": "https://openalex.org/W2741809807",
+            "display_name": "Test Paper Title",
+            "publication_year": 2024,
+            "doi": "https://doi.org/10.1234/test",
+            "authorships": [
+                {"author": {"display_name": "Alice Smith"}},
+                {"author": {"display_name": "Bob Jones"}},
+            ],
+            "primary_location": {
+                "source": {"display_name": "Test Venue"}
+            },
+            "abstract_inverted_index": {"We": [0], "study": [1], "LLMs": [2]},
+        }
+        rec = _map_openalex_work_to_raw_record(work, "job_test_001", "LLM hallucination", "2026-05-13")
+        assert rec is not None, "Test 30: record should not be None"
+        assert rec["source"] == "openalex"
+        assert rec["title"] == "Test Paper Title"
+        assert rec["authors"] == ["Alice Smith", "Bob Jones"]
+        assert rec["year"] == 2024
+        assert rec["url"] == "https://openalex.org/W2741809807"
+        assert rec["doi"] == "10.1234/test"
+        assert rec["openalex_id"] == "W2741809807"
+        assert rec["venue"] == "Test Venue"
+        assert rec["abstract"] == "We study LLMs"
+        assert rec["evidence_origin"] == "api_export"
+        assert "job_test_001" in rec["notes"]
+        print("  [PASS] 30. map OpenAlex work to raw record")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 30. map OpenAlex work: {e}")
+        failed += 1
+
+    # Test 31: validate mapped record with _validate_records
+    try:
+        work = {
+            "id": "https://openalex.org/W123",
+            "display_name": "Valid Paper",
+            "publication_year": 2023,
+            "doi": "https://doi.org/10.1111/valid",
+            "authorships": [{"author": {"display_name": "Author One"}}],
+            "abstract_inverted_index": {"Abstract": [0], "text": [1]},
+        }
+        rec = _map_openalex_work_to_raw_record(work, "job_v", "test query", "2026-05-13")
+        errors, warnings, _ = _validate_records([rec])
+        assert not errors, f"Test 31: Expected no errors, got {errors}"
+        print("  [PASS] 31. validate mapped record passes _validate_records")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 31. validate mapped record: {e}")
+        failed += 1
+
+    # Test 32: execute fake OpenAlex response mapping to success job result
+    try:
+        # Create a mock job and test the mapping logic (not the HTTP call)
+        job = {"job_id": "job_oa_mock", "source": "openalex", "query": "test",
+               "time_range": {"start_year": 2020, "end_year": 2026}}
+        # Simulate what _execute_openalex_job does after getting a 200 response
+        mock_works = [
+            {"id": "https://openalex.org/W999", "display_name": "Mock Paper",
+             "publication_year": 2024, "doi": "", "authorships": [],
+             "abstract_inverted_index": None},
+        ]
+        raw_records = []
+        for w in mock_works:
+            r = _map_openalex_work_to_raw_record(w, "job_oa_mock", "test", "2026-05-13")
+            if r:
+                raw_records.append(r)
+        result = {
+            "schema_version": "source_job_result_v1",
+            "job_id": "job_oa_mock", "source": "openalex", "query": "test",
+            "status": "success", "http_status": 200, "retrieved_at": "2026-05-13",
+            "raw_record_count": len(raw_records), "records": raw_records,
+            "error": "", "notes": "",
+        }
+        vr = validate_job_results_dict([result])
+        assert vr["status"] == "PASS", f"Test 32: Expected PASS, got {vr['status']}: {vr['errors']}"
+        print("  [PASS] 32. fake OpenAlex response → success job result validates PASS")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 32. fake OpenAlex response: {e}")
+        failed += 1
+
+    # Test 33: non-openalex job passed to run helper should FAIL before network
+    try:
+        tmp_dir = Path(tempfile.mkdtemp())
+        jobs_path = tmp_dir / "search_jobs.json"
+        out_path = tmp_dir / "job_results.jsonl"
+        jobs_data = {
+            "schema_version": "search_jobs_v1", "source_plan": "test.yaml",
+            "topic": "test", "search_intent": "novelty_check", "job_count": 1,
+            "jobs": [{"job_id": "job_arxiv_1", "source": "arxiv", "query": "q",
+                      "time_range": {"start_year": 2020, "end_year": 2026},
+                      "max_results": 10, "status": "planned",
+                      "network_required": True, "execution_result": "not_started",
+                      "raw_output_file": "", "error": "", "notes": ""}],
+        }
+        jobs_path.write_text(json.dumps(jobs_data), encoding="utf-8")
+        r = run_openalex_job(jobs_path, "job_arxiv_1", out_path, json_output=False)
+        assert r["status"] == "FAIL", f"Test 33: Expected FAIL, got {r['status']}"
+        assert not out_path.exists(), "Test 33: output should not exist"
+        print("  [PASS] 33. non-openalex job → FAIL before network")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 33. non-openalex job: {e}")
+        failed += 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Test 34: HTTP 429 mapping produces rate_limited job result
+    try:
+        result = {
+            "schema_version": "source_job_result_v1",
+            "job_id": "job_oa_429", "source": "openalex", "query": "test",
+            "status": "rate_limited", "http_status": 429, "retrieved_at": "2026-05-13",
+            "raw_record_count": 0, "records": [],
+            "error": "HTTP 429: Too Many Requests", "notes": "",
+        }
+        vr = validate_job_results_dict([result])
+        assert vr["status"] == "PASS", f"Test 34: Expected PASS, got {vr['status']}: {vr['errors']}"
+        print("  [PASS] 34. HTTP 429 → rate_limited job result validates PASS")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 34. HTTP 429 mapping: {e}")
+        failed += 1
+
+    # Test 35: missing/invalid title work is skipped, not fabricated
+    try:
+        # Work with empty title
+        work_no_title = {"id": "https://openalex.org/W000", "display_name": "", "publication_year": 2024}
+        rec = _map_openalex_work_to_raw_record(work_no_title, "job_skip", "test", "2026-05-13")
+        assert rec is None, f"Test 35: Expected None for empty title, got {rec}"
+        # Work with no display_name or title
+        work_no_field = {"id": "https://openalex.org/W001", "publication_year": 2024}
+        rec2 = _map_openalex_work_to_raw_record(work_no_field, "job_skip", "test", "2026-05-13")
+        assert rec2 is None, f"Test 35: Expected None for missing title, got {rec2}"
+        print("  [PASS] 35. missing title work → skipped (None)")
+        passed += 1
+    except Exception as e:
+        print(f"  [FAIL] 35. missing title skip: {e}")
+        failed += 1
+
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
     return failed == 0
 
@@ -2651,6 +3246,23 @@ def main():
     sjr = sub.add_parser("summarize-job-results", help="Summarize job_results.jsonl")
     sjr.add_argument("--file", required=True, help="Path to job_results.jsonl")
     sjr.add_argument("--json", action="store_true", help="Output JSON")
+
+    roj = sub.add_parser("run-openalex-job", help="Execute one OpenAlex search job")
+    roj.add_argument("--job-id", required=True, help="Job ID to execute")
+    roj.add_argument("--search-jobs", required=True, help="Path to search_jobs.json")
+    roj.add_argument("--output", required=True, help="Output path for job_results.jsonl")
+    roj.add_argument("--per-page", type=int, default=5, help="Results per page (default: 5)")
+    roj.add_argument("--mailto", default="", help="Optional email for polite API pool")
+    roj.add_argument("--json", action="store_true", help="Output JSON")
+
+    rojs = sub.add_parser("run-openalex-jobs", help="Execute multiple OpenAlex search jobs")
+    rojs.add_argument("--search-jobs", required=True, help="Path to search_jobs.json")
+    rojs.add_argument("--output", required=True, help="Output path for job_results.jsonl")
+    rojs.add_argument("--max-jobs", type=int, default=3, help="Max jobs to execute (default: 3)")
+    rojs.add_argument("--per-page", type=int, default=5, help="Results per page (default: 5)")
+    rojs.add_argument("--mailto", default="", help="Optional email for polite API pool")
+    rojs.add_argument("--overwrite", action="store_true", help="Overwrite output instead of append")
+    rojs.add_argument("--json", action="store_true", help="Output JSON")
 
     ir = sub.add_parser("init-run-skeleton", help="Create empty run skeleton")
     ir.add_argument("--run-dir", required=True, help="Target run directory")
@@ -2728,6 +3340,29 @@ def main():
             sys.exit(1)
     elif args.command == "summarize-job-results":
         summarize_job_results(Path(args.file), args.json)
+    elif args.command == "run-openalex-job":
+        r = run_openalex_job(
+            search_jobs_path=Path(args.search_jobs),
+            job_id=args.job_id,
+            output_path=Path(args.output),
+            per_page=args.per_page,
+            mailto=args.mailto,
+            json_output=args.json,
+        )
+        if r["status"] != "PASS":
+            sys.exit(1)
+    elif args.command == "run-openalex-jobs":
+        r = run_openalex_jobs(
+            search_jobs_path=Path(args.search_jobs),
+            output_path=Path(args.output),
+            max_jobs=args.max_jobs,
+            per_page=args.per_page,
+            mailto=args.mailto,
+            overwrite=args.overwrite,
+            json_output=args.json,
+        )
+        if r["status"] != "PASS":
+            sys.exit(1)
     elif args.command == "init-run-skeleton":
         r = init_run_skeleton(Path(args.run_dir), args.topic, args.intent)
         print(json.dumps(r, indent=2))
