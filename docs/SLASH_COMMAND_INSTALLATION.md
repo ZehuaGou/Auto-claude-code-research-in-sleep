@@ -76,7 +76,7 @@ tools/slash_command_adapter.py    (Agent-facing backend — parser + executor)
         |
         v  [--execute creates scaffolds, --dry-run shows plan]
         |
-research/current/                 (local — gitignored)
+research/current/runtime/         (local — gitignored, all runtime outputs)
   ├── raw_user_input.md           (created by /research-intake --execute)
   ├── input_normalization_scaffold.md
   ├── literature_intake_scaffold.md
@@ -84,13 +84,16 @@ research/current/                 (local — gitignored)
   ├── idea_audit_scaffold.md
   ├── experiment_scaffold_*.md
   ├── paper_writing_scaffold.md
-  ├── workflow_state.json         (tracks user phase)
-  └── user_command_payloads/      (command payloads)
+  └── workflow_state.json         (tracks user phase)
+
+research/current/user_command_payloads/  (local — gitignored, command payloads)
 ```
+
+**Important:** `research/current/*.md` files (raw_user_input.md, input_normalization.md, etc.) are committed regression/test fixtures. Slash command runtime outputs go to `research/current/runtime/` and never overwrite tracked files.
 
 ## Workflow State
 
-`research/current/workflow_state.json` tracks:
+`research/current/runtime/workflow_state.json` tracks:
 - `current_user_phase`: Which phase the user is in
 - `completed_user_phases`: List of completed phases
 - `latest_command`: Last command executed
@@ -104,11 +107,13 @@ research/current/                 (local — gitignored)
 ## Important Notes
 
 - `.claude/` is in `.gitignore` — never committed.
+- `research/current/runtime/` is in `.gitignore` — all runtime outputs go here.
 - Templates in `templates/claude_commands/` are the source of truth.
 - All commands are safe: no model calls, no experiments, no trusted_outputs changes.
 - Python scripts (`tools/slash_command_adapter.py`, `tools/research_cli.py`) are Agent-facing backend.
 - Scaffold files are placeholders — they do not contain model conclusions.
-- `--execute` creates files; default mode only shows plan.
+- `--execute` creates files in `runtime/`; default mode only shows plan.
+- Committed `research/current/*.md` files are regression/test fixtures — never overwritten by slash commands.
 
 ## Troubleshooting
 

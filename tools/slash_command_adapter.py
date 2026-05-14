@@ -19,8 +19,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RESEARCH_DIR = ROOT / "research" / "current"
+RUNTIME_DIR = RESEARCH_DIR / "runtime"
 PAYLOAD_DIR = RESEARCH_DIR / "user_command_payloads"
-WORKFLOW_STATE_FILE = RESEARCH_DIR / "workflow_state.json"
+WORKFLOW_STATE_FILE = RUNTIME_DIR / "workflow_state.json"
+# Fallback: read-only path for legacy workflow_state.json (never written here)
+LEGACY_WORKFLOW_STATE_FILE = RESEARCH_DIR / "workflow_state.json"
 
 # ---- Execution modes ----
 
@@ -199,12 +202,16 @@ raw_payload: |
 # ---- Workflow state ----
 
 def load_workflow_state() -> dict:
-    """Load workflow state from workflow_state.json."""
-    if WORKFLOW_STATE_FILE.exists():
-        try:
-            return json.loads(WORKFLOW_STATE_FILE.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
+    """Load workflow state from runtime/workflow_state.json.
+
+    Falls back to legacy research/current/workflow_state.json (read-only).
+    """
+    for path in (WORKFLOW_STATE_FILE, LEGACY_WORKFLOW_STATE_FILE):
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
     return {
         "current_user_phase": None,
         "completed_user_phases": [],
@@ -221,9 +228,9 @@ def load_workflow_state() -> dict:
 
 
 def save_workflow_state(state: dict) -> None:
-    """Save workflow state to workflow_state.json."""
+    """Save workflow state to runtime/workflow_state.json."""
     state["last_updated"] = datetime.now(timezone.utc).isoformat()
-    RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     WORKFLOW_STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
@@ -268,8 +275,8 @@ def _compute_next_commands(state: dict) -> list[str]:
 # ---- Safe execution functions ----
 
 def _ensure_research_dir() -> None:
-    """Ensure research/current directory exists."""
-    RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
+    """Ensure research/current/runtime/ directory exists."""
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def execute_research_intake(parsed: dict, payload_file: str | None = None) -> dict:
@@ -278,8 +285,8 @@ def execute_research_intake(parsed: dict, payload_file: str | None = None) -> di
     payload = parsed["payload"]
     results = []
 
-    # 1. Save raw_user_input.md
-    raw_file = RESEARCH_DIR / "raw_user_input.md"
+    # 1. Save raw_user_input.md to runtime/
+    raw_file = RUNTIME_DIR / "raw_user_input.md"
     content = f"""---
 command: /research-intake
 timestamp: {datetime.now(timezone.utc).isoformat()}
@@ -292,10 +299,10 @@ model_not_called: true
 {payload}
 """
     raw_file.write_text(content, encoding="utf-8")
-    results.append(f"Created {raw_file.name}")
+    results.append(f"Created runtime/{raw_file.name}")
 
     # 2. Create intake scaffold (not real normalization — no model)
-    scaffold_file = RESEARCH_DIR / "input_normalization_scaffold.md"
+    scaffold_file = RUNTIME_DIR / "input_normalization_scaffold.md"
     scaffold_content = f"""---
 command: /research-intake
 timestamp: {datetime.now(timezone.utc).isoformat()}
@@ -323,11 +330,11 @@ Run input_normalization via trusted_role_runner to produce normalized brief.
 This scaffold is a placeholder — no model conclusions have been drawn.
 """
     scaffold_file.write_text(scaffold_content, encoding="utf-8")
-    results.append(f"Created {scaffold_file.name}")
+    results.append(f"Created runtime/{scaffold_file.name}")
 
     # 3. Update workflow state
     state = update_workflow_state("research-intake", payload_file)
-    results.append(f"Updated workflow_state.json")
+    results.append(f"Updated runtime/workflow_state.json")
 
     return {
         "status": "execute_safe",
@@ -341,13 +348,13 @@ This scaffold is a placeholder — no model conclusions have been drawn.
 
 
 def execute_literature_intake(parsed: dict, payload_file: str | None = None) -> dict:
-    """Safe execution for /literature-intake. Metadata-only pipeline, no model calls."""
+    """Safe execution for /literature-intake. Creates scaffold only — no metadata live run."""
     _ensure_research_dir()
     payload = parsed["payload"]
     results = []
 
     # Check prerequisites
-    raw_file = RESEARCH_DIR / "raw_user_input.md"
+    raw_file = RUNTIME_DIR / "raw_user_input.md"
     if not raw_file.exists():
         return {
             "status": "blocked",
@@ -358,7 +365,7 @@ def execute_literature_intake(parsed: dict, payload_file: str | None = None) -> 
         }
 
     # Create literature search scaffold
-    scaffold_file = RESEARCH_DIR / "literature_intake_scaffold.md"
+    scaffold_file = RUNTIME_DIR / "literature_intake_scaffold.md"
     scaffold_content = f"""---
 command: /literature-intake
 timestamp: {datetime.now(timezone.utc).isoformat()}
@@ -392,7 +399,7 @@ status: scaffold
 ## Next Action
 
 To run metadata-only literature search:
-1. Ensure research/current/raw_user_input.md exists
+1. Ensure research/current/runtime/raw_user_input.md exists
 2. Execute literature evidence pipeline via literature_evidence_landing.py
 3. This scaffold is a placeholder — no search has been executed
 
@@ -401,13 +408,14 @@ To run metadata-only literature search:
 - No PDFs downloaded
 - No models called
 - No trusted_outputs changed
+- This scaffold is NOT a live literature search — actual search deferred
 """
     scaffold_file.write_text(scaffold_content, encoding="utf-8")
-    results.append(f"Created {scaffold_file.name}")
+    results.append(f"Created runtime/{scaffold_file.name}")
 
     # Update workflow state
     state = update_workflow_state("literature-intake", payload_file)
-    results.append(f"Updated workflow_state.json")
+    results.append(f"Updated runtime/workflow_state.json")
 
     return {
         "status": "execute_safe",
@@ -417,7 +425,7 @@ To run metadata-only literature search:
         "model_called": False,
         "trusted_outputs_changed": False,
         "next_action": "Run /idea-synthesis after literature evidence is collected",
-        "note": "Scaffold created. Actual literature search requires running the evidence pipeline.",
+        "note": "Scaffold created. Metadata live run deferred — not executed yet.",
     }
 
 
@@ -429,7 +437,7 @@ def execute_idea_synthesis(parsed: dict, payload_file: str | None = None) -> dic
     results = []
 
     # Check prerequisites
-    raw_file = RESEARCH_DIR / "raw_user_input.md"
+    raw_file = RUNTIME_DIR / "raw_user_input.md"
     if not raw_file.exists():
         return {
             "status": "blocked",
@@ -440,7 +448,7 @@ def execute_idea_synthesis(parsed: dict, payload_file: str | None = None) -> dic
         }
 
     # Create idea synthesis scaffold
-    scaffold_file = RESEARCH_DIR / "idea_synthesis_scaffold.md"
+    scaffold_file = RUNTIME_DIR / "idea_synthesis_scaffold.md"
     scaffold_content = f"""---
 command: /idea-synthesis
 timestamp: {datetime.now(timezone.utc).isoformat()}
@@ -497,11 +505,11 @@ This scaffold is a placeholder — no model conclusions have been drawn.
 - Transfer innovation and contribution chain modes are template-ready
 """
     scaffold_file.write_text(scaffold_content, encoding="utf-8")
-    results.append(f"Created {scaffold_file.name}")
+    results.append(f"Created runtime/{scaffold_file.name}")
 
     # Update workflow state
     state = update_workflow_state("idea-synthesis", payload_file)
-    results.append(f"Updated workflow_state.json")
+    results.append(f"Updated runtime/workflow_state.json")
 
     return {
         "status": "execute_safe",
@@ -522,7 +530,7 @@ def execute_idea_audit(parsed: dict, payload_file: str | None = None) -> dict:
     results = []
 
     # Check prerequisites
-    raw_file = RESEARCH_DIR / "raw_user_input.md"
+    raw_file = RUNTIME_DIR / "raw_user_input.md"
     if not raw_file.exists():
         return {
             "status": "blocked",
@@ -537,7 +545,7 @@ def execute_idea_audit(parsed: dict, payload_file: str | None = None) -> dict:
     has_evidence = evidence_dir.exists() and (evidence_dir / "top_k.md").exists()
 
     # Create audit scaffold
-    scaffold_file = RESEARCH_DIR / "idea_audit_scaffold.md"
+    scaffold_file = RUNTIME_DIR / "idea_audit_scaffold.md"
     scaffold_content = f"""---
 command: /idea-audit
 timestamp: {datetime.now(timezone.utc).isoformat()}
@@ -605,11 +613,11 @@ This scaffold is a placeholder — no model conclusions have been drawn.
 - If evidence insufficient, verdict must be insufficient_evidence
 """
     scaffold_file.write_text(scaffold_content, encoding="utf-8")
-    results.append(f"Created {scaffold_file.name}")
+    results.append(f"Created runtime/{scaffold_file.name}")
 
     # Update workflow state
     state = update_workflow_state("idea-audit", payload_file)
-    results.append(f"Updated workflow_state.json")
+    results.append(f"Updated runtime/workflow_state.json")
 
     return {
         "status": "execute_safe",
@@ -642,7 +650,7 @@ def execute_experiment(parsed: dict, payload_file: str | None = None) -> dict:
         }
 
     # Check prerequisites
-    raw_file = RESEARCH_DIR / "raw_user_input.md"
+    raw_file = RUNTIME_DIR / "raw_user_input.md"
     if not raw_file.exists():
         return {
             "status": "blocked",
@@ -692,7 +700,7 @@ def execute_experiment(parsed: dict, payload_file: str | None = None) -> dict:
     }
 
     # Create experiment scaffold
-    scaffold_file = RESEARCH_DIR / f"experiment_scaffold_{mode}.md"
+    scaffold_file = RUNTIME_DIR / f"experiment_scaffold_{mode}.md"
     scaffold_content = f"""---
 command: /experiment
 mode: {mode}
@@ -735,11 +743,11 @@ This scaffold is a placeholder — no experiment has been designed or executed.
 - No results claimed
 """
     scaffold_file.write_text(scaffold_content, encoding="utf-8")
-    results.append(f"Created {scaffold_file.name}")
+    results.append(f"Created runtime/{scaffold_file.name}")
 
     # Update workflow state
     state = update_workflow_state("experiment", payload_file)
-    results.append(f"Updated workflow_state.json")
+    results.append(f"Updated runtime/workflow_state.json")
 
     return {
         "status": "execute_safe",
@@ -761,7 +769,7 @@ def execute_paper_writing(parsed: dict, payload_file: str | None = None) -> dict
     results = []
 
     # Check prerequisites
-    raw_file = RESEARCH_DIR / "raw_user_input.md"
+    raw_file = RUNTIME_DIR / "raw_user_input.md"
     if not raw_file.exists():
         return {
             "status": "blocked",
@@ -772,7 +780,7 @@ def execute_paper_writing(parsed: dict, payload_file: str | None = None) -> dict
         }
 
     # Check for experiment results
-    experiment_results = list(RESEARCH_DIR.glob("experiment_results*"))
+    experiment_results = list(RUNTIME_DIR.glob("experiment_results*"))
     has_results = len(experiment_results) > 0
 
     # Check for claim boundary
@@ -786,7 +794,7 @@ def execute_paper_writing(parsed: dict, payload_file: str | None = None) -> dict
         blocked_reasons.append("No claim boundary (method_refinement) found")
 
     # Create paper-writing scaffold
-    scaffold_file = RESEARCH_DIR / "paper_writing_scaffold.md"
+    scaffold_file = RUNTIME_DIR / "paper_writing_scaffold.md"
     scaffold_content = f"""---
 command: /paper-writing
 timestamp: {datetime.now(timezone.utc).isoformat()}
@@ -852,13 +860,13 @@ blocked_reasons: {json.dumps(blocked_reasons) if blocked_reasons else "none"}
 - Cannot write paper without verified experiment results
 """
     scaffold_file.write_text(scaffold_content, encoding="utf-8")
-    results.append(f"Created {scaffold_file.name}")
+    results.append(f"Created runtime/{scaffold_file.name}")
 
     # Update workflow state
     state = update_workflow_state("paper-writing", payload_file)
     if blocked_reasons:
         state["blocked_reason"] = "; ".join(blocked_reasons)
-    results.append(f"Updated workflow_state.json")
+    results.append(f"Updated runtime/workflow_state.json")
 
     return {
         "status": "blocked" if blocked_reasons else "execute_safe",
@@ -885,8 +893,8 @@ def execute_status(parsed: dict, payload_file: str | None = None) -> dict:
         if path.exists():
             trusted_outputs_summary[stage] = "exists"
         else:
-            # Check scaffold
-            scaffold_path = RESEARCH_DIR / f"{stage}_scaffold.md"
+            # Check runtime scaffold
+            scaffold_path = RUNTIME_DIR / f"{stage}_scaffold.md"
             if scaffold_path.exists():
                 trusted_outputs_summary[stage] = "scaffold"
             else:
@@ -1190,27 +1198,32 @@ def _self_test() -> bool:
         import sys as _sys
         mod = _sys.modules[__name__]
         orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
         orig_state = mod.WORKFLOW_STATE_FILE
         mod.RESEARCH_DIR = Path(td) / "research" / "current"
-        mod.WORKFLOW_STATE_FILE = mod.RESEARCH_DIR / "workflow_state.json"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
         try:
             p = parse_slash_command('/research-intake "test execution"')
             result = execute_command(p)
             check("23. execute research-intake", result["status"] == "execute_safe" and not result["model_called"],
                   f"got status={result['status']}, model_called={result['model_called']}")
-            check("23b. raw_user_input.md created", (mod.RESEARCH_DIR / "raw_user_input.md").exists())
+            check("23b. raw_user_input.md created", (mod.RUNTIME_DIR / "raw_user_input.md").exists())
             check("23c. workflow_state.json created", mod.WORKFLOW_STATE_FILE.exists())
         finally:
             mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
             mod.WORKFLOW_STATE_FILE = orig_state
 
     # Test 24: execute status returns state
     with tempfile.TemporaryDirectory() as td:
         mod = _sys.modules[__name__]
         orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
         orig_state = mod.WORKFLOW_STATE_FILE
         mod.RESEARCH_DIR = Path(td) / "research" / "current"
-        mod.WORKFLOW_STATE_FILE = mod.RESEARCH_DIR / "workflow_state.json"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
         try:
             p = parse_slash_command('/status')
             result = execute_command(p)
@@ -1218,15 +1231,18 @@ def _self_test() -> bool:
                   f"got status={result['status']}")
         finally:
             mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
             mod.WORKFLOW_STATE_FILE = orig_state
 
     # Test 25: literature-intake blocked without raw_user_input
     with tempfile.TemporaryDirectory() as td:
         mod = _sys.modules[__name__]
         orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
         orig_state = mod.WORKFLOW_STATE_FILE
         mod.RESEARCH_DIR = Path(td) / "research" / "current"
-        mod.WORKFLOW_STATE_FILE = mod.RESEARCH_DIR / "workflow_state.json"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
         try:
             p = parse_slash_command('/literature-intake "test"')
             result = execute_command(p)
@@ -1234,34 +1250,40 @@ def _self_test() -> bool:
                   f"got status={result['status']}")
         finally:
             mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
             mod.WORKFLOW_STATE_FILE = orig_state
 
     # Test 26: paper-writing blocked without results
     with tempfile.TemporaryDirectory() as td:
         mod = _sys.modules[__name__]
         orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
         orig_state = mod.WORKFLOW_STATE_FILE
         mod.RESEARCH_DIR = Path(td) / "research" / "current"
-        mod.WORKFLOW_STATE_FILE = mod.RESEARCH_DIR / "workflow_state.json"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
         try:
-            # Create raw_user_input so prerequisite check passes
-            mod.RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
-            (mod.RESEARCH_DIR / "raw_user_input.md").write_text("test")
+            # Create raw_user_input in runtime so prerequisite check passes
+            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
             p = parse_slash_command('/paper-writing "test"')
             result = execute_command(p)
             check("26. paper-writing blocked without results", result["status"] == "blocked",
                   f"got status={result['status']}")
         finally:
             mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
             mod.WORKFLOW_STATE_FILE = orig_state
 
     # Test 27: workflow state tracking
     with tempfile.TemporaryDirectory() as td:
         mod = _sys.modules[__name__]
         orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
         orig_state = mod.WORKFLOW_STATE_FILE
         mod.RESEARCH_DIR = Path(td) / "research" / "current"
-        mod.WORKFLOW_STATE_FILE = mod.RESEARCH_DIR / "workflow_state.json"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
         try:
             p = parse_slash_command('/research-intake "test"')
             result = execute_command(p)
@@ -1272,6 +1294,7 @@ def _self_test() -> bool:
                   f"got command={state['latest_command']}")
         finally:
             mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
             mod.WORKFLOW_STATE_FILE = orig_state
 
     # Test 28: dry-run message accurate
@@ -1291,15 +1314,64 @@ def _self_test() -> bool:
         with tempfile.TemporaryDirectory() as td:
             mod = _sys.modules[__name__]
             orig_dir = mod.RESEARCH_DIR
+            orig_rt = mod.RUNTIME_DIR
             orig_state = mod.WORKFLOW_STATE_FILE
             mod.RESEARCH_DIR = Path(td) / "research" / "current"
-            mod.WORKFLOW_STATE_FILE = mod.RESEARCH_DIR / "workflow_state.json"
-            mod.RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
-            (mod.RESEARCH_DIR / "raw_user_input.md").write_text("test")
+            mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+            mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
             p = parse_slash_command(f'/experiment "test" --mode {mode}')
             result = execute_command(p)
             check(f"30. experiment {mode} mode", result["status"] == "execute_safe",
                   f"got status={result['status']}")
+
+    # Test 31: runtime isolation — writes go to runtime/, not research/current/
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        try:
+            p = parse_slash_command('/research-intake "isolation test"')
+            result = execute_command(p)
+            # raw_user_input.md should be in runtime/, NOT in research/current/
+            rt_raw = mod.RUNTIME_DIR / "raw_user_input.md"
+            tracked_raw = mod.RESEARCH_DIR / "raw_user_input.md"
+            check("31. runtime isolation", rt_raw.exists() and not tracked_raw.exists(),
+                  f"runtime={rt_raw.exists()}, tracked={tracked_raw.exists()}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+
+    # Test 32: legacy workflow_state.json fallback read
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        legacy_state = mod.LEGACY_WORKFLOW_STATE_FILE
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        mod.LEGACY_WORKFLOW_STATE_FILE = mod.RESEARCH_DIR / "workflow_state.json"
+        try:
+            # Write to legacy path only
+            mod.RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
+            legacy_data = {"current_user_phase": "legacy_phase", "completed_user_phases": []}
+            mod.LEGACY_WORKFLOW_STATE_FILE.write_text(json.dumps(legacy_data))
+            state = load_workflow_state()
+            check("32. legacy fallback read", state["current_user_phase"] == "legacy_phase",
+                  f"got phase={state.get('current_user_phase')}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+            mod.LEGACY_WORKFLOW_STATE_FILE = legacy_state
 
     print(f"\nSelf-test results: {tests_passed} passed, {tests_failed} failed")
     return tests_failed == 0

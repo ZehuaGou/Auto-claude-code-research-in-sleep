@@ -33,6 +33,8 @@
 
 **Phase 21L Status:** IMPLEMENTED — slash-command-first MVP with safe execution. `tools/slash_command_adapter.py` upgraded: `--execute` flag, 4 execution modes (dry_run/execute_safe/blocked/plan_only), 7 safe executors (research-intake, literature-intake, idea-synthesis, idea-audit, experiment, paper-writing, status). `research/current/workflow_state.json` tracks user phase, completed phases, next commands. All commands create scaffolds (no model calls, no trusted_outputs changes). experiment supports 4 modes (lightweight/full/analyze/revise). paper-writing blocked without results. 48 adapter self-tests + 10 installer self-tests + 44 research_cli tests pass.
 
+**Phase 21M Status:** IMPLEMENTED — runtime directory isolation. All slash command `--execute` outputs now write to `research/current/runtime/` instead of `research/current/`. This prevents overwriting tracked regression/test fixtures (raw_user_input.md, input_normalization.md, etc.). `workflow_state.json` moved to `research/current/runtime/workflow_state.json` with read-only fallback from legacy path. literature-intake execute_safe messaging clarified as scaffold-only (metadata live run deferred). 50 adapter self-tests (including runtime isolation + legacy fallback tests) + 10 installer tests + 44 research_cli tests pass.
+
 ---
 
 ## 1. Goal
