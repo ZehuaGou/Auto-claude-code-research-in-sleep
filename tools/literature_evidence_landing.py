@@ -289,72 +289,38 @@ def append_raw(input_path: Path, run_dir: Path, json_output: bool) -> None:
 # ---- Candidate building ----
 
 def _normalize_title(title: str) -> str:
-    """Lowercase, trim, collapse whitespace, remove punctuation, strip subtitles."""
-    t = title.lower().strip()
-    # Remove subtitle after ":" (e.g., "Lookback Lens: Detecting..." -> "lookback lens")
-    t = t.split(":")[0].strip()
-    t = re.sub(r"\s+", " ", t)
-    t = re.sub(r"[^\w\s]", "", t)
-    return t.strip()
+    from tools.literature.scoring import _normalize_title as _impl
+    return _impl(title)
 
 
 def _is_title_match(t1: str, t2: str) -> bool:
-    """Check if two normalized titles are semantically the same paper."""
-    if not t1 or not t2:
-        return False
-    if t1 == t2:
-        return True
-    # Check if one is a prefix of the other (within 80% length)
-    shorter, longer = (t1, t2) if len(t1) <= len(t2) else (t2, t1)
-    if len(longer) > 0 and len(shorter) / len(longer) >= 0.8:
-        if longer.startswith(shorter):
-            return True
-    return False
+    from tools.literature.scoring import _is_title_match as _impl
+    return _impl(t1, t2)
 
 
 def _canonical_identity(rec: dict, normalized_title: str, year: str) -> str:
-    """Return a stable canonical identity string for dedup."""
-    doi = rec.get("doi", "").strip()
-    arxiv = rec.get("arxiv_id", "").strip()
-    ss = rec.get("semantic_scholar_id", "").strip()
-    oa = rec.get("openalex_id", "").strip()
-    if doi:
-        return f"doi:{doi.lower()}"
-    if arxiv:
-        return f"arxiv:{arxiv}"
-    if ss:
-        return f"semantic_scholar:{ss}"
-    if oa:
-        return f"openalex:{oa}"
-    return f"title_year:{normalized_title}|{year}"
+    from tools.literature.scoring import _canonical_identity as _impl
+    return _impl(rec, normalized_title, year)
 
 
 def _is_arxiv_doi(doi: str) -> bool:
-    """Check if a DOI is an arXiv DOI."""
-    return "arxiv" in doi.lower() or "10.48550" in doi
+    from tools.literature.scoring import _is_arxiv_doi as _impl
+    return _impl(doi)
 
 
 def _candidate_id_from_identity(identity: str) -> str:
-    """Stable candidate ID from canonical identity (no raw index)."""
-    h = hashlib.md5(identity.encode(), usedforsecurity=False).hexdigest()[:12]
-    return f"cand_{h}"
+    from tools.literature.scoring import _candidate_id_from_identity as _impl
+    return _impl(identity)
 
 
 def _build_stable_ids(rec: dict) -> dict:
-    return {
-        "doi": rec.get("doi") or "",
-        "arxiv_id": rec.get("arxiv_id") or "",
-        "semantic_scholar_id": rec.get("semantic_scholar_id") or "",
-        "openalex_id": rec.get("openalex_id") or "",
-    }
+    from tools.literature.scoring import _build_stable_ids as _impl
+    return _impl(rec)
 
 
 def _authors_to_list(authors):
-    if isinstance(authors, list):
-        return authors
-    if isinstance(authors, str):
-        return [a.strip() for a in authors.split(",") if a.strip()]
-    return []
+    from tools.literature.scoring import _authors_to_list as _impl
+    return _impl(authors)
 
 
 def build_candidates(run_dir: Path, json_output: bool) -> dict:
@@ -675,154 +641,20 @@ _STRONG_DOMAIN_NEGATIVES = frozenset([
 
 
 def _score_text_relevance(title: str, abstract: str, must_include: list[str]) -> dict:
-    """Deterministic keyword/concept relevance scoring. No model, no semantic inference."""
-    text = f"{title} {abstract}".lower()
-
-    score = 0
-    reasons = []
-    flags = []
-
-    # Positive scoring
-    hallucination_hits = sum(1 for term in _HALLUCINATION_GROUP if term in text)
-    if hallucination_hits > 0:
-        score += 3
-        reasons.append(f"hallucination_group matched ({hallucination_hits} terms)")
-
-    llm_hits = sum(1 for term in _LLM_GROUP if term in text)
-    if llm_hits > 0:
-        score += 2
-        reasons.append(f"llm_group matched ({llm_hits} terms)")
-
-    internal_hits = sum(1 for term in _INTERNAL_STATE_GROUP if term in text)
-    if internal_hits > 0:
-        score += 3
-        reasons.append(f"internal_state_group matched ({internal_hits} terms)")
-
-    token_hits = sum(1 for term in _TOKEN_GROUP if term in text)
-    if token_hits > 0:
-        score += 2
-        reasons.append(f"token_group matched ({token_hits} terms)")
-
-    detection_hits = sum(1 for term in _DETECTION_GROUP if term in text)
-    if detection_hits > 0:
-        score += 2
-        reasons.append(f"detection_group matched ({detection_hits} terms)")
-
-    # must_include term matching
-    must_hits = 0
-    for term in must_include:
-        if term.lower() in text:
-            must_hits += 1
-    if must_hits > 0:
-        bonus = min(must_hits, 3)
-        score += bonus
-        reasons.append(f"must_include matched ({must_hits}/{len(must_include)})")
-
-    # Negative scoring
-    negative_hits = sum(1 for term in _NEGATIVE_GROUP if term in text)
-    if negative_hits > 0:
-        penalty = negative_hits * 2
-        score -= penalty
-        reasons.append(f"negative_terms penalized (-{penalty})")
-        flags.append(f"negative_match_{negative_hits}")
-
-    # Strong domain negative check: if title contains these, cap relevance
-    title_lower = title.lower()
-    strong_neg_hits = [term for term in _STRONG_DOMAIN_NEGATIVES if term in title_lower]
-    has_strong_negative = len(strong_neg_hits) > 0
-    if has_strong_negative:
-        flags.append(f"strong_domain_negative: {', '.join(strong_neg_hits)}")
-        # Check if title has internal_state terms (which would override the penalty)
-        title_internal_hits = sum(1 for term in _INTERNAL_STATE_GROUP if term in title_lower)
-        if title_internal_hits == 0:
-            # Strong domain negative in title without internal state terms: cap at medium
-            reasons.append(f"strong domain negative in title without internal state terms: capped at medium")
-
-    # Determine label
-    has_core = hallucination_hits > 0 or internal_hits > 0
-    has_support = llm_hits > 0 or detection_hits > 0
-
-    if score >= 7 and has_core and has_support:
-        label = "high"
-    elif score >= 4:
-        label = "medium"
-    else:
-        label = "low"
-
-    # Domain-aware cap: strong negative in title without internal state terms -> max medium
-    if has_strong_negative:
-        title_internal_hits = sum(1 for term in _INTERNAL_STATE_GROUP if term in title_lower)
-        if title_internal_hits == 0 and label == "high":
-            label = "medium"
-            reasons.append("domain negative cap applied: high -> medium")
-
-    return {
-        "relevance_score": score,
-        "relevance_label": label,
-        "relevance_reasons": reasons,
-        "relevance_flags": flags,
-        "strong_negative_flag": has_strong_negative,
-    }
+    from tools.literature.scoring import _score_text_relevance as _impl
+    return _impl(title, abstract, must_include)
 
 
 def _compute_ranking_score(relevance: dict, metadata_score: int, year_int: int) -> tuple[int, int, int]:
-    """Combine relevance + metadata + recency into a single ranking tuple (higher = better)."""
-    label_bonus = {"high": 100, "medium": 50, "low": 0}
-    rel_score = relevance["relevance_score"] + label_bonus.get(relevance["relevance_label"], 0)
-    return (rel_score, metadata_score, year_int)
+    from tools.literature.scoring import _compute_ranking_score as _impl
+    return _impl(relevance, metadata_score, year_int)
 
 
 # ---- Top-K building ----
 
 def _score_candidate(rec: dict) -> tuple[int, int, int, str]:
-    """Score a canonical candidate. Returns (ranking_score, rel_score, year_int, title_lower)."""
-    # Metadata completeness score (same as before)
-    meta_score = 0
-    stable_ids = rec.get("stable_ids", {})
-    has_stable = any(stable_ids.get(k) for k in ("doi", "arxiv_id", "semantic_scholar_id", "openalex_id"))
-    if has_stable:
-        meta_score += 2
-    else:
-        meta_score -= 1
-
-    if rec.get("abstract", "").strip():
-        meta_score += 2
-    else:
-        meta_score -= 2
-
-    if rec.get("retrieved_at"):
-        meta_score += 1
-
-    source = rec.get("source", "")
-    if source in ("arxiv", "openreview", "openalex"):
-        meta_score += 1
-
-    if rec.get("authors"):
-        meta_score += 1
-
-    if rec.get("venue"):
-        meta_score += 1
-
-    if source == "manual" and not rec.get("url", "").strip():
-        meta_score -= 1
-
-    try:
-        year_int = int(str(rec.get("year", "")).strip())
-    except (ValueError, TypeError):
-        year_int = 0
-
-    # Relevance scoring from candidate fields
-    relevance_label = rec.get("relevance_label", "low")
-    relevance_score = rec.get("relevance_score", 0)
-
-    ranking_score_tuple = _compute_ranking_score(
-        {"relevance_score": relevance_score, "relevance_label": relevance_label},
-        meta_score,
-        year_int,
-    )
-
-    title_lower = rec.get("title", "").lower().strip()
-    return (ranking_score_tuple[0], relevance_score, year_int, title_lower)
+    from tools.literature.scoring import _score_candidate as _impl
+    return _impl(rec)
 
 
 def build_top_k(run_dir: Path, k: int, json_output: bool) -> dict:
@@ -2121,260 +1953,28 @@ OPENALEX_REQUEST_TIMEOUT = 15
 
 
 def _openalex_work_id_from_url(openalex_id_url: str) -> str:
-    """Extract W... ID from an OpenAlex URL like https://openalex.org/W12345."""
-    if not openalex_id_url:
-        return ""
-    url = str(openalex_id_url).strip()
-    # Handle both full URL and bare ID
-    if "/" in url:
-        parts = url.rstrip("/").split("/")
-        return parts[-1] if parts else ""
-    return url
+    from tools.literature.adapters.openalex import _openalex_work_id_from_url as _impl
+    return _impl(openalex_id_url)
 
 
 def _normalize_openalex_doi(doi_url: str) -> str:
-    """Normalize DOI from https://doi.org/10.xxxx to bare 10.xxxx."""
-    if not doi_url:
-        return ""
-    doi = str(doi_url).strip()
-    # Strip common prefixes
-    for prefix in ("https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/"):
-        if doi.lower().startswith(prefix.lower()):
-            doi = doi[len(prefix):]
-            break
-    return doi
+    from tools.literature.adapters.openalex import _normalize_openalex_doi as _impl
+    return _impl(doi_url)
 
 
 def _reconstruct_openalex_abstract(abstract_inverted_index) -> str:
-    """Reconstruct abstract from OpenAlex abstract_inverted_index format.
-
-    OpenAlex returns: {"word1": [pos1, pos2], "word2": [pos3], ...}
-    We reconstruct by placing words at their positions.
-    """
-    if not abstract_inverted_index or not isinstance(abstract_inverted_index, dict):
-        return ""
-
-    # Build position -> word mapping
-    position_word = []
-    for word, positions in abstract_inverted_index.items():
-        if isinstance(positions, list):
-            for pos in positions:
-                if isinstance(pos, int):
-                    position_word.append((pos, word))
-
-    # Sort by position and join
-    position_word.sort(key=lambda x: x[0])
-    return " ".join(pw[1] for pw in position_word)
+    from tools.literature.adapters.openalex import _reconstruct_openalex_abstract as _impl
+    return _impl(abstract_inverted_index)
 
 
 def _map_openalex_work_to_raw_record(work: dict, job_id: str, query: str, retrieved_at: str) -> dict | None:
-    """Map an OpenAlex work object to a raw_results record. Returns None if title missing."""
-    if not isinstance(work, dict):
-        return None
-
-    title = work.get("display_name") or work.get("title") or ""
-    if not title.strip():
-        return None
-
-    # Authors
-    authorships = work.get("authorships", [])
-    authors = []
-    if isinstance(authorships, list):
-        for a in authorships:
-            if isinstance(a, dict):
-                author_obj = a.get("author", {})
-                if isinstance(author_obj, dict):
-                    name = author_obj.get("display_name", "")
-                    if name:
-                        authors.append(name)
-
-    # Year
-    year = work.get("publication_year", "")
-
-    # OpenAlex ID and URL
-    openalex_id_raw = work.get("id", "")
-    openalex_id = _openalex_work_id_from_url(openalex_id_raw)
-    url = f"https://openalex.org/{openalex_id}" if openalex_id else ""
-
-    # DOI
-    doi_raw = work.get("doi", "") or ""
-    ids = work.get("ids", {})
-    if not doi_raw and isinstance(ids, dict):
-        doi_raw = ids.get("doi", "") or ""
-    doi = _normalize_openalex_doi(doi_raw)
-
-    # arXiv ID - extract from ids if available
-    arxiv_id = ""
-    if isinstance(ids, dict):
-        arxiv_raw = ids.get("arxiv", "") or ""
-        if arxiv_raw:
-            arxiv_id = str(arxiv_raw).strip()
-
-    # Venue from primary_location
-    venue = ""
-    primary_location = work.get("primary_location", {})
-    if isinstance(primary_location, dict):
-        source_obj = primary_location.get("source", {})
-        if isinstance(source_obj, dict):
-            venue = source_obj.get("display_name", "") or ""
-
-    # Abstract
-    abstract = _reconstruct_openalex_abstract(work.get("abstract_inverted_index"))
-
-    return {
-        "source": "openalex",
-        "title": title.strip(),
-        "authors": authors,
-        "year": year,
-        "url": url,
-        "doi": doi,
-        "arxiv_id": arxiv_id,
-        "semantic_scholar_id": "",
-        "openalex_id": openalex_id,
-        "abstract": abstract,
-        "venue": venue,
-        "retrieved_at": retrieved_at,
-        "evidence_origin": "api_export",
-        "notes": f"source_job_id={job_id}; query={query}",
-    }
+    from tools.literature.adapters.openalex import _map_openalex_work_to_raw_record as _impl
+    return _impl(work, job_id, query, retrieved_at)
 
 
 def _execute_openalex_job(job: dict, per_page: int = 5, mailto: str = "") -> dict:
-    """Execute a single OpenAlex search job. Returns a source_job_result_v1 dict.
-    No PDF download. No model. No .env."""
-    job_id = job.get("job_id", "")
-    source = job.get("source", "")
-    query = job.get("query", "")
-    time_range = job.get("time_range", {})
-    retrieved_at = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-    # Validate source
-    if source != "openalex":
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": source,
-            "query": query,
-            "status": "failed",
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": f"source is '{source}', not 'openalex'",
-            "notes": "run-openalex-job only accepts openalex jobs",
-        }
-
-    # Build URL
-    params = {
-        "search": query,
-        "per-page": str(min(per_page, 50)),
-        "sort": "relevance_score:desc",
-    }
-    # Add year filter if time_range present
-    if isinstance(time_range, dict):
-        sy = time_range.get("start_year")
-        ey = time_range.get("end_year")
-        if isinstance(sy, int) and isinstance(ey, int):
-            params["filter"] = f"publication_year:{sy}-{ey}"
-    if mailto:
-        params["mailto"] = mailto
-
-    url = OPENALEX_API_BASE + "?" + urllib.parse.urlencode(params)
-
-    # Execute request
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "literature-evidence-landing/1.0"})
-        with urllib.request.urlopen(req, timeout=OPENALEX_REQUEST_TIMEOUT) as resp:
-            http_status = resp.status
-            body = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        http_status = e.code
-        body = ""
-        error_msg = f"HTTP {e.code}: {e.reason}"
-        # Map HTTP errors
-        if e.code in (401, 403):
-            status = "auth_failed"
-        elif e.code == 402:
-            status = "blocked"
-        elif e.code == 429:
-            status = "rate_limited"
-        else:
-            status = "failed"
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "openalex",
-            "query": query,
-            "status": status,
-            "http_status": http_status,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": error_msg,
-            "notes": "",
-        }
-    except (urllib.error.URLError, OSError, TimeoutError) as e:
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "openalex",
-            "query": query,
-            "status": "failed",
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": f"network error: {e}",
-            "notes": "",
-        }
-
-    # Parse response
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError as e:
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "openalex",
-            "query": query,
-            "status": "failed",
-            "http_status": http_status,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": f"JSON parse error: {e}",
-            "notes": "",
-        }
-
-    # Extract works
-    results = data.get("results", [])
-    if not isinstance(results, list):
-        results = []
-
-    # Map works to raw records
-    raw_records = []
-    for work in results:
-        rec = _map_openalex_work_to_raw_record(work, job_id, query, retrieved_at)
-        if rec is not None:
-            raw_records.append(rec)
-
-    # Determine status
-    if raw_records:
-        status = "success"
-    else:
-        status = "empty"
-
-    return {
-        "schema_version": "source_job_result_v1",
-        "job_id": job_id,
-        "source": "openalex",
-        "query": query,
-        "status": status,
-        "http_status": http_status,
-        "retrieved_at": retrieved_at,
-        "raw_record_count": len(raw_records),
-        "records": raw_records,
-        "error": "",
-        "notes": "",
-    }
+    from tools.literature.adapters.openalex import _execute_openalex_job as _impl
+    return _impl(job, per_page=per_page, mailto=mailto)
 
 
 def _append_jsonl(path: Path, records: list[dict]) -> None:
@@ -2387,148 +1987,15 @@ def _append_jsonl(path: Path, records: list[dict]) -> None:
 
 def run_openalex_job(search_jobs_path: Path, job_id: str, output_path: Path,
                      per_page: int = 5, mailto: str = "", json_output: bool = False) -> dict:
-    """Execute one OpenAlex job from search_jobs.json and append to job_results.jsonl."""
-    if not search_jobs_path.exists():
-        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    try:
-        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
-    except json.JSONDecodeError as e:
-        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    # Find job by ID
-    jobs_list = jobs_data.get("jobs", [])
-    target_job = None
-    for j in jobs_list:
-        if j.get("job_id") == job_id:
-            target_job = j
-            break
-
-    if target_job is None:
-        result = {"status": "FAIL", "errors": [f"job_id '{job_id}' not found in search_jobs.json"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    # Reject non-openalex jobs before any execution
-    if target_job.get("source") != "openalex":
-        result = {"status": "FAIL", "errors": [f"job source is '{target_job.get('source')}', not 'openalex'"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    # Execute
-    job_result = _execute_openalex_job(target_job, per_page=per_page, mailto=mailto)
-
-    # Validate before writing
-    vr = validate_job_results_dict([job_result])
-    if vr["status"] != "PASS":
-        result = {"status": "FAIL", "errors": vr["errors"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    # Append to output
-    _append_jsonl(output_path, [job_result])
-
-    result = {
-        "status": "PASS",
-        "job_id": job_id,
-        "job_result_status": job_result["status"],
-        "raw_record_count": job_result["raw_record_count"],
-        "http_status": job_result.get("http_status"),
-        "output": str(output_path),
-    }
-    if json_output:
-        print(json.dumps(result, indent=2))
-    else:
-        print(f"Executed {job_id}: status={job_result['status']}, records={job_result['raw_record_count']}")
-    return result
+    from tools.literature.adapters.openalex import run_openalex_job as _impl
+    return _impl(search_jobs_path, job_id, output_path, per_page=per_page, mailto=mailto, json_output=json_output)
 
 
 def run_openalex_jobs(search_jobs_path: Path, output_path: Path,
                       max_jobs: int = 3, per_page: int = 5, mailto: str = "",
                       overwrite: bool = False, json_output: bool = False) -> dict:
-    """Execute OpenAlex jobs from search_jobs.json, append to job_results.jsonl."""
-    if not search_jobs_path.exists():
-        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    try:
-        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
-    except json.JSONDecodeError as e:
-        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    # Filter to openalex jobs only
-    all_jobs = jobs_data.get("jobs", [])
-    openalex_jobs = [j for j in all_jobs if j.get("source") == "openalex"]
-
-    if not openalex_jobs:
-        result = {"status": "FAIL", "errors": ["no openalex jobs found in search_jobs.json"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    # Respect max_jobs
-    jobs_to_run = openalex_jobs[:max_jobs]
-
-    # Handle overwrite
-    if overwrite and output_path.exists():
-        output_path.unlink()
-
-    # Execute each job
-    executed = []
-    for job in jobs_to_run:
-        job_result = _execute_openalex_job(job, per_page=per_page, mailto=mailto)
-
-        # Validate before writing
-        vr = validate_job_results_dict([job_result])
-        if vr["status"] != "PASS":
-            # Write as failed instead
-            job_result = {
-                "schema_version": "source_job_result_v1",
-                "job_id": job.get("job_id", ""),
-                "source": "openalex",
-                "query": job.get("query", ""),
-                "status": "failed",
-                "retrieved_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                "raw_record_count": 0,
-                "records": [],
-                "error": f"validation failed: {vr['errors']}",
-                "notes": "",
-            }
-
-        _append_jsonl(output_path, [job_result])
-        executed.append({
-            "job_id": job_result["job_id"],
-            "status": job_result["status"],
-            "raw_record_count": job_result["raw_record_count"],
-        })
-
-    result = {
-        "status": "PASS",
-        "executed_count": len(executed),
-        "executed": executed,
-        "output": str(output_path),
-    }
-    if json_output:
-        print(json.dumps(result, indent=2))
-    else:
-        print(f"Executed {len(executed)} openalex job(s) -> {output_path}")
-        for e in executed:
-            print(f"  {e['job_id']}: status={e['status']}, records={e['raw_record_count']}")
-    return result
+    from tools.literature.adapters.openalex import run_openalex_jobs as _impl
+    return _impl(search_jobs_path, output_path, max_jobs=max_jobs, per_page=per_page, mailto=mailto, overwrite=overwrite, json_output=json_output)
 
 
 # ---- Pipeline run-dir safety ----
@@ -2845,728 +2312,62 @@ CROSSREF_REQUEST_TIMEOUT = 15
 
 
 def _parse_arxiv_date(date_str: str) -> str:
-    """Extract year from arXiv date string like '2024-03-15' or '2024'."""
-    if not date_str:
-        return ""
-    # Handle "2024-03-15" or "2024-03-15T12:00:00Z"
-    m = re.match(r"(\d{4})", date_str)
-    return m.group(1) if m else ""
+    from tools.literature.adapters.arxiv import _parse_arxiv_date as _impl
+    return _impl(date_str)
 
 
 def _map_arxiv_entry_to_raw_record(entry: dict, job_id: str, query: str, retrieved_at: str) -> dict | None:
-    """Map a parsed arXiv entry dict to the standard raw record schema."""
-    title = entry.get("title", "").strip()
-    if not title:
-        return None
-
-    # Authors
-    authors = entry.get("authors", [])
-    if isinstance(authors, str):
-        authors = [a.strip() for a in authors.split(",") if a.strip()]
-
-    year = _parse_arxiv_date(entry.get("published", ""))
-    url = entry.get("url", "")
-    arxiv_id = entry.get("arxiv_id", "")
-    doi = entry.get("doi", "")
-
-    # Ensure URL is abs page, not PDF
-    if url.endswith(".pdf"):
-        url = url.rsplit("/", 1)[0] if "/" in url else url
-
-    return {
-        "source": "arxiv",
-        "title": title,
-        "authors": authors,
-        "year": year,
-        "url": url,
-        "doi": doi,
-        "arxiv_id": arxiv_id,
-        "openalex_id": "",
-        "semantic_scholar_id": "",
-        "abstract": entry.get("abstract", ""),
-        "venue": "arXiv",
-        "full_text_available": False,
-        "pdf_url": "",
-        "source_record_id": arxiv_id if arxiv_id else url,
-        "evidence_origin": "api_export",
-        "retrieved_at": retrieved_at,
-        "query": query,
-        "job_id": job_id,
-    }
+    from tools.literature.adapters.arxiv import _map_arxiv_entry_to_raw_record as _impl
+    return _impl(entry, job_id, query, retrieved_at)
 
 
 def _execute_arxiv_job(job: dict, per_page: int = 10) -> dict:
-    """Execute a single arXiv search job. Returns a source_job_result_v1 dict.
-    Metadata only. No PDF download. No model."""
-    import xml.etree.ElementTree as ET
-
-    job_id = job.get("job_id", "")
-    source = job.get("source", "")
-    query = job.get("query", "")
-    retrieved_at = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-    if source != "arxiv":
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": source,
-            "query": query,
-            "status": "failed",
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": f"source is '{source}', not 'arxiv'",
-            "notes": "run-arxiv-job only accepts arxiv jobs",
-        }
-
-    # Build query: use search_query=all:<query>
-    search_query = f"all:{query}"
-    params = {
-        "search_query": search_query,
-        "start": "0",
-        "max_results": str(min(per_page, 50)),
-        "sortBy": "relevance",
-        "sortOrder": "descending",
-    }
-    url = ARXIV_API_BASE + "?" + urllib.parse.urlencode(params)
-
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "literature-evidence-landing/1.0"})
-        with urllib.request.urlopen(req, timeout=ARXIV_REQUEST_TIMEOUT) as resp:
-            http_status = resp.status
-            body = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        http_status = e.code
-        body = ""
-        error_msg = f"HTTP {e.code}: {e.reason}"
-        if e.code in (401, 403):
-            status = "auth_failed"
-        elif e.code == 429:
-            status = "rate_limited"
-        else:
-            status = "failed"
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "arxiv",
-            "query": query,
-            "status": status,
-            "http_status": http_status,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": error_msg,
-            "notes": "",
-        }
-    except (urllib.error.URLError, OSError, TimeoutError) as e:
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "arxiv",
-            "query": query,
-            "status": "failed",
-            "http_status": 0,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": str(e),
-            "notes": "",
-        }
-
-    # Parse Atom XML
-    try:
-        root = ET.fromstring(body)
-    except ET.ParseError as e:
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "arxiv",
-            "query": query,
-            "status": "failed",
-            "http_status": http_status,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": f"XML parse error: {e}",
-            "notes": "",
-        }
-
-    # Namespace for arXiv Atom
-    ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
-
-    # Check if feed has entries
-    entries = root.findall("atom:entry", ns)
-    if not entries:
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "arxiv",
-            "query": query,
-            "status": "empty",
-            "http_status": http_status,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": "",
-            "notes": "no entries in arXiv response",
-        }
-
-    raw_records = []
-    for entry in entries:
-        # Extract fields
-        title_el = entry.find("atom:title", ns)
-        title_text = title_el.text.strip().replace("\n", " ") if title_el is not None and title_el.text else ""
-
-        # Authors
-        authors = []
-        for author_el in entry.findall("atom:author", ns):
-            name_el = author_el.find("atom:name", ns)
-            if name_el is not None and name_el.text:
-                authors.append(name_el.text.strip())
-
-        # Published date
-        published_el = entry.find("atom:published", ns)
-        published = published_el.text.strip() if published_el is not None and published_el.text else ""
-
-        # Abstract
-        summary_el = entry.find("atom:summary", ns)
-        abstract = summary_el.text.strip().replace("\n", " ") if summary_el is not None and summary_el.text else ""
-
-        # URL (abs page)
-        link_el = entry.find("atom:id", ns)
-        url = link_el.text.strip() if link_el is not None and link_el.text else ""
-
-        # arXiv ID from URL
-        arxiv_id = ""
-        if url:
-            # URL format: http://arxiv.org/abs/2403.12345v1
-            m = re.search(r"/abs/(.+?)(?:v\d+)?$", url)
-            if m:
-                arxiv_id = m.group(1)
-
-        # DOI if present
-        doi = ""
-        doi_el = entry.find("arxiv:doi", ns)
-        if doi_el is not None and doi_el.text:
-            doi = doi_el.text.strip()
-
-        rec = _map_arxiv_entry_to_raw_record(
-            {"title": title_text, "authors": authors, "published": published,
-             "url": url, "arxiv_id": arxiv_id, "doi": doi, "abstract": abstract},
-            job_id=job_id, query=query, retrieved_at=retrieved_at,
-        )
-        if rec:
-            raw_records.append(rec)
-
-    if not raw_records:
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "arxiv",
-            "query": query,
-            "status": "empty",
-            "http_status": http_status,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": "",
-            "notes": "all entries failed to map",
-        }
-
-    return {
-        "schema_version": "source_job_result_v1",
-        "job_id": job_id,
-        "source": "arxiv",
-        "query": query,
-        "status": "success",
-        "http_status": http_status,
-        "retrieved_at": retrieved_at,
-        "raw_record_count": len(raw_records),
-        "records": raw_records,
-        "error": "",
-        "notes": "",
-    }
+    from tools.literature.adapters.arxiv import _execute_arxiv_job as _impl
+    return _impl(job, per_page=per_page)
 
 
 def run_arxiv_job(search_jobs_path: Path, job_id: str, output_path: Path,
                    per_page: int = 10, json_output: bool = False) -> dict:
-    """Execute one arXiv job from search_jobs.json and append to job_results.jsonl."""
-    if not search_jobs_path.exists():
-        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    try:
-        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
-    except json.JSONDecodeError as e:
-        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    jobs_list = jobs_data.get("jobs", [])
-    target_job = None
-    for j in jobs_list:
-        if j.get("job_id") == job_id:
-            target_job = j
-            break
-
-    if target_job is None:
-        result = {"status": "FAIL", "errors": [f"job_id '{job_id}' not found in search_jobs.json"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    if target_job.get("source") != "arxiv":
-        result = {"status": "FAIL", "errors": [f"job source is '{target_job.get('source')}', not 'arxiv'"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    job_result = _execute_arxiv_job(target_job, per_page=per_page)
-
-    vr = validate_job_results_dict([job_result])
-    if vr["status"] != "PASS":
-        result = {"status": "FAIL", "errors": vr["errors"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    _append_jsonl(output_path, [job_result])
-
-    result = {
-        "status": "PASS",
-        "job_id": job_id,
-        "job_result_status": job_result["status"],
-        "raw_record_count": job_result["raw_record_count"],
-        "http_status": job_result.get("http_status"),
-        "output": str(output_path),
-    }
-    if json_output:
-        print(json.dumps(result, indent=2))
-    else:
-        print(f"Executed {job_id}: status={job_result['status']}, records={job_result['raw_record_count']}")
-    return result
+    from tools.literature.adapters.arxiv import run_arxiv_job as _impl
+    return _impl(search_jobs_path, job_id, output_path, per_page=per_page, json_output=json_output)
 
 
 def run_arxiv_jobs(search_jobs_path: Path, output_path: Path,
                     max_jobs: int = 3, per_page: int = 10,
                     overwrite: bool = False, json_output: bool = False) -> dict:
-    """Execute arXiv jobs from search_jobs.json, append to job_results.jsonl."""
-    if not search_jobs_path.exists():
-        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    try:
-        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
-    except json.JSONDecodeError as e:
-        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    jobs_list = jobs_data.get("jobs", [])
-    arxiv_jobs = [j for j in jobs_list if j.get("source") == "arxiv"]
-
-    if not arxiv_jobs:
-        result = {"status": "FAIL", "errors": ["no arxiv jobs found in search_jobs.json"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    # Clear output if overwrite
-    if overwrite and output_path.exists():
-        output_path.unlink()
-
-    executed = 0
-    results = []
-    for job in arxiv_jobs[:max_jobs]:
-        job_result = _execute_arxiv_job(job, per_page=per_page)
-        vr = validate_job_results_dict([job_result])
-        if vr["status"] != "PASS":
-            continue
-        _append_jsonl(output_path, [job_result])
-        executed += 1
-        results.append({
-            "job_id": job_result["job_id"],
-            "status": job_result["status"],
-            "raw_record_count": job_result["raw_record_count"],
-        })
-
-    result = {
-        "status": "PASS",
-        "jobs_executed": executed,
-        "results": results,
-        "output": str(output_path),
-    }
-    if json_output:
-        print(json.dumps(result, indent=2))
-    else:
-        print(f"Executed {executed} arXiv job(s)")
-        for r in results:
-            print(f"  {r['job_id']}: status={r['status']}, records={r['raw_record_count']}")
-    return result
+    from tools.literature.adapters.arxiv import run_arxiv_jobs as _impl
+    return _impl(search_jobs_path, output_path, max_jobs=max_jobs, per_page=per_page, overwrite=overwrite, json_output=json_output)
 
 
 # ---- Crossref adapter ----
 
 
 def _parse_crossref_date(date_parts) -> str:
-    """Extract year from Crossref date parts like [[2024, 3, 15]]."""
-    if not date_parts or not isinstance(date_parts, list):
-        return ""
-    if date_parts and isinstance(date_parts[0], list) and date_parts[0]:
-        return str(date_parts[0][0])
-    if date_parts and isinstance(date_parts[0], int):
-        return str(date_parts[0])
-    return ""
+    from tools.literature.adapters.crossref import _parse_crossref_date as _impl
+    return _impl(date_parts)
 
 
 def _map_crossref_item_to_raw_record(item: dict, job_id: str, query: str, retrieved_at: str) -> dict | None:
-    """Map a Crossref work item to the standard raw record schema."""
-    title_list = item.get("title", [])
-    title = title_list[0].strip() if title_list and isinstance(title_list[0], str) else ""
-    if not title:
-        return None
-
-    # Authors
-    authors = []
-    for author in item.get("author", []):
-        name_parts = []
-        if author.get("given"):
-            name_parts.append(author["given"])
-        if author.get("family"):
-            name_parts.append(author["family"])
-        if name_parts:
-            authors.append(" ".join(name_parts))
-
-    # Year: try published-print, published-online, issued
-    year = ""
-    for date_field in ("published-print", "published-online", "issued"):
-        dp = item.get(date_field, {}).get("date-parts")
-        year = _parse_crossref_date(dp)
-        if year:
-            break
-
-    # DOI and URL
-    doi = item.get("DOI", "")
-    url = item.get("URL", "")
-    if doi and not url:
-        url = f"https://doi.org/{doi}"
-
-    # Venue
-    container = item.get("container-title", [])
-    venue = container[0] if container and isinstance(container[0], str) else ""
-
-    # Abstract
-    abstract = item.get("abstract", "")
-    # Strip HTML tags from Crossref abstracts
-    if abstract:
-        abstract = re.sub(r"<[^>]+>", "", abstract).strip()
-
-    source_record_id = doi if doi else url
-
-    return {
-        "source": "crossref",
-        "title": title,
-        "authors": authors,
-        "year": year,
-        "url": url,
-        "doi": doi,
-        "arxiv_id": "",
-        "openalex_id": "",
-        "semantic_scholar_id": "",
-        "abstract": abstract,
-        "venue": venue,
-        "full_text_available": False,
-        "pdf_url": "",
-        "source_record_id": source_record_id,
-        "evidence_origin": "api_export",
-        "retrieved_at": retrieved_at,
-        "query": query,
-        "job_id": job_id,
-    }
+    from tools.literature.adapters.crossref import _map_crossref_item_to_raw_record as _impl
+    return _impl(item, job_id, query, retrieved_at)
 
 
 def _execute_crossref_job(job: dict, per_page: int = 10) -> dict:
-    """Execute a single Crossref search job. Returns a source_job_result_v1 dict.
-    Metadata only. No DOI full-text lookup. No PDF. No Unpaywall."""
-    job_id = job.get("job_id", "")
-    source = job.get("source", "")
-    query = job.get("query", "")
-    time_range = job.get("time_range", {})
-    retrieved_at = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-    if source != "crossref":
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": source,
-            "query": query,
-            "status": "failed",
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": f"source is '{source}', not 'crossref'",
-            "notes": "run-crossref-job only accepts crossref jobs",
-        }
-
-    # Build params
-    params = {
-        "query.bibliographic": query,
-        "rows": str(min(per_page, 50)),
-        "sort": "score",
-        "order": "desc",
-    }
-    # Year filter
-    if isinstance(time_range, dict):
-        sy = time_range.get("start_year")
-        ey = time_range.get("end_year")
-        if isinstance(sy, int) and isinstance(ey, int):
-            params["filter"] = f"from-pub-date:{sy},until-pub-date:{ey}"
-
-    url = CROSSREF_API_BASE + "?" + urllib.parse.urlencode(params)
-
-    try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "literature-evidence-landing/1.0 (mailto:research@example.com)",
-        })
-        with urllib.request.urlopen(req, timeout=CROSSREF_REQUEST_TIMEOUT) as resp:
-            http_status = resp.status
-            body = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        http_status = e.code
-        body = ""
-        error_msg = f"HTTP {e.code}: {e.reason}"
-        if e.code in (401, 403):
-            status = "auth_failed"
-        elif e.code == 429:
-            status = "rate_limited"
-        else:
-            status = "failed"
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "crossref",
-            "query": query,
-            "status": status,
-            "http_status": http_status,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": error_msg,
-            "notes": "",
-        }
-    except (urllib.error.URLError, OSError, TimeoutError) as e:
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "crossref",
-            "query": query,
-            "status": "failed",
-            "http_status": 0,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": str(e),
-            "notes": "",
-        }
-
-    # Parse JSON
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError as e:
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "crossref",
-            "query": query,
-            "status": "failed",
-            "http_status": http_status,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": f"JSON parse error: {e}",
-            "notes": "",
-        }
-
-    message = data.get("message", {})
-    items = message.get("items", [])
-
-    if not items:
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "crossref",
-            "query": query,
-            "status": "empty",
-            "http_status": http_status,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": "",
-            "notes": "no items in Crossref response",
-        }
-
-    raw_records = []
-    for item in items:
-        rec = _map_crossref_item_to_raw_record(item, job_id=job_id, query=query, retrieved_at=retrieved_at)
-        if rec:
-            raw_records.append(rec)
-
-    if not raw_records:
-        return {
-            "schema_version": "source_job_result_v1",
-            "job_id": job_id,
-            "source": "crossref",
-            "query": query,
-            "status": "empty",
-            "http_status": http_status,
-            "retrieved_at": retrieved_at,
-            "raw_record_count": 0,
-            "records": [],
-            "error": "",
-            "notes": "all items failed to map",
-        }
-
-    return {
-        "schema_version": "source_job_result_v1",
-        "job_id": job_id,
-        "source": "crossref",
-        "query": query,
-        "status": "success",
-        "http_status": http_status,
-        "retrieved_at": retrieved_at,
-        "raw_record_count": len(raw_records),
-        "records": raw_records,
-        "error": "",
-        "notes": "",
-    }
+    from tools.literature.adapters.crossref import _execute_crossref_job as _impl
+    return _impl(job, per_page=per_page)
 
 
 def run_crossref_job(search_jobs_path: Path, job_id: str, output_path: Path,
                       per_page: int = 10, json_output: bool = False) -> dict:
-    """Execute one Crossref job from search_jobs.json and append to job_results.jsonl."""
-    if not search_jobs_path.exists():
-        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    try:
-        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
-    except json.JSONDecodeError as e:
-        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    jobs_list = jobs_data.get("jobs", [])
-    target_job = None
-    for j in jobs_list:
-        if j.get("job_id") == job_id:
-            target_job = j
-            break
-
-    if target_job is None:
-        result = {"status": "FAIL", "errors": [f"job_id '{job_id}' not found in search_jobs.json"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    if target_job.get("source") != "crossref":
-        result = {"status": "FAIL", "errors": [f"job source is '{target_job.get('source')}', not 'crossref'"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    job_result = _execute_crossref_job(target_job, per_page=per_page)
-
-    vr = validate_job_results_dict([job_result])
-    if vr["status"] != "PASS":
-        result = {"status": "FAIL", "errors": vr["errors"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    _append_jsonl(output_path, [job_result])
-
-    result = {
-        "status": "PASS",
-        "job_id": job_id,
-        "job_result_status": job_result["status"],
-        "raw_record_count": job_result["raw_record_count"],
-        "http_status": job_result.get("http_status"),
-        "output": str(output_path),
-    }
-    if json_output:
-        print(json.dumps(result, indent=2))
-    else:
-        print(f"Executed {job_id}: status={job_result['status']}, records={job_result['raw_record_count']}")
-    return result
+    from tools.literature.adapters.crossref import run_crossref_job as _impl
+    return _impl(search_jobs_path, job_id, output_path, per_page=per_page, json_output=json_output)
 
 
 def run_crossref_jobs(search_jobs_path: Path, output_path: Path,
                        max_jobs: int = 3, per_page: int = 10,
                        overwrite: bool = False, json_output: bool = False) -> dict:
-    """Execute Crossref jobs from search_jobs.json, append to job_results.jsonl."""
-    if not search_jobs_path.exists():
-        result = {"status": "FAIL", "errors": ["search_jobs.json not found"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    try:
-        jobs_data = json.loads(search_jobs_path.read_text(encoding="utf-8", errors="ignore"))
-    except json.JSONDecodeError as e:
-        result = {"status": "FAIL", "errors": [f"invalid JSON: {e}"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    jobs_list = jobs_data.get("jobs", [])
-    crossref_jobs = [j for j in jobs_list if j.get("source") == "crossref"]
-
-    if not crossref_jobs:
-        result = {"status": "FAIL", "errors": ["no crossref jobs found in search_jobs.json"]}
-        if json_output:
-            print(json.dumps(result, indent=2))
-        return result
-
-    if overwrite and output_path.exists():
-        output_path.unlink()
-
-    executed = 0
-    results = []
-    for job in crossref_jobs[:max_jobs]:
-        job_result = _execute_crossref_job(job, per_page=per_page)
-        vr = validate_job_results_dict([job_result])
-        if vr["status"] != "PASS":
-            continue
-        _append_jsonl(output_path, [job_result])
-        executed += 1
-        results.append({
-            "job_id": job_result["job_id"],
-            "status": job_result["status"],
-            "raw_record_count": job_result["raw_record_count"],
-        })
-
-    result = {
-        "status": "PASS",
-        "jobs_executed": executed,
-        "results": results,
-        "output": str(output_path),
-    }
-    if json_output:
-        print(json.dumps(result, indent=2))
-    else:
-        print(f"Executed {executed} Crossref job(s)")
-        for r in results:
-            print(f"  {r['job_id']}: status={r['status']}, records={r['raw_record_count']}")
-    return result
+    from tools.literature.adapters.crossref import run_crossref_jobs as _impl
+    return _impl(search_jobs_path, output_path, max_jobs=max_jobs, per_page=per_page, overwrite=overwrite, json_output=json_output)
 
 
 # ---- Multi-source pipeline ----
