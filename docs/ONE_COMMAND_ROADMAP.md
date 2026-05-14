@@ -27,6 +27,8 @@
 
 **Phase 21I Status:** DOCUMENTED — slash-command-first UX, slash command payload, user-facing 6-stage workflow, feedback loops, primary/advanced command split, phase-to-stage mapping. Documentation v1.2: TRUSTED_RESEARCH_AUTOMATION_TARGET.md updated with Sections 4a-4e. TARGET_ALIGNMENT_AUDIT.md and ONE_COMMAND_ROADMAP.md synced. Regression test topic selected: Chain-of-Thought prompting for mathematical reasoning.
 
+**Phase 21J Status:** IMPLEMENTED — slash command adapter MVP. `tools/slash_command_adapter.py` with COMMAND_MAP (7 commands), parser (`/command "payload" --flags`), plan generator, payload persistence, 21 self-tests pass. Parser: quoted payload + flag extraction. Plan generator: CLI action plans with internal_stages mapping. Payload saved to safe temp dir. No model calls, no trusted_outputs changes. research_cli.py: 44 self-tests pass, system validation PASS.
+
 ---
 
 ## 1. Goal
