@@ -24,6 +24,8 @@ Given a method description, systematically verify its novelty:
    - What problem does it solve?
    - What is the mechanism?
    - What makes it different from obvious baselines?
+   - If this is a transfer idea: what is the source-domain method, target-domain mismatch, direct-transfer baseline, and adaptation mechanism?
+   - If this is a multi-component idea: what is the shared core claim, and how does each component support it?
 
 ### Phase B: Multi-Source Literature Search
 For EACH core claim, search using ALL available sources:
@@ -40,6 +42,16 @@ For EACH core claim, search using ALL available sources:
 
 3. **Read abstracts**: For each potentially overlapping paper, WebFetch its abstract and related work section
 
+4. **Transfer-specific search**: If the idea transfers a method from another field, explicitly search for:
+   - the source method already applied to the target domain
+   - the claimed target-domain mismatch
+   - the proposed adaptation mechanism
+   - the direct-transfer baseline or equivalent baseline
+
+5. **Contribution-chain search**: If the idea combines multiple components, search both:
+   - each component independently
+   - the shared core claim tying the components together
+
 ### Phase C: Cross-Model Verification
 Call REVIEWER_MODEL via Codex MCP (`mcp__codex__codex`) with xhigh reasoning:
 ```
@@ -49,6 +61,8 @@ Prompt should include:
 - The proposed method description
 - All papers found in Phase B
 - Ask: "Is this method novel? What is the closest prior work? What is the delta?"
+- For transfer ideas, ask: "Is this more than direct transfer? Has the source method already been transferred to this target domain? Does the adaptation solve a real target-domain mismatch?"
+- For contribution-chain ideas, ask: "Is this one coherent core claim, or patchwork? Which component is the main contribution? Which ablations are required?"
 
 ### Phase D: Novelty Report
 Output a structured report:
@@ -68,9 +82,25 @@ Output a structured report:
 | Paper | Year | Venue | Overlap | Key Difference |
 |-------|------|-------|---------|----------------|
 
+### Transfer Innovation Check
+- Source-domain method: [method or N/A]
+- Target-domain mismatch: [mismatch or N/A]
+- Direct-transfer baseline: [baseline or missing]
+- Adaptation mechanism: [mechanism or missing]
+- Verdict: VALID_TRANSFER / DIRECT_TRANSFER_ONLY / INSUFFICIENT_EVIDENCE / N/A
+
+### Contribution Chain Check
+- Shared core claim: [claim or missing]
+- Main contribution: [contribution]
+- Auxiliary contribution(s): [contributions]
+- Patchwork risk: LOW/MEDIUM/HIGH
+- Required ablations: [list]
+- Verdict: COHERENT_CHAIN / PATCHWORK_RISK / INSUFFICIENT_EVIDENCE / N/A
+
 ### Overall Novelty Assessment
 - Score: X/10
-- Recommendation: PROCEED / PROCEED WITH CAUTION / ABANDON
+- Evidence state: SUFFICIENT / VALID_WITH_GAPS / INSUFFICIENT / ALREADY_DONE
+- Recommendation: PROCEED / PROCEED WITH CAUTION / REVISE / ABANDON
 - Key differentiator: [what makes this unique, if anything]
 - Risk: [what a reviewer would cite as prior work]
 
@@ -84,6 +114,11 @@ Output a structured report:
 - Check both the method AND the experimental setting for novelty
 - If the method is not novel but the FINDING would be, say so explicitly
 - Always check the most recent 6 months of arXiv — the field moves fast
+- Evidence quality caps novelty strength: insufficient evidence must not be reported as strong novelty
+- `ALREADY_DONE` must force ABANDON or REVISE, not PROCEED
+- `DIRECT_TRANSFER_ONLY` must not be treated as pilot-ready unless a real target-domain mismatch and adaptation are added
+- A contribution chain without a shared core claim is patchwork risk, not a strong unified contribution
+- Do not hide weak ideas from the user: report why they are not recommended and what would be needed to revive them
 - **Anti-hallucination for Closest Prior Work.** Every paper in the prior-work table must pass pre-search verification via `tools/verify_papers.py` (3-layer arXiv / CrossRef / Semantic Scholar fallback) before being included. Never fabricate arXiv IDs, DOIs, or titles from memory; tag unverifiable entries as `[UNVERIFIED]` and surface the uncertainty to the user. Full protocol in [`shared-references/citation-discipline.md`](../shared-references/citation-discipline.md) § Pre-Search Verification Protocol.
 
 ## Review Tracing
