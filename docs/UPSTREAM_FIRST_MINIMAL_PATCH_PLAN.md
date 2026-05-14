@@ -1,14 +1,12 @@
-# Upstream-first Minimal Patch Plan
+# Upstream-first Purpose-driven Patch Plan
 
 > Branch: `recovery/upstream-first-minimal-patch-plan`  
 > Base: upstream `wanshuiyin/Auto-claude-code-research-in-sleep@745f856a255a194cf704cd50c225eb8af86a16a3`  
-> Purpose: stop heavy-fork expansion and return to an upstream-first, purpose-driven patch strategy.
+> Purpose: return to upstream ARIS as the main system, while preserving only the heavy-fork ideas that directly improve research-idea quality or prevent concrete failures.
 
 ---
 
 ## 0. Governing principle: purpose first
-
-The first principle of this branch is:
 
 ```text
 Achieving the research-quality goal is the first priority.
@@ -17,13 +15,9 @@ Patch size is secondary.
 
 This branch is not created merely to make small changes. It is created to make ARIS better at producing high-quality research ideas, especially transfer-style innovation and coherent contribution chains.
 
-Small patches are preferred only when they achieve the goal. If a small Skill edit is enough, do not add heavier machinery. If a small Skill edit is not enough, it is acceptable to add templates, validators, or lightweight tools — but every added mechanism must directly improve research-idea quality or prevent a concrete failure mode.
+Small patches are preferred only when they achieve the goal. If a small Skill edit is enough, do not add heavier machinery. If a small Skill edit is not enough, templates, guardrails, validators, or lightweight tools are allowed — but every mechanism must directly improve research-idea quality or prevent a concrete failure mode.
 
-Do not optimize for minimal diff at the expense of the actual objective.
-
-Do not optimize for architectural ambition at the expense of usability, maintainability, and alignment with upstream ARIS.
-
-Every future change on this branch must answer four questions before implementation:
+Every future change must answer four questions:
 
 1. Which goal does this change serve?
 2. Why is upstream ARIS insufficient for this specific goal?
@@ -49,9 +43,7 @@ Do not continue building a separate six-stage workflow engine, slash-command ada
 
 ---
 
-## 2. Two real goals
-
-Only two goals remain in scope.
+## 2. Core goals
 
 ### Goal A — Research-quality improvement for transfer innovation
 
@@ -72,7 +64,23 @@ The system should explicitly support:
 
 The intended outcome is not prettier prompts. The intended outcome is higher-quality candidate ideas that are more likely to survive novelty check, pilot experiments, and reviewer scrutiny.
 
-#### Goal A.1 — Idea quality is the front-loaded bottleneck
+### Goal B — Minimal trust / context-contamination hardening
+
+This goal is secondary and should not dominate the project.
+
+The goal is not to replace ARIS's existing reviewer protocol. The goal is to add small optional hardening only if it materially improves reliability:
+
+- record which model/backend was actually used;
+- record fallback usage and confidence downgrade;
+- record which primary artifacts were passed to the reviewer;
+- optionally validate that a required review artifact exists before a downstream stage proceeds;
+- prevent stale evidence from being silently reused across topics.
+
+This must remain lightweight. It must not become a new workflow engine.
+
+---
+
+## 3. Why idea quality is the front-loaded bottleneck
 
 For this project, the most important stage is not paper writing and not heavy experiments. The most important stage is finding a strong research idea.
 
@@ -89,7 +97,9 @@ Therefore, changes should prioritize:
 
 Experiment planning matters, but it is downstream. It should verify and refine a promising idea; it should not compensate for a weak idea.
 
-#### Goal A.2 — Transfer innovation doctrine
+---
+
+## 4. Transfer innovation doctrine
 
 Transfer innovation is valid when it follows this pattern:
 
@@ -101,8 +111,6 @@ source-domain mature method
 → target-specific adaptation
 → ablation proving the adaptation matters
 ```
-
-A transfer idea should not be judged by whether it borrows from another field. It should be judged by whether the transfer reveals and solves a real target-domain mismatch.
 
 A weak transfer idea says:
 
@@ -135,11 +143,11 @@ Required fields for every transfer idea:
 
 Reject or revise any transfer idea that lacks a direct-transfer baseline or target-domain mismatch.
 
-#### Goal A.3 — Contribution-chain doctrine
+---
+
+## 5. Contribution-chain doctrine
 
 A paper may be built from two or three medium-strength contributions if they serve one coherent core claim.
-
-This is acceptable only when the components are causally or logically connected.
 
 A valid contribution chain has:
 
@@ -151,13 +159,13 @@ A valid contribution chain has:
 6. Required ablation for each component.
 7. A minimal pilot that can test the shared claim.
 
-Invalid patchwork looks like:
+Invalid patchwork:
 
 ```text
 Add trick A, trick B, and trick C because each sounds useful.
 ```
 
-A valid contribution chain looks like:
+Valid contribution chain:
 
 ```text
 Core claim: target-domain structure matters for diffusion-based anomaly detection.
@@ -168,7 +176,9 @@ Each ablation tests one part of the same claim.
 
 Reject or revise any contribution chain that lacks a shared core claim.
 
-#### Goal A.4 — Innovation verification doctrine
+---
+
+## 6. Innovation verification doctrine
 
 The heavy fork's novelty-check work contains one useful principle: evidence quality must constrain novelty claims.
 
@@ -182,7 +192,7 @@ Do not migrate the heavy workflow, but preserve this doctrine:
 - A contribution chain must be checked for patchwork before pilot.
 - A transfer idea must be checked against prior work that may already have transferred the same method.
 
-Novelty checking should answer these questions:
+Novelty checking should answer:
 
 1. Has the source method already been transferred to the target domain?
 2. Has the same target-domain mismatch already been identified?
@@ -191,60 +201,148 @@ Novelty checking should answer these questions:
 5. Is the contribution chain one coherent claim or a patchwork bundle?
 6. What evidence would be needed before the idea can be called pilot-ready?
 
-This is one of the few parts of the heavy fork worth preserving conceptually: use evidence state to cap the strength of the novelty verdict.
+---
 
-### Goal B — Minimal trust / context-contamination hardening
+## 7. Useful mechanisms from the heavy fork to salvage
 
-This goal is secondary and should not dominate the project.
+The heavy fork contains useful design ideas in the innovation stage. Salvage the ideas, not the whole heavy system.
 
-The goal is not to replace ARIS's existing reviewer protocol.
+### 7.1 Literature → gap → idea → review → novelty → adversarial → selection pipeline
 
-The goal is to add small optional hardening around critical reviewer/model calls only if it materially improves reliability:
+The heavy fork's agentic idea discovery design proposed a valuable staged chain:
 
-- record which model/backend was actually used;
-- record fallback usage and confidence downgrade;
-- record which primary artifacts were passed to the reviewer;
-- optionally validate that a required review artifact exists before a downstream stage proceeds;
-- prevent stale evidence from being silently reused across topics.
+```text
+literature_scout
+→ gap_extractor
+→ idea_generator
+→ idea_deduplicator
+→ independent idea_reviewer
+→ novelty_checker
+→ adversarial_reviewer
+→ final_selection
+```
 
-This must remain lightweight. It must not become a new workflow engine.
+This is useful because it separates:
+
+- literature understanding;
+- gap extraction;
+- idea generation;
+- deduplication;
+- independent review;
+- novelty verification;
+- adversarial criticism;
+- final selection.
+
+Do not migrate the whole Python pipeline by default. Instead, transplant the staged reasoning discipline into ARIS Skills and templates first.
+
+### 7.2 Run isolation and immutable idea runs
+
+The heavy fork design required each idea-discovery run to be saved separately and never overwritten.
+
+Useful principle:
+
+- each run has a run_id;
+- raw idea cards are immutable;
+- multiple runs do not merge into one giant untraceable idea report;
+- later dedup/canonicalization references source runs instead of rewriting history.
+
+This is worth preserving conceptually because repeated idea search is common and stale/merged idea state can corrupt judgment.
+
+Implementation priority:
+
+1. First add this as a Skill rule.
+2. Add templates if needed.
+3. Add tooling only if repeated manual runs become unmanageable.
+
+### 7.3 IDEA_BANK / CANONICAL_IDEAS separation
+
+The heavy fork's IDEA_BANK protocol is useful:
+
+- IDEA_BANK stores only index/status.
+- CANONICAL_IDEAS stores clean candidate files.
+- Candidate files exclude generator trace, old scores, old praise, and user preference.
+- Reviewer and novelty checker read one candidate at a time.
+- Metadata/provenance can exist, but reviewers should not read it.
+
+This is directly relevant to idea quality and context-contamination control.
+
+Salvage this as a lightweight ARIS convention:
+
+```text
+idea-stage/IDEA_BANK.md
+idea-stage/CANONICAL_IDEAS/CAND_*.md
+idea-stage/REVIEWS/
+idea-stage/NOVELTY/
+idea-stage/ADVERSARIAL/
+idea-stage/FINAL_SELECTION/
+```
+
+Do not introduce a central state machine unless the convention proves insufficient.
+
+### 7.4 No strong idea found is a valid outcome
+
+This is important and should be preserved.
+
+The system must be allowed to say:
+
+```text
+no strong idea found
+```
+
+This is better than forcing weak ideas into experiments.
+
+No strong idea found applies when:
+
+- all ideas are killed;
+- dedup shows all ideas are minor variants;
+- novelty check returns already_done or insufficient_evidence for all survivors;
+- adversarial review finds fatal flaws;
+- all surviving ideas are direct_transfer_only or patchwork.
+
+### 7.5 Reviewer isolation for candidate-level review
+
+The heavy fork's idea-bank protocol correctly says reviewer input must exclude:
+
+- other candidates;
+- generator reasoning;
+- previous scores;
+- old praise;
+- user preference;
+- candidate provenance metadata.
+
+This overlaps with upstream reviewer-independence but is useful because it specializes the rule for idea discovery.
+
+Salvage it as a candidate-review rule in `idea-creator`, `exec-review`, and `novelty-check`.
+
+### 7.6 Gap excerpt rather than whole raw run
+
+The heavy fork used candidate-specific gap excerpts for review jobs.
+
+This is useful because the reviewer gets enough context to judge the candidate without reading the full raw run.
+
+Possible lightweight rule:
+
+```text
+Each CAND_*.md should reference one or more GAP_IDs.
+Reviewers may read only the candidate and the relevant gap excerpt, not the full brainstorming run.
+```
+
+### 7.7 Innovation-verdict guardrails
+
+The heavy fork's novelty-check discipline is useful:
+
+- evidence state caps novelty verdict;
+- insufficient evidence cannot be upgraded to confirmed novelty;
+- direct transfer only cannot be pilot-ready;
+- already-done stops or forces pivot;
+- valid-with-gaps requires caution;
+- contribution-chain candidates need patchwork check.
+
+Salvage these into upstream Skill text first.
 
 ---
 
-## 3. Important upstream facts already verified
-
-ARIS upstream already has substantial review and anti-self-delusion methodology.
-
-### Existing upstream review / independence mechanisms
-
-Upstream has:
-
-- cross-model executor/reviewer design;
-- reviewer-independence protocol;
-- zero-context paper claim audit;
-- review tracing;
-- paper-writing audit gates at high assurance levels;
-- literature paper-existence verification via `tools/verify_papers.py`;
-- idea generation with landscape survey, filtering, deep validation, critical review, pilots, and ranked report.
-
-Therefore, do not claim that upstream has no review or no anti-contamination awareness.
-
-### Timeline note
-
-Core upstream reviewer-independence protocol was added on 2026-04-07.
-
-Other relevant upstream hardening:
-
-- 2026-04-14: zero-context paper claim audit;
-- 2026-04-15: review tracing protocol;
-- 2026-04-21: paper-writing mandatory audit gates at max/beast;
-- 2026-05-13: `tools/verify_papers.py` paper-existence verification.
-
-This means the basic reviewer-independence protocol existed before the heavy fork work in May 2026.
-
----
-
-## 4. What must NOT be migrated from the heavy fork by default
+## 8. What must NOT be migrated from the heavy fork by default
 
 Do not migrate these as mainline features unless a later purpose-driven evaluation proves they are necessary:
 
@@ -255,7 +353,7 @@ Do not migrate these as mainline features unless a later purpose-driven evaluati
 - the current heavy `research_cli.py` flow;
 - current runtime/test-case artifacts under `research/current/`;
 - current `literature/search_runs/current/` artifacts;
-- idea-selection or candidate-selection systems that duplicate ARIS idea-creator ranked report / pilot logic;
+- heavyweight idea-selection/candidate-selection systems that duplicate ARIS idea-creator ranked report / pilot logic;
 - lightweight experiment scaffold that duplicates ARIS pilot experiment / experiment-bridge logic;
 - large roadmap/audit documents as product artifacts.
 
@@ -263,57 +361,35 @@ These may remain only in the old heavy-fork branch as historical material unless
 
 ---
 
-## 5. Patch candidates that may still be useful
+## 9. Patch candidates
 
-Only consider these after checking whether upstream already covers them sufficiently and whether they directly improve the two real goals.
+Only consider these after checking whether upstream already covers them sufficiently and whether they directly improve the real goals.
 
-### 5.1 Transfer/contribution-chain Skill patch
+### 9.1 Transfer/contribution-chain Skill patch
 
 This is the first candidate to implement.
 
-Additions to idea generation / novelty / experiment planning should require transfer innovation to specify:
+Additions to idea generation / novelty / experiment planning should require transfer innovation and contribution-chain quality fields.
 
-- source-domain mature method;
-- target-domain mismatch;
-- direct-transfer baseline;
-- adaptation mechanism;
-- ablation needed to prove adaptation value;
-- why this is not simple `apply X to Y`.
-
-Contribution chain must specify:
-
-- shared core claim;
-- main contribution;
-- auxiliary contributions;
-- why the components belong together;
-- why it is not patchwork;
-- required ablations for each component.
-
-### 5.2 Optional transfer idea card templates
+### 9.2 Lightweight candidate templates
 
 If Skill text alone does not reliably shape better ideas, add lightweight templates such as:
 
 - `templates/TRANSFER_IDEA_CARD_TEMPLATE.md`
 - `templates/CONTRIBUTION_CHAIN_TEMPLATE.md`
+- `templates/CANONICAL_IDEA_TEMPLATE.md`
 
 These templates should force structure, not create a new workflow engine.
 
-### 5.3 Innovation-verdict guardrails
+### 9.3 IDEA_BANK convention
 
-Borrow the useful novelty-check ideas from the heavy fork without migrating the heavy workflow.
+If repeated idea runs become hard to track, add a lightweight IDEA_BANK convention before adding Python tooling.
 
-Possible lightweight guardrails:
+### 9.4 Innovation-verdict guardrails
 
-- evidence state caps allowed novelty verdict;
-- `insufficient_evidence` cannot be upgraded to `confirmed_novel`;
-- `direct_transfer_only` cannot be pilot-ready;
-- `already_done` forces stop or pivot;
-- `valid_with_gaps` requires explicit risk disclosure;
-- contribution-chain candidates must pass a patchwork check.
+Add guardrails to Skill text first. Add a validator only if the Skill-only version proves insufficient.
 
-These guardrails should be added to Skill instructions first. Add a validator only if the Skill-only version proves insufficient.
-
-### 5.4 Optional model-call evidence helper
+### 9.5 Optional model-call evidence helper
 
 Possible small helper, not a workflow engine:
 
@@ -324,25 +400,13 @@ Possible small helper, not a workflow engine:
 - confidence downgrade;
 - artifact paths passed to reviewer.
 
-Purpose: improve auditability of reviewer calls, not replace ARIS review protocol.
+### 9.6 Optional evidence-topic binding check
 
-### 5.5 Optional evidence-topic binding check
-
-This addresses a real failure observed in the heavy fork: old hallucination/internal-state evidence was accidentally reused for a time-series diffusion topic.
-
-A lightweight check may track:
-
-- current topic;
-- topic hash;
-- latest literature run path;
-- top-k domain sanity;
-- stale evidence warning.
-
-This should attach to ARIS `/research-lit` or idea-generation inputs, not become a separate literature platform.
+Only if stale evidence actually appears in upstream usage, add a lightweight check for topic/evidence mismatch.
 
 ---
 
-## 6. Recommended implementation sequence
+## 10. Recommended implementation sequence
 
 ### Phase 0 — Keep this branch clean
 
@@ -353,23 +417,26 @@ This branch starts from upstream main. Do not merge the heavy fork.
 Modify upstream Skill text first:
 
 - primary target: `skills/idea-creator/SKILL.md`;
-- secondary targets if needed: `skills/novelty-check/SKILL.md`, `skills/experiment-plan/SKILL.md`.
+- secondary targets if needed: `skills/novelty-check/SKILL.md`, `skills/experiment-plan/SKILL.md`, `skills/exec-review/SKILL.md`.
 
-Add transfer innovation and contribution-chain requirements.
+Add:
 
-Also add novelty-verdict guardrails:
+- transfer innovation doctrine;
+- contribution-chain doctrine;
+- no-strong-idea-found as valid outcome;
+- evidence-quality guardrails;
+- candidate-level reviewer isolation;
+- direct-transfer-only rejection or revise rule.
 
-- evidence quality constrains novelty strength;
-- direct-transfer-only ideas cannot become pilot-ready;
-- contribution chains require shared core claim and ablations.
+No Python changes in Phase 1 unless Skill text cannot express the quality gate.
 
-No Python changes in Phase 1 unless the Skill edit cannot express the necessary quality gate.
+### Phase 2 — Add lightweight templates if needed
 
-### Phase 2 — Evaluate whether the Skill patch improves outputs
+Only if Phase 1 output remains generic or weak, add candidate templates.
 
-Run upstream ARIS with the patched Skill on one realistic research direction.
+### Phase 3 — Evaluate outputs
 
-Evaluate whether generated ideas now include:
+Run patched ARIS on one realistic research direction and evaluate whether generated ideas include:
 
 - direct-transfer baselines;
 - target-domain mismatch;
@@ -381,32 +448,21 @@ Evaluate whether generated ideas now include:
 
 If output quality improves enough, stop. Do not add more machinery.
 
-If output remains generic or weak, proceed to Phase 3.
-
-### Phase 3 — Add lightweight templates if needed
-
-Only if Phase 2 is insufficient, add transfer idea card / contribution-chain templates.
-
-### Phase 4 — Add lightweight novelty guard validators only if needed
+### Phase 4 — Add lightweight validators only if needed
 
 Only if Skill/template instructions still allow weak ideas to pass as pilot-ready, add a small validator that checks idea cards for required fields and forbidden verdict upgrades.
 
-### Phase 5 — Decide whether trust hardening is worth adding
+### Phase 5 — Optional trust hardening
 
-Before adding Python trust hardening:
-
-1. Run upstream ARIS normally on a realistic research direction.
-2. Observe whether context contamination actually occurs.
-3. If no meaningful failure is observed, do not add Python hardening.
-4. If a repeatable failure occurs, add the smallest possible helper.
+Only if repeatable context-contamination failures occur, add the smallest possible helper.
 
 ### Phase 6 — Optional evidence-topic binding helper
 
-Only if the old-evidence problem appears in upstream usage, add a small helper or checklist that warns when literature evidence and current topic diverge.
+Only if stale evidence appears in upstream usage, add a small helper or checklist.
 
 ---
 
-## 7. Decision rules
+## 11. Decision rules
 
 ### Keep or add a change only if all are true
 
@@ -428,14 +484,15 @@ Only if the old-evidence problem appears in upstream usage, add a small helper o
 
 ---
 
-## 8. Current recommended route
+## 12. Current recommended route
 
 Use the purpose-driven hybrid route:
 
 ```text
 Upstream ARIS as the main system
 + transfer/contribution-chain Skill patch first
-+ novelty-verdict guardrails in Skill text
++ candidate-level isolation and no-strong-idea-found doctrine
++ innovation-verdict guardrails in Skill text
 + templates only if Skill text is insufficient
 + optional validators only if weak ideas still pass
 + optional minimal evidence/trust hardening only after real failures are observed
@@ -447,8 +504,15 @@ Do not treat smallness as the goal. Treat research-idea quality as the goal.
 
 ---
 
-## 9. Immediate next action
+## 13. Immediate next action
 
-Next commit on this branch should modify `skills/idea-creator/SKILL.md`, and optionally `skills/novelty-check/SKILL.md` / `skills/experiment-plan/SKILL.md`, to add transfer innovation, contribution-chain quality requirements, and novelty-verdict guardrails.
+Next commit on this branch should modify upstream Skills, not Python:
+
+- `skills/idea-creator/SKILL.md`
+- `skills/novelty-check/SKILL.md`
+- optionally `skills/experiment-plan/SKILL.md`
+- optionally `skills/exec-review/SKILL.md`
+
+The patch should add transfer innovation, contribution-chain quality requirements, candidate-level isolation, no-strong-idea-found as a valid result, and novelty-verdict guardrails.
 
 Do not add Python in the next commit unless the change cannot be expressed at the Skill/template level.
