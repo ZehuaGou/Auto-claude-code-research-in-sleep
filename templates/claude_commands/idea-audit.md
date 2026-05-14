@@ -10,7 +10,7 @@ User arguments:
 
 Requirements:
 - Treat this slash command as `/idea-audit $ARGUMENTS`.
-- Run: `python tools/slash_command_adapter.py '/idea-audit $ARGUMENTS'`
+- Run: `python tools/slash_command_adapter.py '/idea-audit $ARGUMENTS' --save-payload-dir research/current/user_command_payloads`
 - Display the plan output to the user.
 - This is DRY-RUN only: no model calls, no trusted runner execution, no trusted_outputs changes.
 - Do NOT execute the plan. Only show what would happen.

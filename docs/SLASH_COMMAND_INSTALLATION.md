@@ -20,8 +20,11 @@ All commands are **plan-only** (DRY-RUN). They generate execution plans but do N
 
 1. **Templates** live in `templates/claude_commands/` (committed to git, safe to share).
 2. **Install script** copies templates to `.claude/commands/` (local, gitignored).
-3. **Slash commands** call `tools/slash_command_adapter.py` to parse input and generate plans.
-4. **Python scripts** are Agent-facing backend — users only interact via slash commands.
+3. **Slash commands** call `tools/slash_command_adapter.py` to parse input, generate plans, and save payloads.
+4. **Payloads** are saved to `research/current/user_command_payloads/` (gitignored).
+5. **Python scripts** are Agent-facing backend — users only interact via slash commands.
+
+All commands are **plan-only**: no model calls, no trusted runner execution, no trusted_outputs changes. Payloads are saved for downstream stages to read, but no execution occurs.
 
 ## Installation
 
