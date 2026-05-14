@@ -261,10 +261,10 @@ def generate_plan(parsed: dict, run_dir: Path | None = None) -> dict:
         plan["note"] = flags.get("note", "")
 
     # If command is not yet fully implemented, mark it
-    unimplemented = {"idea-synthesis", "experiment", "paper-writing"}
-    if command in unimplemented:
-        plan["implementation_status"] = "not_implemented"
-        plan["note"] = plan.get("note", "") + " [NOT YET IMPLEMENTED — dry-run plan only]"
+    plan_only = {"idea-synthesis", "experiment", "paper-writing"}
+    if command in plan_only:
+        plan["implementation_status"] = "plan_only"
+        plan["note"] = plan.get("note", "") + " [plan_only — generates execution plan, no live execution]"
 
     return plan
 
@@ -344,10 +344,10 @@ def _self_test() -> bool:
     check("10. literature-intake plan", plan["status"] == "PASS" and plan["maps_to"] == "continue_literature_search",
           f"got maps_to={plan['maps_to']}")
 
-    # Test 11: Generate plan for idea-synthesis (not yet implemented)
+    # Test 11: Generate plan for idea-synthesis (plan_only)
     p = parse_slash_command('/idea-synthesis "不要只想单点创新" --num-candidates 8')
     plan = generate_plan(p)
-    check("11. idea-synthesis plan", plan["status"] == "PASS" and plan.get("implementation_status") == "not_implemented",
+    check("11. idea-synthesis plan", plan["status"] == "PASS" and plan.get("implementation_status") == "plan_only",
           f"got status={plan['status']}, impl={plan.get('implementation_status')}")
 
     # Test 12: Generate plan for idea-audit
@@ -356,10 +356,10 @@ def _self_test() -> bool:
     check("12. idea-audit plan", plan["status"] == "PASS" and plan["maps_to"] == "continue_novelty_check",
           f"got maps_to={plan['maps_to']}")
 
-    # Test 13: Generate plan for paper-writing (not yet implemented)
+    # Test 13: Generate plan for paper-writing (plan_only)
     p = parse_slash_command('/paper-writing "按保守论文风格写"')
     plan = generate_plan(p)
-    check("13. paper-writing plan", plan["status"] == "PASS" and plan.get("implementation_status") == "not_implemented",
+    check("13. paper-writing plan", plan["status"] == "PASS" and plan.get("implementation_status") == "plan_only",
           f"got status={plan['status']}, impl={plan.get('implementation_status')}")
 
     # Test 14: Reject empty command
@@ -405,6 +405,41 @@ def _self_test() -> bool:
     plan = generate_plan(p)
     check("20. experiment full mode plan", plan["status"] == "PASS" and plan["flags"].get("mode") == "full",
           f"got mode={plan['flags'].get('mode')}")
+
+    # Test 21: plan_only status for idea-synthesis, experiment, paper-writing
+    for cmd in ("idea-synthesis", "experiment", "paper-writing"):
+        p = parse_slash_command(f'/{cmd} "test"')
+        plan = generate_plan(p)
+        check(f"21. {cmd} plan_only", plan.get("implementation_status") == "plan_only",
+              f"got impl={plan.get('implementation_status')}")
+    # research-intake should NOT have plan_only
+    p = parse_slash_command('/research-intake "test"')
+    plan = generate_plan(p)
+    check("21b. research-intake not plan_only", plan.get("implementation_status") is None,
+          f"got impl={plan.get('implementation_status')}")
+
+    # Test 22: plan includes payload_file when save_payload used
+    with tempfile.TemporaryDirectory() as td:
+        from io import StringIO
+        import contextlib
+        f = StringIO()
+        with contextlib.redirect_stdout(f):
+            parsed = parse_slash_command('/research-intake "test idea"')
+            plan = generate_plan(parsed)
+            # Simulate what CLI does with --save-payload-dir
+            safe_dir = Path(td) / " payloads"
+            filepath = save_payload(parsed["command"], parsed["payload"], safe_dir)
+            plan["payload_file"] = str(filepath)
+        check("22. plan has payload_file", "payload_file" in plan and plan["payload_file"].endswith(".md"),
+              f"payload_file={plan.get('payload_file')}")
+
+    # Test 23: dry-run print line does NOT claim no files written
+    src = Path(__file__).read_text(encoding="utf-8")
+    dry_run_lines = [l for l in src.split("\n") if "DRY-RUN:" in l and "print(" in l]
+    has_old = any("No files written" in l for l in dry_run_lines)
+    has_new = any("Payload files are only written" in l for l in dry_run_lines)
+    check("23. dry-run message accurate", not has_old and has_new,
+          f"old_msg_present={has_old}, new_msg_present={has_new}")
 
     print(f"\nSelf-test results: {tests_passed} passed, {tests_failed} failed")
     return tests_failed == 0
@@ -462,7 +497,7 @@ def main():
             print(f"  → {cli['description']}")
         if plan.get("payload_file"):
             print(f"Payload:    saved to {plan['payload_file']}")
-        print(f"\nDRY-RUN: No files written, no models called, no trusted runner executed.")
+        print(f"\nDRY-RUN: No model calls, no trusted runner executed, no trusted_outputs changed. Payload files are only written when --save-payload-dir is provided.")
 
 
 if __name__ == "__main__":
