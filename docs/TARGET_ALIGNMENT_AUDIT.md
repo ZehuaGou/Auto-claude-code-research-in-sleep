@@ -78,6 +78,11 @@ Gaps:
 - No user-friendly route status command integrated into CLI
 - `call_too_old` policy needs formal definition (currently just `max-age-hours`)
 
+Context isolation:
+- Context scan always runs in `trusted_role_runner` even without a manifest (default manifest: `default_no_manifest`). `forbidden_context_checked` and `contamination_scan_status` are properly set in all cases.
+- `_build_fallback_route` passes `api_key_env` (env var name) instead of raw `api_key` value.
+- `verified_with_fallback` must pass context isolation validation before acceptance.
+
 ### Trusted Output Layer
 
 **Status: MOSTLY COMPLETE**
@@ -92,6 +97,8 @@ Gaps:
 - Trusted output repair policy needs formalization
 - Manual wording repairs need procedure (currently ad-hoc)
 - `call_too_old` policy needs clarification
+- Trusted outputs (`trusted_outputs/*.md`) should NOT be committed until human-reviewed
+- Self-tests are all offline (72 tests, no real API calls); trusted mode code paths are separately live-validated
 
 ### Literature Layer
 
@@ -131,7 +138,7 @@ Gaps:
 - Adaptive broad literature scan: designed (Section 8.17 v1.1) but deferred — MVP runs core flow first
 - Literature memory / reading card: designed (Section 8.18 v1.1) but deferred — grep sufficient for < 100 papers
 - Literature module split: DONE — `literature_evidence_landing.py` split into `tools/literature/{store.py, extraction.py, manual_ingest.py, scoring.py, multisource.py}` + `tools/literature/adapters/{openalex.py, arxiv.py, crossref.py}` with backward-compatible delegation
-- **Slash command integration (Phase 21N + Phase 3):** `/literature-intake --execute` calls `run_multisource_pipeline` for real metadata-only search (arXiv + OpenAlex + Crossref). Output to `tmp/slash_lit_search/` (gitignored). 90 raw records, 16 top-k demonstrated. Phase 3 adds `--trusted` code paths for `/idea-synthesis` and `/idea-audit` that call `trusted_role_runner`. Code paths implemented, not live-validated. `workflow_state.phase_status` tracks 6 states: `not_started`/`safe_completed`/`metadata_completed`/`scaffold_created`/`trusted_completed`/`blocked`. Only `safe_completed`/`metadata_completed`/`trusted_completed` count as completed for phase advancement. `/experiment` gate requires `phase_status.idea_audit == trusted_completed` + `has_worth_experiment_plan == true`. Real trusted completion requires explicit `--trusted` call, ledger `call_id`, and `validate_model_invocation`. 67 adapter self-tests pass.
+- **Slash command integration (Phase 21N + Phase 3):** `/literature-intake --execute` calls `run_multisource_pipeline` for real metadata-only search (arXiv + OpenAlex + Crossref). Output to `tmp/slash_lit_search/` (gitignored). 90 raw records, 16 top-k demonstrated. Phase 3 adds `--trusted` code paths for `/idea-synthesis` and `/idea-audit` that call `trusted_role_runner`. Trusted mode code paths are live-validated with real model calls. `workflow_state.phase_status` tracks 6 states: `not_started`/`safe_completed`/`metadata_completed`/`scaffold_created`/`trusted_completed`/`blocked`. Only `safe_completed`/`metadata_completed`/`trusted_completed` count as completed for phase advancement. `/experiment` gate requires `validate_model_invocation` PASS (cached as `idea_reviewer_validation_pass` in workflow state) + `phase_status.idea_audit == trusted_completed` + `has_worth_experiment_plan == true`. `_compute_next_commands` checks `completed_user_phases` as fallback. `execute_idea_audit` runs `validate_model_invocation` after the trusted call. Context isolation checks always run (even without manifest; default: `default_no_manifest`). `verified_with_fallback` must pass context isolation validation. Trusted outputs should NOT be committed until human-reviewed. Self-tests are all offline (72 tests, no real API calls). 67 adapter self-tests pass.
 
 ### Status Tracking Layer
 
@@ -195,6 +202,8 @@ Gaps:
 | Feedback loops | Section 4d (v1.2) | DESIGNED — 4 feedback loops: audit fail, lightweight fail, heavy fail, claim unstable |
 | Transfer innovation and contribution chain | Section 4c (v1.2) | DESIGNED — gap-driven, transfer innovation, contribution chain modes |
 | Current trusted stages remain internal | Section 4e (v1.2) | DESIGNED — 10+ internal stages mapped to 6 user-facing phases |
+| Validation chain for /experiment gate | Section 4c (v1.2) | IMPLEMENTED (Phase 3) — `validate_model_invocation` PASS required, cached as `idea_reviewer_validation_pass`; context isolation runs without manifest; `verified_with_fallback` must pass isolation; trusted outputs human-review-gated |
+| Self-tests offline guarantee | Section 9 | IMPLEMENTED — 72 self-tests, no real API calls; trusted code paths live-validated separately |
 
 ---
 

@@ -94,13 +94,20 @@ def resolve_role(role: str) -> Dict[str, Any]:
     provider = config.get("provider", "")
     backend_type = config.get("backend_type", "")
 
-    # If Codex, annotate that runner must call MCP
+    # If Codex, annotate that runner must call MCP and build fallback route
     if backend_type == "mcp":
         config["codex_required_roles_note"] = (
             f"Role '{role}' resolves to Codex MCP. "
             "The outer Agent must call mcp__codex__codex directly. "
             "isolated_job_runner cannot invoke Codex MCP itself."
         )
+        # Build fallback route from LLM_*_FALLBACK_* env vars
+        role_upper = role.upper()
+        fallback_model = vars_dict.get(f"LLM_{role_upper}_FALLBACK_MODEL", "")
+        if fallback_model:
+            fallback_config = _build_fallback_route(role_upper, fallback_model, vars_dict)
+            if fallback_config:
+                config["fallback_route_config"] = fallback_config
 
     # Include mode strings for verify compatibility
     config["gate_modes"] = ["codex_required", "codex_preferred", "deepseek_only"]
@@ -109,6 +116,31 @@ def resolve_role(role: str) -> Dict[str, Any]:
         return config
 
     return config
+
+
+def _build_fallback_route(role_upper: str, model: str, vars_dict: Dict[str, str]) -> Dict[str, Any]:
+    """Build fallback route config from LLM_*_FALLBACK_* env vars."""
+    thinking = vars_dict.get(f"LLM_{role_upper}_FALLBACK_THINKING", "")
+    reasoning_effort = vars_dict.get(f"LLM_{role_upper}_FALLBACK_REASONING_EFFORT", "")
+    base_url = vars_dict.get("LLM_FALLBACK_BASE_URL", vars_dict.get("LLM_BASE_URL", ""))
+    # Determine which env var holds the API key
+    if vars_dict.get("DEEPSEEK_API_KEY"):
+        api_key_env = "DEEPSEEK_API_KEY"
+    else:
+        api_key_env = "LLM_API_KEY"
+
+    if not model:
+        return {}
+
+    return {
+        "backend_type": "openai_compatible_api",
+        "provider": "deepseek",
+        "model": model,
+        "base_url": base_url,
+        "api_key_env": api_key_env,
+        "thinking": thinking,
+        "reasoning_effort": reasoning_effort,
+    }
 
 
 def main():

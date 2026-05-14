@@ -196,8 +196,8 @@ def _extract_payload_and_flags(text: str) -> tuple[str, dict]:
             payload = text.strip()
             remainder = ""
 
-    # Parse --flag value pairs
-    flag_pattern = re.findall(r'--(\S+)(?:\s+(\S+))?', remainder)
+    # Parse --flag value pairs (values must not start with --)
+    flag_pattern = re.findall(r'--(\S+)(?:\s+((?!--)\S+))?', remainder)
     for name, value in flag_pattern:
         flags[name] = value if value else "true"
 
@@ -277,6 +277,7 @@ def update_workflow_state(
     phase_status_value: str | None = None,
     *,
     has_worth_experiment_plan: bool | None = None,
+    idea_reviewer_validation_pass: bool | None = None,
 ) -> dict:
     """Update workflow state after a command execution. Returns updated state.
 
@@ -306,6 +307,9 @@ def update_workflow_state(
     # Track worth_experiment_plan
     if has_worth_experiment_plan is not None:
         state["has_worth_experiment_plan"] = has_worth_experiment_plan
+    # Track idea_reviewer validation
+    if idea_reviewer_validation_pass is not None:
+        state["idea_reviewer_validation_pass"] = idea_reviewer_validation_pass
     # Compute next allowed commands
     state["next_allowed_commands"] = _compute_next_commands(state)
     save_workflow_state(state)
@@ -327,43 +331,44 @@ def _compute_next_commands(state: dict) -> list[str]:
     - paper_writing: safe_completed unlocks status only
     """
     phase_status = state.get("phase_status", {})
-    phase_to_cmd = {v: k for k, v in USER_PHASES.items() if k != "status"}
+    completed = set(state.get("completed_user_phases", []))
+
+    def _is_done(phase_key: str) -> bool:
+        """Check if a phase is done via phase_status or completed_user_phases."""
+        ps = phase_status.get(phase_key, PHASE_NOT_STARTED)
+        return ps in _COMPLETION_STATUSES or phase_key in completed
 
     # Check each phase in order
-    ri_status = phase_status.get("research_direction_intake", PHASE_NOT_STARTED)
-    if ri_status not in _COMPLETION_STATUSES:
+    if not _is_done("research_direction_intake"):
         return ["research-intake", "status"]
 
-    li_status = phase_status.get("literature_intake", PHASE_NOT_STARTED)
-    if li_status not in _COMPLETION_STATUSES:
+    if not _is_done("literature_intake"):
         return ["literature-intake", "status"]
 
     is_status = phase_status.get("idea_synthesis", PHASE_NOT_STARTED)
     if is_status == PHASE_SCAFFOLD_CREATED:
-        # Scaffold only — allow trusted re-run or status
         return ["idea-synthesis", "status"]
-    if is_status not in _COMPLETION_STATUSES:
+    if not _is_done("idea_synthesis"):
         return ["idea-synthesis", "status"]
 
     ia_status = phase_status.get("idea_audit", PHASE_NOT_STARTED)
     if ia_status == PHASE_SCAFFOLD_CREATED:
         return ["idea-audit", "status"]
     if ia_status == PHASE_TRUSTED_COMPLETED:
-        # Check worth_experiment_plan
         has_worth = state.get("has_worth_experiment_plan", False)
-        if has_worth:
+        validation_pass = state.get("idea_reviewer_validation_pass", False)
+        if has_worth and validation_pass:
             return ["experiment", "status"]
-        # Audit done but no worth_experiment_plan — back to synthesis
+        if has_worth and not validation_pass:
+            return ["idea-audit", "status"]
         return ["idea-synthesis", "status"]
-    if ia_status not in _COMPLETION_STATUSES:
+    if not _is_done("idea_audit"):
         return ["idea-audit", "status"]
 
-    exp_status = phase_status.get("experiment_and_analysis", PHASE_NOT_STARTED)
-    if exp_status not in _COMPLETION_STATUSES:
+    if not _is_done("experiment_and_analysis"):
         return ["experiment", "status"]
 
-    pw_status = phase_status.get("paper_writing", PHASE_NOT_STARTED)
-    if pw_status not in _COMPLETION_STATUSES:
+    if not _is_done("paper_writing"):
         return ["paper-writing", "status"]
 
     return ["status"]
@@ -636,6 +641,7 @@ def _run_trusted_idea_audit(payload: str) -> dict:
             input_spec=str(input_file),
             output_path=output_path,
             dry_run=False,
+            allow_fallback_next_stage=True,
         )
         return result
     except Exception as exc:
@@ -1178,8 +1184,27 @@ def execute_idea_audit(parsed: dict, payload_file: str | None = None) -> dict:
 
         if status in ("completed", "completed_with_fallback") and exit_code == 0:
             has_verdict = _has_worth_experiment_verdict()
+
+            # Validate model invocation for idea_reviewer
+            validation_pass = False
+            validation_reason = ""
+            try:
+                if str(TOOLS_DIR) not in sys.path:
+                    sys.path.insert(0, str(TOOLS_DIR))
+                from validate_model_invocation import validate_role
+                audit_validation = validate_role("idea_reviewer")
+                validation_pass = audit_validation.get("status") in ("PASS", "PASS_WITH_WARNINGS")
+                validation_reason = audit_validation.get("reason", "")
+            except Exception as exc:
+                validation_reason = f"validation error: {exc}"
+
             phase_val = PHASE_TRUSTED_COMPLETED
-            state = update_workflow_state("idea-audit", payload_file, phase_val, has_worth_experiment_plan=has_verdict)
+            state = update_workflow_state(
+                "idea-audit", payload_file, phase_val,
+                has_worth_experiment_plan=has_verdict,
+                idea_reviewer_validation_pass=validation_pass,
+            )
+
             return {
                 "status": "trusted_completed",
                 "command": "/idea-audit",
@@ -1190,8 +1215,10 @@ def execute_idea_audit(parsed: dict, payload_file: str | None = None) -> dict:
                 "call_id": call_id,
                 "allowed_next_stage": allowed_next,
                 "has_worth_experiment_plan": has_verdict,
-                "next_action": "Run /experiment to plan experiments" if has_verdict else "Audit did not produce worth_experiment_plan verdict. Revise ideas.",
-                "note": f"Trusted idea audit complete. call_id: {call_id}. Verdict: {'worth_experiment_plan' if has_verdict else 'needs_revision'}.",
+                "idea_reviewer_validation_pass": validation_pass,
+                "validation_reason": validation_reason,
+                "next_action": "Run /experiment to plan experiments" if (has_verdict and validation_pass) else "Audit needs revision or validation failed.",
+                "note": f"Trusted idea audit complete. call_id: {call_id}. Verdict: {'worth_experiment_plan' if has_verdict else 'needs_revision'}. Validation: {'PASS' if validation_pass else 'FAIL'} ({validation_reason}).",
             }
         else:
             error = result.get("error", "unknown error")
@@ -1378,6 +1405,26 @@ def execute_experiment(parsed: dict, payload_file: str | None = None) -> dict:
         blocked_reasons.append("no trusted idea_audit output file")
     if not has_worth_verdict:
         blocked_reasons.append("idea audit missing worth_experiment_plan verdict")
+
+    # Gate: validate_model_invocation must PASS for idea_reviewer
+    # Check cached result first (set by execute_idea_audit), then validate live
+    if not blocked_reasons:
+        cached_validation = state.get("idea_reviewer_validation_pass", False)
+        if cached_validation:
+            pass  # Already validated
+        else:
+            try:
+                if str(TOOLS_DIR) not in sys.path:
+                    sys.path.insert(0, str(TOOLS_DIR))
+                from validate_model_invocation import validate_role
+                audit_validation = validate_role("idea_reviewer")
+                if audit_validation.get("status") not in ("PASS", "PASS_WITH_WARNINGS"):
+                    blocked_reasons.append(
+                        f"validate_model_invocation for idea_reviewer: {audit_validation.get('status')} "
+                        f"({audit_validation.get('reason', 'unknown')})"
+                    )
+            except Exception as exc:
+                blocked_reasons.append(f"validate_model_invocation error: {exc}")
 
     if blocked_reasons:
         return {
@@ -2158,6 +2205,7 @@ def _self_test() -> bool:
                         "idea_audit": "trusted_completed",
                     },
                     "has_worth_experiment_plan": True,
+                    "idea_reviewer_validation_pass": True,
                     "next_allowed_commands": ["experiment", "status"],
                 }), encoding="utf-8")
                 p = parse_slash_command(f'/experiment "test" --mode {mode}')
@@ -2407,10 +2455,12 @@ def _self_test() -> bool:
         orig_rt = mod.RUNTIME_DIR
         orig_state = mod.WORKFLOW_STATE_FILE
         orig_lit = mod.LITERATURE_SEARCH_DIR
+        orig_trusted = mod.TRUSTED_OUTPUT_DIR
         mod.RESEARCH_DIR = Path(td) / "research" / "current"
         mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
         mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
         mod.LITERATURE_SEARCH_DIR = Path(td) / "literature" / "search_runs" / "current"
+        mod.TRUSTED_OUTPUT_DIR = mod.RESEARCH_DIR / "trusted_outputs"
         try:
             mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
             (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
@@ -2425,6 +2475,7 @@ def _self_test() -> bool:
             mod.RUNTIME_DIR = orig_rt
             mod.WORKFLOW_STATE_FILE = orig_state
             mod.LITERATURE_SEARCH_DIR = orig_lit
+            mod.TRUSTED_OUTPUT_DIR = orig_trusted
 
     # Test 41: experiment blocked without trusted audit
     with tempfile.TemporaryDirectory() as td:

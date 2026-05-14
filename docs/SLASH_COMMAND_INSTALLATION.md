@@ -18,6 +18,7 @@ All commands support three modes:
 - **Default (dry-run)**: Generates execution plan, saves payload. No files created.
 - **`--execute`**: Creates scaffold files, updates workflow state. No model calls, no experiments, no trusted_outputs changes. Sets `phase_status = scaffold_created`.
 - **`--execute --trusted`** (idea-synthesis, idea-audit only): Code path calls `trusted_role_runner` for real model-based synthesis/audit. Writes to `trusted_outputs/`. Reports `call_id`. Sets `phase_status = trusted_completed`. **Live model invocation requires explicit user action.**
+- **Trusted mode validation:** `execute_idea_audit` runs `validate_model_invocation` after the trusted call; result cached as `idea_reviewer_validation_pass` in workflow state. The `/experiment` gate requires this validation to PASS. Context isolation checks run even without a manifest (default manifest: `default_no_manifest`). `verified_with_fallback` must pass context isolation before acceptance. Trusted outputs should NOT be committed until human-reviewed.
 
 **Phase status semantics:**
 - `scaffold_created`: File created, no model called. Does NOT count as completed. Cannot advance to next phase.

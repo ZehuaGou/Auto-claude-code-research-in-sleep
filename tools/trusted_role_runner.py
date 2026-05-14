@@ -121,9 +121,9 @@ def _header_value(value: Any) -> str:
 def _load_context_manifest(context_manifest_path: Optional[str]) -> Dict[str, Any]:
     if not context_manifest_path:
         return {
-            "isolation_mode": "not_declared",
+            "isolation_mode": "role_input_only",
             "task_id": "",
-            "context_manifest": "none",
+            "context_manifest": "default_no_manifest",
             "allowed_input_files": [],
             "forbidden_context": [],
             "forbidden_context_checked": False,
@@ -555,18 +555,17 @@ def _prepare_external_mcp(
     entry.update(context_info)
 
     # --- Context isolation re-verification (fail closed) ---
-    if context_manifest_path:
-        scan_passed, scan_reason = verify_context_manifest_before_call(
-            context_manifest_path, input_spec,
-        )
-        _apply_context_scan_result(entry, scan_passed, scan_reason)
-        if not scan_passed:
-            _write_ledger_entry(entry, ledger_path)
-            return {
-                "status": "failed",
-                "verification_status": "call_failed",
-                "allowed_next_stage": False,
-                "confidence_downgraded": True,
+    scan_passed, scan_reason = verify_context_manifest_before_call(
+        context_manifest_path, input_spec,
+    )
+    _apply_context_scan_result(entry, scan_passed, scan_reason)
+    if not scan_passed:
+        _write_ledger_entry(entry, ledger_path)
+        return {
+            "status": "failed",
+            "verification_status": "call_failed",
+            "allowed_next_stage": False,
+            "confidence_downgraded": True,
                 "error": f"context_isolation_failed: {scan_reason}",
                 "error_code": "context_isolation_failed",
                 "exit_code": 1,
@@ -815,6 +814,27 @@ def run_trusted(
         return error_result
     _write_ledger_entry(entry, ledger_path)
 
+    # --- Context isolation re-verification (fail closed) ---
+    scan_passed, scan_reason = verify_context_manifest_before_call(
+        context_manifest_path, input_spec,
+    )
+    _apply_context_scan_result(entry, scan_passed, scan_reason)
+    if not scan_passed:
+        finished = _finalize_entry(
+            entry,
+            ledger_path=ledger_path,
+            status="failed",
+            output_text="",
+            error=f"context_isolation_failed: {scan_reason}",
+            error_code="context_isolation_failed",
+        )
+        _write_artifact(output_path, finished, json.dumps({
+            "error": "context_isolation_failed",
+            "reason": scan_reason,
+        }, ensure_ascii=False))
+        finished["exit_code"] = 1
+        return finished
+
     if dry_run:
         finished = _finalize_entry(
             entry,
@@ -828,28 +848,6 @@ def run_trusted(
         _write_artifact(output_path, finished, finished["output_text"])
         finished["exit_code"] = 1
         return finished
-
-    # --- Context isolation re-verification (fail closed) ---
-    if context_manifest_path:
-        scan_passed, scan_reason = verify_context_manifest_before_call(
-            context_manifest_path, input_spec,
-        )
-        _apply_context_scan_result(entry, scan_passed, scan_reason)
-        if not scan_passed:
-            finished = _finalize_entry(
-                entry,
-                ledger_path=ledger_path,
-                status="failed",
-                output_text="",
-                error=f"context_isolation_failed: {scan_reason}",
-                error_code="context_isolation_failed",
-            )
-            _write_artifact(output_path, finished, json.dumps({
-                "error": "context_isolation_failed",
-                "reason": scan_reason,
-            }, ensure_ascii=False))
-            finished["exit_code"] = 1
-            return finished
 
     primary_result = _forced_primary_result or _call_backend(route_config, input_text)
     if primary_result.ok:

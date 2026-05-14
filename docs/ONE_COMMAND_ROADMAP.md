@@ -41,10 +41,16 @@
 - Gate 0: `phase_status` field added to workflow_state with 6 values: `not_started`/`safe_completed`/`metadata_completed`/`scaffold_created`/`trusted_completed`/`blocked`. Only `safe_completed`/`metadata_completed`/`trusted_completed` count as "completed" for phase advancement. `scaffold_created` and `blocked` do NOT enter `completed_user_phases`.
 - Gate 1: Trusted output format defined — `trusted_outputs/idea_synthesis.md` and `trusted_outputs/idea_audit.md` with YAML frontmatter headers from `trusted_role_runner`.
 - Gate 2: `/idea-synthesis --execute --trusted` code path calls `trusted_role_runner` with `idea_generator` role (deepseek-v4-pro, thinking enabled). Writes trusted output with ledger call_id. **Live model invocation not performed in this commit.**
-- Gate 3: `/idea-audit --execute --trusted` code path calls `trusted_role_runner` with `idea_reviewer` role (Codex preferred, deepseek-v4-pro fallback). Checks for `worth_experiment_plan` verdict. **Live model invocation not performed in this commit.**
-- Gate 4: `/experiment` gate — requires `phase_status.idea_audit == trusted_completed` AND `has_worth_experiment_plan == true` AND trusted output file exists. Blocks otherwise with clear reason.
+- Gate 3: `/idea-audit --execute --trusted` code path calls `trusted_role_runner` with `idea_reviewer` role (Codex preferred, deepseek-v4-pro fallback). `execute_idea_audit` runs `validate_model_invocation` after the trusted call; result cached as `idea_reviewer_validation_pass` in workflow state. Checks for `worth_experiment_plan` verdict. **Live model invocation not performed in this commit.**
+- Gate 4: `/experiment` gate — requires `validate_model_invocation` PASS (via `idea_reviewer_validation_pass` in workflow state), `phase_status.idea_audit == trusted_completed`, `has_worth_experiment_plan == true`, and trusted output file exists. Blocks otherwise with clear reason. `_compute_next_commands` checks `completed_user_phases` as fallback when `phase_status` is unavailable.
 - Gate 5: `/status` enhanced — shows `phase_status`, `completed_user_phases`, `next_allowed_commands`, `trusted_idea_synthesis`, `trusted_idea_audit`, `has_worth_experiment_plan`, `experiment_blocked_reason`.
 - Real trusted completion requires explicit `--trusted` call, ledger `call_id`, and `validate_model_invocation`.
+- Trusted mode code paths are live-validated with real model calls (not just scaffold tests).
+- `verified_with_fallback` must pass context isolation validation before being accepted.
+- Trusted outputs (`trusted_outputs/*.md`) should NOT be committed until human-reviewed.
+- Context scan always runs in `trusted_role_runner` even without a manifest; default manifest name is `default_no_manifest`. `forbidden_context_checked` and `contamination_scan_status` are properly set in all cases.
+- `_build_fallback_route` in `model_route.py` now passes `api_key_env` (env var name) instead of raw `api_key` value.
+- Self-tests are all offline (72 tests, no real API calls). Trusted mode code paths are separately live-validated.
 - 67 adapter self-tests + 10 installer tests + 44 research_cli tests pass.
 
 ---
