@@ -1,7 +1,7 @@
 # Target Alignment Audit
 
 **Date:** 2026-05-14
-**Against:** docs/TRUSTED_RESEARCH_AUTOMATION_TARGET.md v1.1
+**Against:** docs/TRUSTED_RESEARCH_AUTOMATION_TARGET.md v1.2
 
 ---
 
@@ -130,7 +130,7 @@ Gaps:
 - Manual local full-text ingestion not yet supported
 - Adaptive broad literature scan: designed (Section 8.17 v1.1) but deferred — MVP runs core flow first
 - Literature memory / reading card: designed (Section 8.18 v1.1) but deferred — grep sufficient for < 100 papers
-- Literature module split: DONE — `literature_evidence_landing.py` split into `tools/literature/{store.py, extraction.py, manual_ingest.py}` with backward-compatible delegation
+- Literature module split: DONE — `literature_evidence_landing.py` split into `tools/literature/{store.py, extraction.py, manual_ingest.py, scoring.py, multisource.py}` + `tools/literature/adapters/{openalex.py, arxiv.py, crossref.py}` with backward-compatible delegation
 
 ### Status Tracking Layer
 
@@ -185,6 +185,15 @@ Gaps:
 | Insufficient source handling | Section 8.19 (v1.1) | DESIGNED — judgment criteria and system prohibitions defined |
 | Non-test-case binding | Section 17 (v1.1) | ACKNOWLEDGED — hallucination trajectory is regression test, not product |
 | Complexity budget | Section 15.3 (v1.1) | TRACKING — 36 files → ~16 active target; literature module already split |
+| Slash-command-first user interface | Section 4a (v1.2) | DESIGNED — Python scripts are Agent-facing backend, not primary UX |
+| Slash command freeform payload | Section 4b (v1.2) | DESIGNED — /command "freeform text" format with structured parsing |
+| User command payload persistence | Section 4b (v1.2) | DESIGNED — saved to user_command_payloads/ with structured fields |
+| User-facing 6-stage workflow | Section 4c (v1.2) | DESIGNED — Research Intake → Literature Intake → Idea Synthesis → Idea Audit → Experiment → Paper Writing |
+| result_judge folded into experiment phase | Section 4c (v1.2) | DESIGNED — result_judge is internal to Phase 5, not a separate user command |
+| Lightweight/full experiment bridge | Section 4c (v1.2) | DESIGNED — lightweight → heavy → result analysis with feedback loops |
+| Feedback loops | Section 4d (v1.2) | DESIGNED — 4 feedback loops: audit fail, lightweight fail, heavy fail, claim unstable |
+| Transfer innovation and contribution chain | Section 4c (v1.2) | DESIGNED — gap-driven, transfer innovation, contribution chain modes |
+| Current trusted stages remain internal | Section 4e (v1.2) | DESIGNED — 10+ internal stages mapped to 6 user-facing phases |
 
 ---
 

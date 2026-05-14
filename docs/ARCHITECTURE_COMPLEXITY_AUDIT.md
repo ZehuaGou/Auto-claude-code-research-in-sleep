@@ -1,7 +1,7 @@
 # Architecture Complexity Audit
 
 **Date:** 2026-05-14
-**HEAD:** 23b9a37
+**HEAD:** f178bee
 
 ---
 
@@ -71,7 +71,7 @@
 | 5 | **Model Route** | `model_route.py` | `core_mvp` | 关键 — role-to-model 路由 | 低 | 零 | 低 | 易 | 否 | 是 |
 | 6 | **Validate Model Invocation** | `validate_model_invocation.py` | `core_mvp` | 关键 — 调用后验证 | 低 | 零 | 低 | 易 | 否 | 是 |
 | 7 | **Context Isolation** | `context_isolation_check.py` | `core_mvp` | 关键 — forbidden context 执行 | 低 | 零 | 低 | 易 | 否 | 是 |
-| 8 | **Literature Evidence Pipeline** | `literature_evidence_landing.py` + `tools/literature/{store,extraction,manual_ingest}.py` | `core_mvp` | 关键 — 证据获取 | 高 | 中 | 中 — 已拆分为 4 个模块 | 易 — 每个模块 < 350 行 | 否 | 是 |
+| 8 | **Literature Evidence Pipeline** | `literature_evidence_landing.py` + `tools/literature/{store,extraction,manual_ingest,scoring,multisource}.py` + `tools/literature/adapters/{openalex,arxiv,crossref}.py` | `core_mvp` | 关键 — 证据获取 | 高 | 中 | 中 — 已拆分为 8 个模块 | 易 — 每个模块 < 370 行 | 否 | 是 |
 | 9 | **Research Workflow** | `research_workflow.py` | `core_mvp` | 关键 — stage preparation | 低 | 零 | 中 | 中 | 否 | 是 |
 | 10 | **arXiv/OpenAlex/Crossref** | `arxiv_fetch.py` 等 | `core_mvp` | 关键 — 多源证据 | 高 | 中 | 低 | 易 | 否 | 是 |
 | 11 | **Idea Pivot** | workflow config stage | `near_term` | 重要 — 证据驱动的 pivot | 高 — 解锁 blocked case | 低 | 低 | 易 | 否 | 是 |
@@ -408,7 +408,7 @@ literature/
 |----------|---------|--------|--------|
 | Core CLI + config | 2 | 2 | Keep |
 | Trust boundary (runner, ledger, route, validator, isolation) | 5 | 5 | Keep |
-| Literature pipeline | 4 (split from 1) | 4 | DONE — `literature_evidence_landing.py` split into `tools/literature/{store.py, extraction.py, manual_ingest.py}` with backward-compatible delegation |
+| Literature pipeline | 8 (split from 1) | 8 | DONE — `literature_evidence_landing.py` split into `tools/literature/{store.py, extraction.py, manual_ingest.py, scoring.py, multisource.py}` + `tools/literature/adapters/{openalex.py, arxiv.py, crossref.py}` with backward-compatible delegation |
 | Workflow engine | 1 | 1 | Keep |
 | Adapters (arXiv, OpenAlex, Crossref) | 3 | 3 | Keep |
 | Supplementary tools | 24 | 6-8 | Deprecate or archive |

@@ -21,24 +21,20 @@
 
 **Phase 21F Status:** IMPLEMENTED — literature module split + documentation consolidation. `literature_evidence_landing.py` split into `tools/literature/{store.py, extraction.py, manual_ingest.py}` with backward-compatible delegation wrappers. 88+ self-tests pass. Documentation v1.1: TRUSTED_RESEARCH_AUTOMATION_TARGET.md updated with executive summary, lightweight-first principle, adaptive broad literature discovery strategy, reading card approach, insufficient source handling, non-test-case binding, and complexity budget. TARGET_ALIGNMENT_AUDIT.md and ARCHITECTURE_COMPLEXITY_AUDIT.md synced.
 
+**Phase 21G Status:** IMPLEMENTED — extract source adapters and scoring to literature submodules. `tools/literature/adapters/{openalex.py, arxiv.py, crossref.py}` + `tools/literature/scoring.py` extracted with backward-compatible delegation wrappers. 88 self-tests pass. Documentation v1.1 updated.
+
+**Phase 21H Status:** IMPLEMENTED — extract multisource pipeline orchestrator to `tools/literature/multisource.py`. Backward-compatible delegation wrappers. 88 self-tests pass.
+
+**Phase 21I Status:** DOCUMENTED — slash-command-first UX, slash command payload, user-facing 6-stage workflow, feedback loops, primary/advanced command split, phase-to-stage mapping. Documentation v1.2: TRUSTED_RESEARCH_AUTOMATION_TARGET.md updated with Sections 4a-4e. TARGET_ALIGNMENT_AUDIT.md and ONE_COMMAND_ROADMAP.md synced. Regression test topic selected: Chain-of-Thought prompting for mathematical reasoning.
+
 ---
 
 ## 1. Goal
 
-A user should be able to run one command:
+A user should be able to run one slash command:
 
 ```
-python tools/research_cli.py start \
-  --idea "I want to study token-level hallucination detection using hidden state trajectories" \
-  --mode novelty_risk
-```
-
-or eventually:
-
-```
-/research-start "..."
-/novelty-check
-/status
+/research-intake "Chain-of-Thought prompting for mathematical reasoning in large language models"
 ```
 
 and the system should automatically:
@@ -50,6 +46,17 @@ and the system should automatically:
 - run novelty_check
 - produce status summary
 - stop safely if any stage fails
+
+The user-facing workflow has 6 phases (see TRUSTED_RESEARCH_AUTOMATION_TARGET.md Section 4c):
+
+1. `/research-intake` — 输入研究方向
+2. `/literature-intake` — 文献调研与领域理解
+3. `/idea-synthesis` — 创新点生成
+4. `/idea-audit` — 创新点验证、查新与研究边界锁定
+5. `/experiment` — 实验与结果分析
+6. `/paper-writing` — 论文撰写
+
+Python CLI (`tools/research_cli.py`) is the Agent-facing execution layer, not the primary user interface.
 
 ---
 
@@ -70,35 +77,40 @@ and the system should automatically:
 
 ## 3. MVP Command Set
 
-### Phase 18 Commands
-
-```bash
-# Start a new research workflow
-python tools/research_cli.py start --idea "..." --mode novelty_risk
-
-# Check current status
-python tools/research_cli.py status
-
-# Continue to next stage
-python tools/research_cli.py continue --stage method_refinement
-
-# View repair queue
-python tools/research_cli.py repair-queue
-
-# Validate current state
-python tools/research_cli.py validate
-```
-
-### Future Native Slash Commands
+### Primary User Commands (v1.2)
 
 ```
-/idea-discovery "..."
-/research-contract "..."
-/literature-search
+/research-intake "输入研究方向和约束"
+/literature-intake "文献调研与领域理解"
+/idea-synthesis "创新点生成"
+/idea-audit "创新点验证、查新与研究边界锁定"
+/experiment "实验与结果分析"
+/paper-writing "论文撰写"
+/status
+```
+
+### Advanced/Internal Commands (v1.2)
+
+```
 /novelty-check
 /method-refinement
+/full-text-review
 /experiment-plan
-/status
+/implementation-plan
+/result-judge
+/repair-queue
+/validate
+```
+
+### Agent-Facing Python CLI (not primary user interface)
+
+```bash
+# These are called by Agent, not by end users
+python tools/research_cli.py start --idea "..." --mode novelty_risk
+python tools/research_cli.py status
+python tools/research_cli.py continue --stage method_refinement
+python tools/research_cli.py repair-queue
+python tools/research_cli.py validate
 ```
 
 ---

@@ -1,9 +1,10 @@
 # 可信科研自动化系统目标设计文档
 
-> 版本：v1.1
+> 版本：v1.2
 > 定位：Agent 驱动的可信科研自动化系统目标蓝图
 > 用途：作为后续系统设计、项目改造、功能裁剪、阶段验收的统一依据
 > v1.1 变更：新增执行摘要、先轻量后丰富原则、自适应文献发现策略、reading card 方法、不足来源处理、非单测试用例绑定、复杂度预算
+> v1.2 变更：新增 slash-command-first UX、slash command payload、用户外露 6 阶段工作流、反馈回路、primary/advanced 命令分层、phase-to-stage 映射
 
 ---
 
@@ -54,11 +55,28 @@
 借鉴 ARIS 的研究智慧和命令体验；
 重建更可靠、更可控、更可追踪的科研自动化内核。
 
-### 1.1 执行摘要（v1.1 新增）
+### 1.1 执行摘要（v1.2 更新）
 
-本系统是 **受 ARIS 启发的可信科研自动化系统**，核心产品目标是：**用户一条命令启动任意研究想法的自动化科研流程**。
+本系统是 **受 ARIS 启发的可信科研自动化系统**，核心产品目标是：**用户通过 slash command 输入研究方向和约束，系统自动完成文献理解、创新点生成、创新点验证、实验与结果分析、论文写作，并且每个关键阶段都有可信输出、验证和可追踪证据。**
 
-当前系统状态（v1.1）：
+它不是：
+
+- 单个 hallucination trajectory 研究题目
+- 单纯文献工具
+- 单纯代码生成器
+- 固定流程按钮系统
+- 让用户手动跑 Python 脚本的工程工具
+
+它是：
+
+- 面向任意研究方向的可信科研自动化系统
+- 保留 ARIS/XAI 类系统的 slash command 轻量体验
+- 保留 Skill 研究智慧
+- 加入 trusted runner、ledger、validator、context isolation、trusted outputs、evidence tracking
+- 通过 Agent 调度底层 Python 工具
+- 普通用户只使用少数 slash commands 和自然语言指令
+
+当前系统状态（v1.2）：
 
 | 能力 | 状态 |
 |------|------|
@@ -69,16 +87,22 @@
 | 可信模型调用 + ledger + validator | 已实现 |
 | 上下文隔离 + forbidden context | 已实现 |
 | Stage output contract + role boundary | 已实现 |
+| Slash-command-first UX 设计 | 已设计 |
+| Slash command freeform payload 设计 | 已设计 |
+| 用户外露 6 阶段工作流设计 | 已设计 |
+| 反馈回路设计 | 已设计 |
 | 一键 live start（不需要 --dry-run） | 待实现 |
 | 端到端完整流程（raw_user_input → experiment_plan） | 待实现（当前 test case 被 paywall 阻塞） |
+| Slash command parser / adapter | 待实现 |
 
 **关键约束：**
 
 1. **hallucination trajectory（幻觉轨迹检测）只是回归测试用例，不是产品。** 系统产品是通用可信科研自动化。
-2. **先轻量后丰富。** MVP 只保留核心流程，不追求功能完整。
-3. **自适应文献发现。** 先 metadata 后全文，先广后深，按 topic 类型调整搜索范围。
-4. **Reading card 够用，不上数据库。** 50 篇 paper 的 reading card 用 grep 搜索即可。
-5. **复杂度有预算。** 36 个 Python 文件目标裁剪到 ~16 个活跃文件。
+2. **用户外露流程要简单，内部 trusted workflow 可以复杂。** 用户通过 slash command 操作，不直接运行 Python 脚本。
+3. **先轻量后丰富。** MVP 只保留核心流程，不追求功能完整。
+4. **自适应文献发现。** 先 metadata 后全文，先广后深，按 topic 类型调整搜索范围。
+5. **Reading card 够用，不上数据库。** 50 篇 paper 的 reading card 用 grep 搜索即可。
+6. **复杂度有预算。** 36 个 Python 文件目标裁剪到 ~16 个活跃文件。
 
 ---
 
@@ -178,6 +202,599 @@
 
 ---
 
+## 4a. Slash Command First User Interface（v1.2 新增）
+
+### 4a.1 核心原则
+
+1. **最终用户不应该直接运行 Python 脚本。** Python CLI / tools 是 Agent-facing backend，不是 primary user interface。
+2. **用户主要通过 Claude / Happy / ARIS / XAI 风格的 slash command 操作系统。** slash command 由外部 Agent 识别，然后 Agent 自动调用底层工具。
+3. **用户只需要看到少数清晰命令，不需要理解 10+ 个 trusted stages。** 保留 Python 脚本是为了可测试、可复现、可调试、可由 Agent 自动调用、高级开发者可以手动运行。
+4. **普通用户路径必须是：** 用户输入 slash command → Agent 解释命令 → Agent 调用 research_cli / workflow / trusted runner → 系统生成 trusted output → status 返回结果。
+5. **不能把"让用户复制粘贴 Python 命令"作为正式产品体验。** 底层 CLI 必须继续存在，但属于 Agent-facing execution API。
+
+### 4a.2 Python scripts 的定位
+
+Python scripts（`tools/research_cli.py`、`tools/literature_evidence_landing.py` 等）是 **Agent-facing execution layer**，不是 primary user interface。
+
+它们的价值：
+
+| 价值 | 说明 |
+|------|------|
+| 可测试 | 每个 CLI 命令有 --self-test，可以自动验证 |
+| 可复现 | 相同输入产生相同输出 |
+| 可调试 | 开发者可以直接运行单个命令排查问题 |
+| 可由 Agent 自动调用 | Agent 识别 slash command 后，自动调用对应 Python CLI |
+| 高级开发者可手动运行 | 不强制所有用户走 slash command |
+
+普通用户不应需要知道这些脚本的存在。
+
+### 4a.3 用户体验路径
+
+```
+用户输入: /research-intake "我想做时间序列异常检测"
+→ Agent 识别命令
+→ Agent 调用: python tools/research_cli.py start --idea "..." --mode novelty_risk
+→ 系统执行 trusted workflow
+→ 生成 trusted output
+→ Agent 返回: "研究方向已保存，下一步: /literature-intake"
+```
+
+用户看到的是清晰的 slash command 和自然语言反馈。底层 Python 脚本对用户不可见。
+
+---
+
+## 4b. Slash Command Payload and User Intent Handling（v1.2 新增）
+
+### 4b.1 Payload 格式
+
+slash command 不能只是固定按钮。用户必须能在命令后附加自然语言需求。
+
+格式：
+
+```
+/command "freeform user instruction"
+```
+
+示例：
+
+```
+/research-intake "我想做时间序列异常检测，最好从图像领域迁移成熟方法"
+
+/literature-intake "重点查 diffusion、生成模型、时序异常检测，优先近三年论文"
+
+/idea-synthesis "不要只想单点创新，优先考虑跨领域迁移和多个中等创新点组成 contribution chain"
+
+/idea-audit "重点检查 diffusion 是否已经被用于 time series anomaly detection"
+
+/experiment "先做轻量实验，不要跑大模型，只验证有没有信号"
+
+/paper-writing "如果结果一般，不要夸大贡献，按保守论文风格写"
+```
+
+### 4b.2 Payload 的作用
+
+- 传达用户具体研究偏好
+- 传达资源限制
+- 传达目标会议/目标风格
+- 传达 forbidden actions
+- 传达想优先考虑或避免的方向
+- 让系统更像科研助手，而不是固定流程机器
+
+### 4b.3 Payload 持久化
+
+Payload 必须原样保存。推荐保存到：
+
+```
+research/current/user_command_payloads/<timestamp>_<command>.md
+```
+
+Payload 需要被结构化解析。解析字段包括：
+
+| 字段 | 说明 |
+|------|------|
+| user_goal | 用户目标 |
+| constraints | 约束条件 |
+| preferences | 偏好设置 |
+| forbidden_actions | 禁止操作 |
+| resource_limits | 资源限制 |
+| target_venue | 目标会议/期刊 |
+| desired_output_style | 期望输出风格 |
+| risk_tolerance | 风险容忍度 |
+| explicit_user_instructions | 用户明确指令 |
+| unknown_or_ambiguous_parts | 不明确或歧义部分 |
+
+### 4b.4 Payload 与 trusted workflow 的关系
+
+Payload 不能绕过 trusted workflow。用户自由输入可以影响阶段目标，但不能：
+
+- 绕过 validator
+- 绕过 trusted runner
+- 绕过 context isolation
+- 覆盖 trusted_outputs
+- 直接进入 experiment_plan
+- 把未验证 idea 写成 confirmed novel
+- 把用户偏好当作事实证据
+
+Payload 与已有 trusted output 冲突时：
+
+- 必须记录 conflict
+- 必须提示用户或进入 clarification
+- 不能静默覆盖 research_contract
+- 不能把用户偏好当作事实证据
+
+### 4b.5 Payload 进入 allowed_input_files
+
+Payload 应进入 allowed_input_files。每个阶段如果需要使用用户本轮指令，应显式把对应 payload 文件加入 allowed input。不允许 Agent 从聊天记忆里随便拿用户意图。
+
+### 4b.6 Slash command examples
+
+支持 quoted freeform text、optional flags、stage mode：
+
+```
+/experiment "先做轻量实验" --mode lightweight
+
+/experiment "正式跑完整 baseline 和 ablation" --mode full
+
+/idea-synthesis "优先考虑跨领域迁移，不要只做简单套壳" --num-candidates 8
+
+/status "只告诉我当前卡在哪里和下一步该做什么"
+```
+
+---
+
+## 4c. User-Facing Research Workflow（v1.2 新增）
+
+### 4c.1 设计原则
+
+系统内部可以有 10+ trusted stages，但用户外露流程应收敛为 **6 个大阶段**。用户不应被迫理解所有底层 stage。内部 stage 负责可信、上下文隔离、ledger、validator、allowed input、trusted output。用户只需要使用少数大命令推进科研流程。
+
+### 4c.2 六个用户外露阶段
+
+---
+
+#### Phase 1 — Research Direction Intake / 输入研究方向
+
+**目标：**
+
+- 用户输入研究方向、问题、约束、资源情况、目标会议/论文目标。
+- 系统保存用户原始输入。
+- 系统整理 brief，但不替用户凭空扩展结论。
+
+**用户命令：**
+
+```
+/research-intake "<user instruction>"
+```
+
+**内部子步骤：**
+
+- raw_user_input
+- input_normalization
+- brief generation
+- candidate_idea extraction
+- command payload parsing
+
+**输出：**
+
+- raw_user_input.md
+- command_payload.md
+- brief.md
+- initial candidate idea list
+
+---
+
+#### Phase 2 — Literature Intake / 文献调研与领域理解
+
+**目标：**
+
+- 先让 AI 搜论文、读论文、理解领域，而不是凭空想 idea。
+- 搜相关领域论文。
+- adaptive 文献搜索，不固定每次 100-300。
+- metadata-first，deep-review-later。
+- 找到领域主要方法、baseline、benchmark、gap、已有人做过的方向。
+
+**用户命令：**
+
+```
+/literature-intake "<user instruction>"
+```
+
+**内部子步骤：**
+
+- query planning
+- multi-source search
+- dedup/ranking
+- top-k selection
+- full-text acquisition for key papers
+- full_text_review
+- evidence map
+
+**输出：**
+
+- literature brief
+- evidence map
+- closest prior work list
+- open questions
+- evidence gaps
+
+**要求：**
+
+- 搜索结果不能直接变成结论。
+- 文献不足时记录 low_literature_yield / source_coverage_gap。
+- 不能为了凑数量降低 relevance。
+- 不能一开始全文读 200 篇。
+- broad scan 只是 idea discovery 输入，不是 novelty proof。
+
+---
+
+#### Phase 3 — Idea Synthesis / 创新点生成
+
+**目标：**
+
+- 基于文献生成多个候选创新点。
+- 不允许 AI 凭空想。
+- 不只生成单点 idea，也支持多个中等创新点组合成 contribution chain。
+
+**用户命令：**
+
+```
+/idea-synthesis "<user instruction>"
+```
+
+**支持三种模式：**
+
+1. **Gap-driven idea** — 从文献 gap 生成 idea。
+2. **Transfer innovation idea** — 从其他领域迁移成熟方法到当前领域。分析直接迁移会遇到什么 mismatch。针对 mismatch 提出 adaptation。不是简单 apply X to Y。
+3. **Contribution chain idea** — 2-4 个中等创新点围绕一个核心 claim 组织成论文主线。每个单点可能不是非常强，但组合后形成完整贡献链。不能堆无关 trick。多个创新点之间必须有因果关系或共同服务一个核心问题。
+
+**内部子步骤：**
+
+- idea_discovery
+- idea_pivot
+- transfer hypothesis generation
+- contribution chain construction
+
+**输出：**
+
+- 5-10 个 candidate ideas
+- 每个 idea 的 source evidence
+- 每个 idea 的风险
+- 每个 idea 的实验路径草案
+- 每个 idea 的 contribution chain 说明
+
+**必须强调：**
+
+很多真实论文不是凭空想一个全新算法，而是：
+
+```
+source domain mature method
+→ target domain opportunity
+→ direct transfer baseline
+→ transfer failure / mismatch analysis
+→ adaptation idea
+→ empirical gain
+→ coherent contribution chain
+```
+
+---
+
+#### Phase 4 — Idea Audit / 创新点验证、查新与研究边界锁定
+
+**目标：**
+
+- 检查候选创新点是否值得继续。
+- 查是否已有相同工作。
+- 查 source method 是否已经迁移到 target domain。
+- 查是否只是 apply X to Y。
+- 查 adaptation 是否解决真实问题。
+- 查 contribution chain 是否连贯。
+- 锁定 research contract。
+
+**用户命令：**
+
+```
+/idea-audit "<user instruction>"
+```
+
+**内部子步骤：**
+
+- novelty_check
+- transfer_check
+- method_refinement
+- research_contract
+
+**必须检查：**
+
+- already_done
+- direct_transfer_only
+- adaptation_gap
+- combination_gap
+- insufficient_evidence
+- promising_but_needs_more_evidence
+- worth_experiment_plan
+
+**输出：**
+
+- audited idea
+- research contract
+- claim boundary
+- forbidden claims
+- baseline requirements
+- experiment readiness
+
+**要求：**
+
+- 不能把简单迁移包装成创新。
+- 不能把多个无关 trick 包装成 contribution chain。
+- 不能在证据不足时写 confirmed_novel。
+- 没有 direct transfer baseline 时，不能声称 adaptation 有效。
+- 用户偏好不能代替文献证据。
+
+---
+
+#### Phase 5 — Experiment & Result Analysis / 实验与结果分析
+
+**注意：** 这个阶段包含实验计划、实现、运行和结果判断。不要把 result_judge 单独暴露成一个用户大阶段。result_judge 是实验阶段内部环节。
+
+**用户命令：**
+
+```
+/experiment "<user instruction>"
+/experiment "先做轻量实验" --mode lightweight
+/experiment "正式跑完整 baseline 和 ablation" --mode full
+/experiment "分析结果并判断是否继续" --mode analyze
+/experiment "根据失败原因调整方法" --mode revise
+```
+
+**本阶段分为三层：**
+
+##### 5.1 Lightweight Experiment / 轻量实验
+
+- 快速验证 idea 是否有信号。
+- 小数据、小模型、小步跑通。
+- 不追求最终 SOTA。
+- 如果轻量实验都没有信号，通常不进入重实验。
+
+**轻量实验输出：**
+
+- sanity result
+- early metric
+- failure reason
+- whether_continue_to_full_experiment
+
+##### 5.2 Heavy Experiment / 重量实验
+
+- 正式实验。
+- 跑完整 baseline。
+- direct transfer baseline。
+- adapted method。
+- ablation。
+- robustness。
+- reproducibility。
+
+##### 5.3 Result Analysis / 结果分析与回流
+
+- 判断实验是否支持 claim。
+- 判断是否需要补实验。
+- 判断是否需要降低 claim。
+- 如果失败，返回 Phase 3 或 Phase 4，而不是直接结束。
+
+**内部子步骤：**
+
+- experiment_plan
+- implementation_plan
+- experiment_bridge
+- code_review
+- lightweight experiment
+- full experiment
+- result_judge
+- claim_boundary_update
+
+**输出：**
+
+- experiment report
+- result analysis
+- claim support status
+- next action
+
+**结果 verdict：**
+
+- stop_idea
+- revise_idea
+- revise_method
+- rerun_lightweight_experiment
+- proceed_to_full_experiment
+- collect_more_evidence
+- ready_for_paper_writing
+
+**反馈机制：**
+
+如果轻量实验失败：
+
+- 返回 Phase 3：调整创新点
+- 或返回 Phase 4：重新检查 research contract
+- 或 stop idea
+
+如果重量实验失败：
+
+- 返回 Phase 4：降低 claim / 修改 method refinement
+- 或返回 Phase 5：补实验 / 改实验设计
+- 或返回 Phase 3：重新组织 contribution chain
+
+如果实验结果支持 claim：
+
+- 进入 Phase 6 paper writing
+
+---
+
+#### Phase 6 — Paper Writing / 论文撰写
+
+**目标：**
+
+- 只有在实验结果和结果分析支持 claim 后，才进入论文写作。
+- 根据可信 evidence、实验结果、claim boundary 写论文。
+- 不夸大结果。
+- 不隐瞒失败。
+- 不把未验证 idea 写成贡献。
+
+**用户命令：**
+
+```
+/paper-writing "<user instruction>"
+```
+
+**内部子步骤：**
+
+- paper outline
+- contribution framing
+- related work
+- method writing
+- experiment writing
+- limitation writing
+- auto_review_loop
+
+**输出：**
+
+- paper draft
+- related work
+- method section
+- experiments section
+- limitations
+- reviewer attack checklist
+
+---
+
+## 4d. Feedback Loops（v1.2 新增）
+
+### 4d.1 系统不是线性流水线
+
+系统是带反馈回路的科研闭环。
+
+**主线：**
+
+```
+Research Direction
+→ Literature Intake
+→ Idea Synthesis
+→ Idea Audit
+→ Experiment & Result Analysis
+→ Paper Writing
+```
+
+### 4d.2 反馈回路
+
+**回路 1：Idea Audit 失败**
+
+- 返回 Idea Synthesis
+- 或返回 Literature Intake 补文献
+
+**回路 2：Lightweight Experiment 失败**
+
+- 返回 Idea Synthesis 调整 idea
+- 或返回 Idea Audit 修改 research contract
+- 或 stop idea
+
+**回路 3：Heavy Experiment 失败**
+
+- 返回 Experiment Plan 补实验
+- 返回 Method Refinement 降 claim
+- 返回 Idea Synthesis 重组 contribution chain
+
+**回路 4：Paper Writing 发现 claim 不稳**
+
+- 返回 Result Analysis
+- 或返回 Experiment 补实验
+
+### 4d.3 回流要求
+
+- 每次回流必须保留原因。
+- 回流不能靠聊天记忆，必须写状态文件。
+- 回流不能绕过 validator。
+- 回流不能把失败伪装成成功。
+
+---
+
+## 4e. User-Facing Phase to Internal Stage Mapping（v1.2 新增）
+
+### 4e.1 映射关系
+
+用户看到的是 6 个主命令。内部 trusted stages 继续保留。Python CLI 是 Agent-facing backend。
+
+#### Phase 1 — Research Direction Intake
+
+内部 stages：
+
+- raw_user_input
+- input_normalization
+- brief generation
+- candidate_idea extraction
+- payload parsing
+
+#### Phase 2 — Literature Intake
+
+内部 stages：
+
+- query planning
+- literature_search
+- multi-source search
+- dedup/ranking
+- full-text acquisition
+- full_text_review
+- evidence map
+
+#### Phase 3 — Idea Synthesis
+
+内部 stages：
+
+- idea_discovery
+- idea_pivot
+- transfer hypothesis generation
+- contribution chain construction
+
+#### Phase 4 — Idea Audit
+
+内部 stages：
+
+- novelty_check
+- transfer_check
+- method_refinement
+- research_contract
+
+#### Phase 5 — Experiment & Result Analysis
+
+内部 stages：
+
+- experiment_plan
+- implementation_plan
+- experiment_bridge
+- code_review
+- lightweight experiment
+- full experiment
+- result_judge
+- claim_boundary_update
+
+#### Phase 6 — Paper Writing
+
+内部 stages：
+
+- paper outline
+- contribution framing
+- related work
+- method writing
+- experiment writing
+- limitation writing
+- auto_review_loop
+
+### 4e.2 关键约束
+
+- 用户看到的是 6 个主命令。
+- 内部 trusted stages 继续保留。
+- trusted runner / ledger / validator / context isolation 不能削弱。
+- Python CLI 是 Agent-facing backend。
+- 不要删除现有底层 stages。它们是可信执行需要的内部机制。
+
+---
+
 ## 5. 第一层：Native Command Layer（原生命令层）
 
 ### 5.1 定义
@@ -186,18 +803,45 @@
 
 用户通过简单命令发起科研任务，而不是手动执行底层脚本。
 
-推荐命令：
+命令分为两层：**Primary user commands**（普通用户主路径）和 **Advanced/internal commands**（开发者调试或 Agent 内部使用）。
+
+#### Primary user commands（v1.2 更新）
+
+```
+/research-intake "输入研究方向和约束"
+/literature-intake "文献调研与领域理解"
+/idea-synthesis "创新点生成"
+/idea-audit "创新点验证、查新与研究边界锁定"
+/experiment "实验与结果分析"
+/paper-writing "论文撰写"
+/status
+```
+
+#### Advanced/internal commands（v1.2 更新）
+
+```
+/novelty-check
+/method-refinement
+/full-text-review
+/experiment-plan
+/implementation-plan
+/result-judge
+/repair-queue
+/validate
+```
+
+说明：
+
+- Primary commands 是普通用户主路径。
+- Advanced/internal commands 是开发者调试或 Agent 内部使用。
+- Python scripts 不是用户主路径。
+- continue/status 可以继续支持底层 stage，用于高级调试。
+
+#### Legacy commands（保留兼容）
 
 ```
 /idea-discovery "我想找一个大模型可靠性方向的研究题目"
 /research-contract "把当前候选想法锁定成研究边界"
-/novelty-check "检查这个想法有没有新意"
-/experiment-plan "为这个想法设计实验"
-/implementation-plan "为实验写代码前做实现规划"
-/experiment-bridge "根据实验计划准备实现和运行"
-/result-judge "判断实验结果是否支持研究 claim"
-/paper-writing "根据可信结果写论文"
-/status
 ```
 
 ### 5.2 第一层职责
@@ -1780,7 +2424,7 @@ hallucination trajectory（幻觉轨迹检测）是本系统的**回归测试用
 ### 17.3 系统验证策略
 
 1. 用 hallucination trajectory 作为回归测试（验证系统行为正确）
-2. 选一个文献充足的 topic 作为端到端测试（验证系统能跑通完整流程）
+2. 选一个文献充足的 topic 作为端到端测试（验证系统能跑通完整流程）— 已选: Chain-of-Thought prompting for mathematical reasoning（见 docs/REGRESSION_TEST_TOPIC_SELECTION.md）
 3. 最终用任意用户想法作为产品测试（验证系统通用性）
 
 ---
@@ -1789,17 +2433,17 @@ hallucination trajectory（幻觉轨迹检测）是本系统的**回归测试用
 
 本系统的理想形态是：
 
-> «用户用原生命令发起科研任务；Skill 提供研究智慧；Literature Layer 获取和整理文献材料；Workflow 控制输入边界和上下文；Trusted Runner 调用真实模型；Validator 验证可信性；Trusted Output 完成阶段交接。系统既保留 ARIS 的创新能力和命令体验，又避免外部 Agent 失控、上下文污染、模型冒充、搜索结果污染和无证据推进。»
+> «用户用 slash command 输入研究方向和约束，系统自动完成文献理解、创新点生成、创新点验证、实验与结果分析、论文写作，并且每个关键阶段都有可信输出、验证和可追踪证据。用户外露流程简单（6 个主命令），内部 trusted workflow 可以复杂（10+ stages、validator、ledger、context isolation）。Python CLI 是 Agent-facing execution layer，不是 primary user interface。系统既保留 ARIS 的创新能力和命令体验，又避免外部 Agent 失控、上下文污染、模型冒充、搜索结果污染和无证据推进。»
 
 **最终要达到：**
 
-使用简单；
-研究能力强；
+使用简单（slash command，不跑 Python 脚本）；
+研究能力强（gap-driven + transfer innovation + contribution chain）；
 文献搜索可追踪；
 上下文干净；
 调用可信；
-阶段清楚；
+阶段清楚（6 个用户外露阶段）；
 结果可追踪；
-失败能停止；
+失败能停止（带反馈回路）；
 系统可扩展；
 实现可裁剪。
