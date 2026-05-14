@@ -113,6 +113,8 @@ mcp__codex__codex:
     4. Expected contribution type: empirical finding / new method / theoretical result / diagnostic
     5. Risk level: LOW (likely works) / MEDIUM (50-50) / HIGH (speculative)
     6. Estimated effort: days / weeks / months
+    7. If the idea transfers a mature method from another field: source-domain method, target-domain mismatch, direct-transfer baseline, adaptation mechanism, and ablation proving the adaptation matters
+    8. If the idea combines multiple components: shared core claim, main contribution, auxiliary contribution(s), why this is not patchwork, and ablations for each component
 
     Prioritize ideas that are:
     - Testable with moderate compute (8x RTX 3090 or less)
@@ -141,13 +143,19 @@ For each generated idea, quickly evaluate:
    - "So what?" test: if the experiment succeeds, does it change how people think?
    - Is the finding actionable or just interesting?
 
-Eliminate ideas that fail any of these. Typically 8-12 ideas reduce to 4-6.
+4. **Transfer / contribution-chain quality check**:
+   - A transfer idea without a direct-transfer baseline or target-domain mismatch is revise/kill, not pilot-ready
+   - A transfer idea must explain why the adaptation solves the mismatch; otherwise it is only "apply X to Y"
+   - A multi-component idea without a shared core claim is patchwork, not a contribution chain
+   - Insufficient evidence may justify more literature search, but not a strong novelty claim
+
+Eliminate or revise ideas that fail these checks. Typically 8-12 ideas reduce to 4-6.
 
 ### Phase 4: Deep Validation (for top ideas)
 
 For each surviving idea, run a deeper evaluation:
 
-1. **Novelty check**: Use the `/novelty-check` workflow (multi-source search + GPT-5.4 cross-verification) for each idea
+1. **Novelty check**: Use the `/novelty-check` workflow (multi-source search + GPT-5.4 cross-verification) for each idea. For transfer ideas, explicitly ask whether the source method has already been transferred to the target domain and whether the proposed adaptation is more than direct transfer.
 
 2. **Critical review**: Use GPT-5.4 via `mcp__codex__codex-reply` (same thread):
    ```
@@ -159,6 +167,8 @@ For each surviving idea, run a deeper evaluation:
    - What's the most likely failure mode?
    - How would you rank these for a top venue submission?
    - Which 2-3 would you actually work on?
+   - For transfer ideas, is there a real target-domain mismatch and adaptation, or is this only direct transfer?
+   - For multi-component ideas, is there a shared core claim, or is this patchwork?
    ```
 
 3. **Combine rankings**: Merge your assessment with GPT-5.4's ranking. Select top 2-3 ideas for pilot experiments.
@@ -172,6 +182,8 @@ Before committing to a full research effort, run cheap pilot experiments to get 
    - Target: 30 min - PILOT_MAX_HOURS per pilot on 1 GPU
    - **Estimate GPU-hours BEFORE launching.** If estimated time > PILOT_MAX_HOURS, reduce scale (fewer epochs, smaller subset) or flag as "needs manual pilot"
    - Clear success metric defined upfront (e.g., "if metric improves by > 1%, signal is positive")
+   - For transfer ideas, include the direct-transfer baseline and the adapted method
+   - For contribution chains, include ablations for each component supporting the shared core claim
 
 2. **Deploy in parallel**: Use `/run-experiment` to launch pilots on different GPUs simultaneously:
    ```
@@ -215,6 +227,8 @@ Write a structured report to `idea-stage/IDEA_REPORT.md`:
 - **Feasibility**: [compute, data, implementation estimates]
 - **Risk**: LOW/MEDIUM/HIGH
 - **Contribution type**: empirical / method / theory / diagnostic
+- **Transfer check**: source method / target mismatch / direct-transfer baseline / adaptation / ablation, or N/A
+- **Contribution-chain check**: shared core claim / main contribution / auxiliary contribution(s) / required ablations, or N/A
 - **Pilot result**: [POSITIVE: metric +X% / NEGATIVE: no signal / SKIPPED: needs GPU]
 - **Reviewer's likely objection**: [strongest counterargument]
 - **Why we should do this**: [1-2 sentences]
@@ -222,12 +236,13 @@ Write a structured report to `idea-stage/IDEA_REPORT.md`:
 ### Idea 2: [title]
 ...
 
-## Eliminated Ideas (for reference)
-| Idea | Reason eliminated |
-|------|-------------------|
-| ... | Already done by [paper] |
-| ... | Requires > 1 week GPU time |
-| ... | Result wouldn't be interesting either way |
+## Non-recommended Ideas (for reference)
+| Idea | Reason not recommended | What would be needed to revive it |
+|------|-------------------------|-----------------------------------|
+| ... | Already done by [paper] | Pivot beyond the prior work |
+| ... | Direct transfer only | Identify target-domain mismatch and adaptation |
+| ... | Patchwork | Find shared core claim or split ideas |
+| ... | Requires > 1 week GPU time | Cheaper pilot design |
 
 ## Pilot Experiment Results
 | Idea | GPU | Time | Key Metric | Signal |
@@ -261,7 +276,7 @@ require the helper are skipped with a single warning.
 
 ```
 if research-wiki/ exists:
-    for each idea in recommended_ideas + eliminated_ideas:
+    for each idea in recommended_ideas + non_recommended_ideas:
         1. Create page: research-wiki/ideas/<idea_id>.md
            - node_id: idea:<id>
            - stage: proposed (or: piloted, archived)
@@ -278,7 +293,7 @@ if research-wiki/ exists:
     Rebuild query pack (only if $WIKI_SCRIPT resolved):
         [ -n "$WIKI_SCRIPT" ] && python3 "$WIKI_SCRIPT" rebuild_query_pack research-wiki/
     Log (only if $WIKI_SCRIPT resolved):
-        [ -n "$WIKI_SCRIPT" ] && python3 "$WIKI_SCRIPT" log research-wiki/ "idea-creator wrote N ideas (M recommended, K eliminated)"
+        [ -n "$WIKI_SCRIPT" ] && python3 "$WIKI_SCRIPT" log research-wiki/ "idea-creator wrote N ideas (M recommended, K non-recommended)"
 
     if [ -z "$WIKI_SCRIPT" ]:
         echo "WARN: idea pages were written but edges / query_pack / log were skipped because research_wiki.py is unreachable (see Phase 0 warning above)." >&2
@@ -297,11 +312,14 @@ if research-wiki/ exists:
 
 - The user provides a DIRECTION, not an idea. Your job is to generate the ideas.
 - Quantity first, quality second: brainstorm broadly, then filter ruthlessly.
-- A good negative result is just as publishable as a positive one. Prioritize ideas where the answer matters regardless of direction.
+- A good negative result is just as publishable as a positive result. Prioritize ideas where the answer matters regardless of direction.
 - Don't fall in love with any idea before validating it. Be willing to kill ideas.
 - Always estimate compute cost. An idea that needs 1000 GPU-hours is not actionable for most researchers.
 - "Apply X to Y" is the lowest form of research idea. Push for deeper questions.
-- Include eliminated ideas in the report — they save future time by documenting dead ends.
+- A transfer idea needs a direct-transfer baseline, a target-domain mismatch, and an adaptation mechanism. Without these, revise or kill it.
+- A multi-component idea needs a shared core claim. Without it, treat it as patchwork, not a contribution chain.
+- Evidence gaps limit novelty claims. Do not present insufficiently checked ideas as strongly novel or pilot-ready.
+- Include non-recommended ideas in the report — they save future time and let the user override the ranking if they see promise.
 - **If the user's direction is too broad (e.g., "NLP", "computer vision", "reinforcement learning"), STOP and ask them to narrow it.** A good direction is 1-2 sentences specifying the problem, domain, and constraint — e.g., "factorized gap in discrete diffusion LMs" or "sample efficiency of offline RL with image observations". Without sufficient specificity, generated ideas will be too vague to run experiments on.
 - **Anti-hallucination for cited papers.** When the landscape survey or novelty justification cites specific papers, every cited paper must pass pre-search verification (`tools/verify_papers.py`, 3-layer arXiv / CrossRef / S2 fallback). Never fabricate arXiv IDs, DOIs, or titles from memory; mark unverifiable references as `[UNVERIFIED]` rather than dropping or guessing. Full protocol in [`shared-references/citation-discipline.md`](../shared-references/citation-discipline.md) § Pre-Search Verification Protocol.
 
