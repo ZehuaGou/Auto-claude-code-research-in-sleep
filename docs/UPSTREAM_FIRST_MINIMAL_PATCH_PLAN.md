@@ -1,291 +1,293 @@
-# 纲领
+# Doctrine
 
 > Branch: `recovery/upstream-first-minimal-patch-plan`  
 > Base: upstream `wanshuiyin/Auto-claude-code-research-in-sleep@745f856a255a194cf704cd50c225eb8af86a16a3`  
-> Purpose: 以原版 ARIS 为主体，只做能明显提升科研创新点质量的目的驱动补丁。
+> Purpose: use upstream ARIS as the main system and add only purpose-driven patches that clearly improve research-idea quality.
 
 ---
 
-## 0. 第一原则：目的第一
+## 0. First principle: purpose first
 
 ```text
-提高科研创新点质量是第一目标。
-改动大小、实现形式、是否工具化都是第二位。
+Improving research-idea quality is the first goal.
+Patch size, implementation style, and tooling are secondary.
 ```
 
-本分支不是为了“小改”而小改，也不是为了“大改”而大改。
+This branch is not about making small changes for their own sake, and it is not about making large architectural changes for their own sake.
 
-如果修改一句 Skill 就能达到目标，就只修改一句 Skill。  
-如果 Skill 不够，再考虑模板。  
-如果模板仍不够，并且出现了可重复的具体失败，再考虑最小工具。  
-不允许为了架构好看、流程完整、或者复用旧 fork 心血而添加无必要机制。
+If one Skill sentence can achieve the goal, change only that sentence.  
+If Skill text is not enough, consider a lightweight template.  
+If templates are still not enough, and a repeatable concrete failure appears, consider the smallest possible tool.  
+Do not add mechanisms just because they look architecturally clean, make the process feel complete, or preserve effort from the old heavy fork.
 
-任何后续改动都必须回答：
+Every future change must answer:
 
-1. 它服务哪个具体目标？
-2. 原版 ARIS 为什么还不够？
-3. 它是不是达到目标的最轻机制？
-4. 怎么判断它真的提升了创新点质量？
+1. Which concrete goal does this change serve?
+2. Why is upstream ARIS insufficient for that goal?
+3. Is this the lightest mechanism likely to achieve the goal?
+4. How will we know whether it actually improves research-idea quality?
 
-回答不清楚，就不做。
+If these questions cannot be answered, do not implement the change.
 
 ---
 
-## 1. 当前总路线
+## 1. Current direction
 
-以原版 ARIS 工作流为主体。
+Use upstream ARIS as the main workflow.
 
 ```text
-原版 ARIS
-+ 创新点质量增强 Skill 补丁
-+ 必要时的轻量模板
-+ 只有在真实失败反复出现时，才加最小工具
+Upstream ARIS
++ research-idea-quality Skill patches
++ lightweight templates only if needed
++ minimal tooling only after repeated real failures
 ```
 
-不继续当前 heavy fork 主线。
+Do not continue the current heavy-fork mainline.
 
-默认不迁移：
+Do not migrate by default:
 
-- 六阶段自定义 workflow；
-- slash command adapter 作为主控流程；
-- workflow_state 中央状态机；
-- IDEA_BANK / CANONICAL_IDEAS 工具化系统；
-- run isolation 工具；
-- candidate selection 工具；
-- lightweight experiment scaffold；
-- 大量 roadmap / audit 文档。
+- the custom six-stage workflow;
+- slash command adapter as a central workflow controller;
+- `workflow_state` as a central state machine;
+- IDEA_BANK / CANONICAL_IDEAS as a toolized system;
+- run-isolation tooling;
+- candidate-selection tooling;
+- lightweight experiment scaffold;
+- large roadmap / audit documents.
 
-这些不是绝对永远不能做，而是目前没有足够证据说明它们值得加入。
-
----
-
-## 2. 核心目标：让创新点更强
-
-本项目最重要的阶段是创新点发现与创新点验证。
-
-实验、写论文、结果包装都在后面。  
-如果 idea 本身弱，后面很难救回来。  
-如果 idea 本身强，后面的实验只是验证和完善。
-
-所以当前补丁只围绕三件事：
-
-1. 迁移式创新不要停留在 `apply X to Y`。
-2. 多个中等创新点必须形成 coherent contribution chain，而不是 patchwork。
-3. 查新/验证不能把证据不足、直接迁移、已有工作包装成强创新。
+These are not banned forever, but there is currently insufficient evidence that they are worth adding.
 
 ---
 
-## 3. 迁移式创新规则
+## 2. Core goal: stronger research ideas
 
-迁移式创新不是垃圾创新。  
-垃圾的是简单套壳。
+The most important stage is research-idea discovery and verification.
 
-弱迁移：
+Experiments, paper writing, and result presentation come later.  
+A weak idea is hard to rescue downstream.  
+A strong idea makes later experiments a matter of verification and refinement.
+
+The current patch scope is limited to three goals:
+
+1. Transfer innovation must not stop at `apply X to Y`.
+2. Multiple medium-strength ideas must form a coherent contribution chain, not patchwork.
+3. Novelty checking must not turn insufficient evidence, direct transfer, or already-done work into a strong novelty claim.
+
+---
+
+## 3. Transfer innovation rules
+
+Transfer innovation is not low-quality by default.  
+Simple wrapper-style transfer is low-quality.
+
+Weak transfer:
 
 ```text
-把 A 领域的方法 X 用到 B 领域。
+Use method X from domain A on domain B.
 ```
 
-强迁移：
+Strong transfer:
 
 ```text
-X 在 A 领域成立，是因为假设 P。
-B 领域存在条件 Q，使 P 不再完全成立。
-直接迁移 X 会暴露失败模式 R。
-我们提出适配机制 S 来解决 Q/R。
-通过 direct-transfer baseline 和 ablation 证明 S 有必要。
+X works in domain A because of assumption P.
+Domain B has condition Q, so P is not fully valid.
+Directly transferring X exposes failure mode R.
+We introduce adaptation mechanism S to address Q/R.
+A direct-transfer baseline and ablation prove that S is necessary.
 ```
 
-每个迁移式 idea 至少要写清楚：
+Every transfer idea must clearly specify:
 
-1. source-domain mature method；
-2. source method 为什么在原领域有效；
-3. target-domain opportunity；
-4. direct-transfer baseline；
-5. target-domain mismatch；
-6. adaptation mechanism；
-7. adaptation 为什么解决 mismatch；
-8. required ablation；
-9. closest prior work risk；
-10. reviewer attack point。
+1. source-domain mature method;
+2. why the source method works in its original domain;
+3. target-domain opportunity;
+4. direct-transfer baseline;
+5. target-domain mismatch;
+6. adaptation mechanism;
+7. why the adaptation solves the mismatch;
+8. required ablation;
+9. closest-prior-work risk;
+10. reviewer attack point.
 
-缺少 direct-transfer baseline 或 target-domain mismatch 的迁移 idea，不应推荐进入 pilot。
+A transfer idea without a direct-transfer baseline or target-domain mismatch should not be recommended for pilot.
 
 ---
 
-## 4. Contribution chain 规则
+## 4. Contribution-chain rules
 
-两三个中等创新点可以组成一篇论文，但前提是它们服务同一个 shared core claim。
+Two or three medium-strength contributions can form a paper only if they support the same shared core claim.
 
-有效 contribution chain：
+Valid contribution chain:
 
 ```text
 Core claim: target-domain structure matters for the method.
-Contribution 1: 修改核心方法以适配 target-domain structure。
-Contribution 2: 基于这个修改，进一步提供检测/定位/解释能力。
-Ablation 分别证明每个 component 都服务同一个 core claim。
+Contribution 1: adapt the core method to target-domain structure.
+Contribution 2: use that adaptation to improve detection, localization, or interpretability.
+Ablations show that each component supports the same core claim.
 ```
 
-无效 patchwork：
+Invalid patchwork:
 
 ```text
-加 trick A，trick B，trick C，因为它们看起来都可能有用。
+Add trick A, trick B, and trick C because each might help.
 ```
 
-每个 contribution chain 必须写清楚：
+Every contribution chain must clearly specify:
 
-1. shared core claim；
-2. main contribution；
-3. auxiliary contribution(s)；
-4. 每个 component 如何支撑同一个 claim；
-5. 为什么不是 patchwork；
-6. 每个 component 的 ablation；
-7. 最小 pilot 如何验证 shared claim。
+1. shared core claim;
+2. main contribution;
+3. auxiliary contribution(s);
+4. how each component supports the same claim;
+5. why this is not patchwork;
+6. ablation for each component;
+7. minimal pilot for the shared claim.
 
-缺少 shared core claim 的组合 idea，不应推荐进入 pilot。
+A combined idea without a shared core claim should not be recommended for pilot.
 
 ---
 
-## 5. 创新点验证规则
+## 5. Innovation verification rules
 
-旧 heavy fork 中真正值得保留的，不是整套 workflow，而是一个原则：
+The useful lesson from the old heavy fork is not the workflow. It is this principle:
 
 ```text
-证据质量必须限制 novelty verdict 的强度。
+Evidence quality must cap novelty verdict strength.
 ```
 
-也就是说：
+Therefore:
 
-- `insufficient_evidence` 不能升级成 `confirmed_novel`；
-- 弱文献证据不能支撑强 novelty claim；
-- `already_done` 必须 stop 或 pivot；
-- `direct_transfer_only` 不能推荐进入 pilot；
-- contribution chain 必须检查是否 patchwork；
-- transfer idea 必须检查是否已有同类迁移工作。
+- `insufficient_evidence` cannot be upgraded to `confirmed_novel`;
+- weak literature evidence cannot support a strong novelty claim;
+- `already_done` must force stop or pivot;
+- `direct_transfer_only` cannot be recommended for pilot;
+- contribution chains must be checked for patchwork;
+- transfer ideas must be checked against prior work that may already have made the same transfer.
 
-Novelty check 必须回答：
+Novelty check must answer:
 
-1. source method 是否已经被迁移到 target domain？
-2. target-domain mismatch 是否真实存在？
-3. adaptation 是否已经有人提出过？
-4. 当前 idea 是否只是 direct transfer？
-5. contribution chain 是否有 shared core claim？
-6. 还缺什么 evidence 才能进入 pilot？
+1. Has the source method already been transferred to the target domain?
+2. Does the target-domain mismatch really exist?
+3. Has the adaptation already been proposed?
+4. Is the idea merely direct transfer?
+5. Does the contribution chain have a shared core claim?
+6. What evidence is still missing before the idea can enter pilot?
 
-这部分可以先写进 `skills/novelty-check/SKILL.md` 和 `skills/idea-creator/SKILL.md`。  
-不要先写 Python validator。
+Start by encoding this in `skills/novelty-check/SKILL.md` and `skills/idea-creator/SKILL.md`.  
+Do not start with a Python validator.
 
 ---
 
-## 6. 用户把关原则
+## 6. User oversight principle
 
-系统可以不推荐某个 idea 进入 pilot，但不能把候选 idea 直接藏起来。
+The system may decide not to recommend an idea for pilot, but it must not hide the candidate from the user.
 
-如果没有强推荐，应输出：
+If no idea is strongly recommended, output:
 
 ```text
 No current pilot recommendation.
 ```
 
-同时仍然展示：
+Still show:
 
-- 所有候选 idea；
-- 不推荐的理由；
-- 缺少的 evidence；
-- 用户是否要 override；
-- 下一步是补文献、改 idea，还是换方向。
+- all candidate ideas;
+- why each is not recommended;
+- what evidence is missing;
+- whether the user may override;
+- whether the next step is more literature, idea revision, or changing direction.
 
-不要设计成系统直接替用户丢弃潜在 idea。
+Do not design the system to silently discard potentially useful ideas before the user sees them.
 
 ---
 
-## 7. 候选审查的轻量隔离原则
+## 7. Lightweight candidate-review isolation
 
-原版 ARIS 已有 reviewer-independence 协议。这里不再重做隔离系统。
+Upstream ARIS already has reviewer-independence rules. This branch does not rebuild an isolation system.
 
-只补一条 idea 场景下的轻量原则：
+Only add one lightweight idea-stage rule:
 
 ```text
-审查某个 candidate 时，只提供 candidate 本身和直接相关的文献/gap evidence。
-不要提供完整 brainstorming trace、旧分数、旧夸奖、用户偏好、其他候选 idea。
+When reviewing a candidate, provide only the candidate itself and directly relevant literature/gap evidence.
+Do not provide the full brainstorming trace, old scores, old praise, user preference, or unrelated candidate ideas.
 ```
 
-这只是 Skill 规则，不引入 IDEA_BANK 工具，不引入 central state，不引入 Python runner。
+This is only a Skill rule. It does not introduce IDEA_BANK tooling, central state, or a Python runner.
 
 ---
 
-## 8. 工具化原则
+## 8. Tooling principle
 
-默认不工具化。
+Default to no tooling.
 
-以下情况才考虑工具化：
+Consider tooling only if the system repeatedly fails after Skill patches, for example:
 
-- Skill 修改后，系统仍反复缺 direct-transfer baseline；
-- 系统仍把 direct-transfer-only 推荐进入 pilot；
-- 系统仍把 evidence insufficient 写成 confirmed novel；
-- 系统仍把无 shared core claim 的 patchwork 当成 contribution chain。
+- it still omits direct-transfer baselines;
+- it still recommends direct-transfer-only ideas for pilot;
+- it still reports evidence-insufficient ideas as confirmed novelty;
+- it still treats patchwork without a shared core claim as a contribution chain.
 
-即使工具化，也只做最小检查器，例如检查 idea card 是否缺字段或是否出现 forbidden verdict upgrade。
+Even then, use the smallest checker possible, such as a field-completeness check or forbidden-verdict-upgrade check.
 
-不做：
+Do not build:
 
-- 新 workflow engine；
-- 大型状态机；
-- IDEA_BANK 数据库化；
-- 自动 candidate selection 系统；
-- 替代原版 ARIS 的实验流程。
+- a new workflow engine;
+- a large state machine;
+- database-like IDEA_BANK tooling;
+- automatic candidate-selection tooling;
+- a replacement for upstream ARIS experiment workflow.
 
 ---
 
-## 9. 原版已有能力，不重复建设
+## 9. Do not rebuild upstream capabilities
 
-原版 ARIS 已经有：
+Upstream ARIS already has:
 
-- cross-model review；
-- reviewer independence；
-- idea generation / filtering / deep validation / pilot / ranked report；
-- novelty check；
-- experiment bridge；
-- paper / citation / claim audit；
-- paper verification。
+- cross-model review;
+- reviewer independence;
+- idea generation / filtering / deep validation / pilot / ranked report;
+- novelty check;
+- experiment bridge;
+- paper / citation / claim audit;
+- paper verification.
 
-所以本分支不重复建设这些主流程。
+This branch does not rebuild those main workflows.
 
-我们只补：
+Only add:
 
 ```text
-迁移式创新质量规则
-+ contribution chain 质量规则
-+ novelty verdict guardrails
-+ 轻量 candidate 审查输入规则
+transfer-innovation quality rules
++ contribution-chain quality rules
++ novelty-verdict guardrails
++ lightweight candidate-review input rule
 ```
 
 ---
 
-## 10. 近期实施范围
+## 10. Near-term implementation scope
 
-下一步只改 Skill，不改 Python。
+Next steps should modify Skill files only, not Python.
 
-优先文件：
+Priority files:
 
 1. `skills/idea-creator/SKILL.md`
 2. `skills/novelty-check/SKILL.md`
 3. `skills/experiment-plan/SKILL.md`
 
-可选文件：
+Optional file:
 
 4. `skills/exec-review/SKILL.md`
 
-本轮不新增模板。  
-本轮不新增工具。  
-本轮不改 workflow。  
-本轮不运行实验。  
-本轮不调用模型。
+For now:
+
+- do not add templates;
+- do not add tools;
+- do not change workflow;
+- do not run experiments;
+- do not call models.
 
 ---
 
-## 11. 暂无其他高置信新增方法
+## 11. No other high-confidence method for now
 
-除上述内容外，目前没有发现另一个“原版明显没想到、且高收益低复杂度”的创新点质量增强方法。
+Beyond the items above, there is currently no other high-confidence, high-impact, low-complexity method that upstream ARIS clearly missed for improving research-idea quality.
 
-如果后续实际运行发现新的稳定失败模式，再基于失败模式补最小机制。不要预先编造功能。
+If future real runs reveal a stable failure mode, add the smallest mechanism targeted at that failure. Do not invent features in advance.
