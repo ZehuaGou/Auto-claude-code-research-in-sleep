@@ -45,6 +45,8 @@ Extract:
 - **Critical reviewer concerns**
 - **Data / compute / timeline constraints**
 - **Which frontier primitive is central, if any**
+- **Transfer structure**, if applicable: source-domain method, target-domain mismatch, direct-transfer baseline, adaptation mechanism
+- **Contribution-chain structure**, if applicable: shared core claim, main contribution, auxiliary contribution(s), and component ablations
 
 If these files do not exist, derive the same information from the user's prompt.
 
@@ -61,6 +63,11 @@ Use this structure:
 
 Do not exceed `MAX_PRIMARY_CLAIMS` unless the paper truly has multiple inseparable claims.
 
+Special rules:
+
+- If the idea is a transfer innovation, one anti-claim must be: "this is only direct transfer without target-specific adaptation."
+- If the idea is a contribution chain, one anti-claim must be: "the components are patchwork and do not support one shared core claim."
+
 ### Phase 2: Build the Experimental Storyline
 
 Design the paper around a compact set of experiment blocks. Default to the following blocks and delete any that are not needed:
@@ -70,6 +77,10 @@ Design the paper around a compact set of experiment blocks. Default to the follo
 3. **Simplicity / elegance check** — can a bigger or more fragmented version be avoided?
 4. **Frontier necessity check** — if an LLM / VLM / Diffusion / RL-era component is central, is it actually the right tool?
 5. **Failure analysis or qualitative diagnosis** — what does the method still miss?
+
+For transfer innovations, the storyline must include a direct-transfer baseline and an adapted-method comparison.
+
+For contribution chains, the storyline must include ablations for the main contribution and each auxiliary contribution, all tied to the shared core claim.
 
 For each block, decide whether it belongs in:
 
@@ -98,6 +109,9 @@ Special rules:
 - A **simplicity check** should usually compare the final method against either an overbuilt variant or a tempting extra component that the paper intentionally rejects.
 - A **frontier necessity check** should usually compare the chosen modern primitive against the strongest plausible simpler or older alternative.
 - If the proposal is intentionally non-frontier, say so explicitly and skip the frontier block instead of forcing one.
+- A **direct-transfer baseline** is mandatory for transfer innovations.
+- An **adaptation ablation** is mandatory for transfer innovations: remove or neutralize the target-specific adaptation and compare.
+- A **component ablation** is mandatory for every contribution-chain component that the paper claims as a contribution.
 
 ### Phase 4: Turn the Plan Into an Execution Order
 
@@ -106,9 +120,9 @@ Build a realistic run order so the user knows what to do first.
 Use this milestone structure:
 
 1. **Sanity stage** — data pipeline, metric correctness, one quick overfit or toy split
-2. **Baseline stage** — reproduce the strongest baseline(s)
+2. **Baseline stage** — reproduce the strongest baseline(s), including direct-transfer baselines when relevant
 3. **Main method stage** — run the final method on the primary setting
-4. **Decision stage** — run the decisive ablations for novelty, simplicity, and frontier necessity
+4. **Decision stage** — run the decisive ablations for novelty, adaptation, contribution-chain components, simplicity, and frontier necessity
 5. **Polish stage** — robustness, qualitative figures, appendix extras
 
 For each milestone, estimate:
@@ -137,6 +151,15 @@ Use this structure:
 | Claim | Why It Matters | Minimum Convincing Evidence | Linked Blocks |
 |-------|-----------------|-----------------------------|---------------|
 | C1    | ...             | ...                         | B1, B2        |
+
+## Transfer / Contribution-Chain Checks
+- Source-domain method: [method or N/A]
+- Target-domain mismatch: [mismatch or N/A]
+- Direct-transfer baseline: [baseline or N/A]
+- Adaptation mechanism: [mechanism or N/A]
+- Adaptation ablation: [ablation or N/A]
+- Shared core claim: [claim or N/A]
+- Component ablations: [list or N/A]
 
 ## Paper Storyline
 - Main paper must prove:
@@ -178,6 +201,9 @@ Use this structure:
 ## Final Checklist
 - [ ] Main paper tables are covered
 - [ ] Novelty is isolated
+- [ ] Direct-transfer baseline is included when relevant
+- [ ] Target-specific adaptation is ablated when relevant
+- [ ] Contribution-chain components are individually ablated when relevant
 - [ ] Simplicity is defended
 - [ ] Frontier contribution is justified or explicitly not claimed
 - [ ] Nice-to-have runs are separated from must-run runs
@@ -233,6 +259,8 @@ Tracker file: refine-logs/EXPERIMENT_TRACKER.md
 - **Prefer a compact paper story.** Design the main table first, then add only the ablations that defend it.
 - **Defend simplicity explicitly.** If complexity is a concern, include a deletion study or a stronger-but-bloated variant comparison.
 - **Defend frontier choices explicitly.** If a modern primitive is central, prove why it is better than the strongest simpler alternative.
+- **For transfer ideas, defend adaptation explicitly.** Include direct transfer and adapted-method comparisons; otherwise the paper may look like simple application.
+- **For contribution chains, defend coherence explicitly.** Each component must support the same core claim and have an ablation.
 - **Prefer strong baselines over long baseline lists.** A short, credible comparison set is better than a padded one.
 - **Separate must-run from nice-to-have.** Do not let appendix ideas delay the core paper evidence.
 - **Reuse proposal constraints.** Do not invent unrealistic budgets or data assumptions.
