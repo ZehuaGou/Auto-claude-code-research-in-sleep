@@ -131,7 +131,7 @@ Gaps:
 - Adaptive broad literature scan: designed (Section 8.17 v1.1) but deferred — MVP runs core flow first
 - Literature memory / reading card: designed (Section 8.18 v1.1) but deferred — grep sufficient for < 100 papers
 - Literature module split: DONE — `literature_evidence_landing.py` split into `tools/literature/{store.py, extraction.py, manual_ingest.py, scoring.py, multisource.py}` + `tools/literature/adapters/{openalex.py, arxiv.py, crossref.py}` with backward-compatible delegation
-- **Slash command integration (Phase 21N):** `/literature-intake --execute` calls `run_multisource_pipeline` for real metadata-only search (arXiv + OpenAlex + Crossref). Output to `tmp/slash_lit_search/` (gitignored). 90 raw records, 16 top-k demonstrated.
+- **Slash command integration (Phase 21N + Phase 3):** `/literature-intake --execute` calls `run_multisource_pipeline` for real metadata-only search (arXiv + OpenAlex + Crossref). Output to `tmp/slash_lit_search/` (gitignored). 90 raw records, 16 top-k demonstrated. `/idea-synthesis --execute --trusted` and `/idea-audit --execute --trusted` call `trusted_role_runner` for real model-based synthesis and audit. Trusted outputs written to `trusted_outputs/`. `/experiment` gate requires trusted audit with `worth_experiment_plan` verdict. `workflow_state.phase_status` tracks scaffold vs trusted completion. 67 adapter self-tests pass.
 
 ### Status Tracking Layer
 

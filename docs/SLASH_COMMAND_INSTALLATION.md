@@ -14,9 +14,10 @@ This project provides 7 slash commands for Claude Code / Happy:
 | `/paper-writing` | Plan paper writing based on verified results |
 | `/status` | Show current research workflow status |
 
-All commands support two modes:
+All commands support three modes:
 - **Default (dry-run)**: Generates execution plan, saves payload. No files created.
 - **`--execute`**: Creates scaffold files, updates workflow state. No model calls, no experiments, no trusted_outputs changes.
+- **`--execute --trusted`** (idea-synthesis, idea-audit only): Calls `trusted_role_runner` for real model-based synthesis/audit. Writes to `trusted_outputs/`. Reports `call_id`.
 
 ## How It Works
 
@@ -74,7 +75,7 @@ templates/claude_commands/*.md    (committed — safe templates)
         |
 tools/slash_command_adapter.py    (Agent-facing backend — parser + executor)
         |
-        v  [--execute creates scaffolds, --dry-run shows plan]
+        v  [--execute creates scaffolds, --trusted calls trusted_role_runner]
         |
 research/current/runtime/         (local — gitignored, all runtime outputs)
   ├── raw_user_input.md           (created by /research-intake --execute)
@@ -84,7 +85,11 @@ research/current/runtime/         (local — gitignored, all runtime outputs)
   ├── idea_audit_scaffold.md      (evidence-aware, checks for synthesis + evidence)
   ├── experiment_scaffold_*.md    (mode-specific: lightweight/full/analyze/revise)
   ├── paper_writing_scaffold.md   (blocked unless results + claim boundary)
-  └── workflow_state.json         (tracks user phase)
+  └── workflow_state.json         (tracks user phase + phase_status)
+
+research/current/trusted_outputs/ (committed — trusted model outputs)
+  ├── idea_synthesis.md           (created by /idea-synthesis --execute --trusted)
+  └── idea_audit.md               (created by /idea-audit --execute --trusted)
 
 tmp/slash_lit_search/             (local — gitignored, literature metadata search output)
   ├── search_plan.yaml

@@ -1,15 +1,16 @@
 """Slash command adapter — Agent-facing parser and safe executor for user-facing slash commands.
 
 Maps user slash commands to underlying research_cli plans.
-Supports dry-run (default) and execute_safe mode.
-No model calls, no trusted runner execution, no trusted_outputs changes.
+Supports dry-run (default), execute_safe, and trusted mode.
+No model calls in dry-run/execute_safe. Trusted mode calls trusted_role_runner.
 
-Gate 2: literature-intake now calls run_multisource_pipeline for real metadata search.
+Gate 2: literature-intake calls run_multisource_pipeline for real metadata search.
 Gate 3: idea-synthesis creates evidence-aware scaffold referencing real metadata.
 Gate 4: idea-audit creates evidence-aware audit scaffold.
 Gate 5: experiment has mode-specific logic with proper blocking.
 Gate 6: paper-writing blocks unless experiment results + claim boundary exist.
 Gate 7: status shows enhanced runtime/literature/trusted output summaries.
+Phase 3: trusted idea-synthesis and idea-audit via trusted_role_runner.
 """
 
 from __future__ import annotations
@@ -25,8 +26,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+TOOLS_DIR = ROOT / "tools"
 RESEARCH_DIR = ROOT / "research" / "current"
 RUNTIME_DIR = RESEARCH_DIR / "runtime"
+TRUSTED_OUTPUT_DIR = RESEARCH_DIR / "trusted_outputs"
 PAYLOAD_DIR = RESEARCH_DIR / "user_command_payloads"
 WORKFLOW_STATE_FILE = RUNTIME_DIR / "workflow_state.json"
 # Fallback: read-only path for legacy workflow_state.json (never written here)
@@ -36,6 +39,12 @@ LEGACY_WORKFLOW_STATE_FILE = RESEARCH_DIR / "workflow_state.json"
 LITERATURE_SEARCH_DIR = ROOT / "literature" / "search_runs" / "current"
 # Runtime literature search for slash commands (tmp/ is gitignored, avoids pipeline forbidden path check)
 RUNTIME_LIT_DIR = ROOT / "tmp" / "slash_lit_search"
+
+# Phase status values
+PHASE_NOT_STARTED = "not_started"
+PHASE_SCAFFOLD_CREATED = "scaffold_created"
+PHASE_TRUSTED_COMPLETED = "trusted_completed"
+PHASE_BLOCKED = "blocked"
 
 # ---- Execution modes ----
 
@@ -74,14 +83,14 @@ COMMAND_MAP = {
         "description": "创新点生成",
         "maps_to": "continue_idea_pivot",
         "internal_stages": ["idea_discovery", "idea_pivot", "transfer_hypothesis_generation", "contribution_chain_construction"],
-        "flags": ["--num-candidates"],
+        "flags": ["--num-candidates", "--trusted"],
         "execution_mode": "execute_safe",
     },
     "idea-audit": {
         "description": "创新点验证、查新与研究边界锁定",
         "maps_to": "continue_novelty_check",
         "internal_stages": ["novelty_check", "transfer_check", "method_refinement", "research_contract"],
-        "flags": [],
+        "flags": ["--trusted"],
         "execution_mode": "execute_safe",
     },
     "experiment": {
@@ -227,6 +236,7 @@ def load_workflow_state() -> dict:
     return {
         "current_user_phase": None,
         "completed_user_phases": [],
+        "phase_status": {},
         "latest_command": None,
         "latest_payload_file": None,
         "blocked_reason": None,
@@ -246,8 +256,11 @@ def save_workflow_state(state: dict) -> None:
     WORKFLOW_STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def update_workflow_state(command: str, payload_file: str | None = None) -> dict:
-    """Update workflow state after a command execution. Returns updated state."""
+def update_workflow_state(command: str, payload_file: str | None = None, phase_status_value: str | None = None) -> dict:
+    """Update workflow state after a command execution. Returns updated state.
+
+    phase_status_value: if provided, sets phase_status[phase] = phase_status_value.
+    """
     state = load_workflow_state()
     phase = USER_PHASES.get(command)
     state["latest_command"] = command
@@ -257,6 +270,8 @@ def update_workflow_state(command: str, payload_file: str | None = None) -> dict
         state["current_user_phase"] = phase
         if phase not in state["completed_user_phases"]:
             state["completed_user_phases"].append(phase)
+        if phase_status_value:
+            state.setdefault("phase_status", {})[phase] = phase_status_value
     # Compute next allowed commands
     state["next_allowed_commands"] = _compute_next_commands(state)
     save_workflow_state(state)
@@ -264,8 +279,9 @@ def update_workflow_state(command: str, payload_file: str | None = None) -> dict
 
 
 def _compute_next_commands(state: dict) -> list[str]:
-    """Compute which commands are allowed next based on current phase."""
+    """Compute which commands are allowed next based on current phase and phase_status."""
     completed = set(state.get("completed_user_phases", []))
+    phase_status = state.get("phase_status", {})
     phase_order = [
         "research_direction_intake",
         "literature_intake",
@@ -274,13 +290,14 @@ def _compute_next_commands(state: dict) -> list[str]:
         "experiment_and_analysis",
         "paper_writing",
     ]
-    # Find first uncompleted phase
+    phase_to_cmd = {v: k for k, v in USER_PHASES.items() if k != "status"}
+
     for phase in phase_order:
         if phase not in completed:
-            # Map phase back to commands
-            phase_to_cmd = {v: k for k, v in USER_PHASES.items() if k != "status"}
             cmd = phase_to_cmd.get(phase, "research-intake")
             return [cmd, "status"]
+
+    # All phases completed — allow status only
     return ["status"]
 
 
@@ -360,6 +377,207 @@ def _count_top_k_papers(path: Path) -> int:
     return content.count("## ") + content.count("- **")
 
 
+# ---- Trusted execution helpers ----
+
+def _has_trusted_idea_synthesis() -> bool:
+    """Check if trusted idea synthesis output exists."""
+    return (TRUSTED_OUTPUT_DIR / "idea_synthesis.md").exists()
+
+
+def _has_trusted_idea_audit() -> bool:
+    """Check if trusted idea audit output exists."""
+    return (TRUSTED_OUTPUT_DIR / "idea_audit.md").exists()
+
+
+def _has_worth_experiment_verdict() -> bool:
+    """Check if idea audit has worth_experiment_plan verdict."""
+    audit_path = TRUSTED_OUTPUT_DIR / "idea_audit.md"
+    if not audit_path.exists():
+        return False
+    content = audit_path.read_text(encoding="utf-8")
+    return "worth_experiment_plan" in content.lower()
+
+
+def _build_idea_synthesis_input(payload: str, num_candidates: str) -> str:
+    """Build input prompt for trusted idea synthesis."""
+    raw_file = RUNTIME_DIR / "raw_user_input.md"
+    raw_input = ""
+    if raw_file.exists():
+        raw_content = raw_file.read_text(encoding="utf-8")
+        parts = raw_content.split("---", 2)
+        if len(parts) >= 3:
+            raw_input = parts[2].strip()[:1000]
+        else:
+            raw_input = raw_content.strip()[:1000]
+
+    top_k_summary = _read_top_k_summary()
+    meta_path = _get_literature_metadata_path()
+    meta_rel = "none"
+    if meta_path:
+        try:
+            meta_rel = str(meta_path.relative_to(ROOT))
+        except ValueError:
+            meta_rel = str(meta_path)
+
+    return f"""You are idea_generator. Generate {num_candidates} candidate research ideas.
+
+## User Research Direction
+
+{payload or raw_input}
+
+## Literature Evidence
+
+Source: {meta_rel}
+
+{top_k_summary}
+
+## Requirements
+
+1. Generate {num_candidates} concrete, specific research ideas (not vague topics)
+2. Each idea MUST reference at least one paper from the literature evidence
+3. Prioritize: gap-driven innovation, transfer innovation, contribution chain
+4. For each idea provide:
+   - Title (specific, not generic)
+   - Innovation type (gap-driven / transfer / contribution-chain)
+   - Key hypothesis (testable, specific)
+   - Source domain and target domain (for transfer)
+   - Expected contribution (what's new)
+   - Risk level (low/medium/high)
+   - Prior work basis (which papers from evidence)
+   - Minimal experiment boundary
+5. Do NOT write "confirmed_novel" — that is novelty_checker's job
+6. Do NOT claim the idea is novel — just propose it
+7. End with: "This artifact is candidate ideas only. Novelty determination is performed by the idea_reviewer stage."
+"""
+
+
+def _build_idea_audit_input(payload: str) -> str:
+    """Build input prompt for trusted idea audit."""
+    # Read trusted candidate ideas
+    ideas_path = TRUSTED_OUTPUT_DIR / "idea_synthesis.md"
+    ideas_text = ""
+    if ideas_path.exists():
+        ideas_text = ideas_path.read_text(encoding="utf-8")
+
+    top_k_summary = _read_top_k_summary()
+    meta_path = _get_literature_metadata_path()
+    meta_rel = "none"
+    if meta_path:
+        try:
+            meta_rel = str(meta_path.relative_to(ROOT))
+        except ValueError:
+            meta_rel = str(meta_path)
+
+    return f"""You are idea_reviewer. Audit candidate research ideas for novelty and feasibility.
+
+## User Audit Focus
+
+{payload}
+
+## Candidate Ideas (from idea_generator)
+
+{ideas_text}
+
+## Literature Evidence
+
+Source: {meta_rel}
+
+{top_k_summary}
+
+## Audit Checks (perform ALL)
+
+For each candidate idea:
+1. **already_done**: Is this idea already published? Check literature evidence.
+2. **direct_transfer_only**: Is this just applying an existing method to a new domain without adaptation?
+3. **adaptation_gap**: Is there a meaningful adaptation needed? What's the gap?
+4. **combination_gap**: Is this combining existing methods in a novel way?
+5. **insufficient_evidence**: Is the literature evidence too thin to judge?
+
+## Verdict
+
+For each idea, assign ONE verdict:
+- already_done: idea is already published
+- direct_transfer_only: no meaningful adaptation
+- adaptation_gap: meaningful adaptation needed, promising
+- combination_gap: novel combination, promising
+- insufficient_evidence: cannot judge with current evidence
+- worth_experiment_plan: novelty verified, proceed to experiment planning
+
+## Output Format
+
+For each idea:
+### Idea: [title]
+- Verdict: [verdict]
+- Evidence: [which papers support or contradict]
+- Risk: [what could go wrong]
+- Next action: [what to do next]
+
+End with a summary table and the statement:
+"This artifact is an idea audit. Only ideas with worth_experiment_plan verdict may advance to experiment planning."
+"""
+
+
+def _run_trusted_idea_synthesis(payload: str, num_candidates: str) -> dict:
+    """Call trusted_role_runner for idea synthesis. Returns result dict."""
+    TRUSTED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = str(TRUSTED_OUTPUT_DIR / "idea_synthesis.md")
+
+    input_text = _build_idea_synthesis_input(payload, num_candidates)
+    # Write input to temp file for trusted_role_runner
+    input_file = RUNTIME_DIR / "idea_synthesis_input.txt"
+    input_file.parent.mkdir(parents=True, exist_ok=True)
+    input_file.write_text(input_text, encoding="utf-8")
+
+    try:
+        if str(TOOLS_DIR) not in sys.path:
+            sys.path.insert(0, str(TOOLS_DIR))
+        from trusted_role_runner import run_trusted
+
+        result = run_trusted(
+            role="idea_generator",
+            input_spec=str(input_file),
+            output_path=output_path,
+            dry_run=False,
+        )
+        return result
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "error": str(exc),
+            "exit_code": 1,
+        }
+
+
+def _run_trusted_idea_audit(payload: str) -> dict:
+    """Call trusted_role_runner for idea audit. Returns result dict."""
+    TRUSTED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = str(TRUSTED_OUTPUT_DIR / "idea_audit.md")
+
+    input_text = _build_idea_audit_input(payload)
+    input_file = RUNTIME_DIR / "idea_audit_input.txt"
+    input_file.parent.mkdir(parents=True, exist_ok=True)
+    input_file.write_text(input_text, encoding="utf-8")
+
+    try:
+        if str(TOOLS_DIR) not in sys.path:
+            sys.path.insert(0, str(TOOLS_DIR))
+        from trusted_role_runner import run_trusted
+
+        result = run_trusted(
+            role="idea_reviewer",
+            input_spec=str(input_file),
+            output_path=output_path,
+            dry_run=False,
+        )
+        return result
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "error": str(exc),
+            "exit_code": 1,
+        }
+
+
 # ---- Safe execution functions ----
 
 def _ensure_research_dir() -> None:
@@ -421,7 +639,7 @@ This scaffold is a placeholder — no model conclusions have been drawn.
     results.append(f"Created runtime/{scaffold_file.name}")
 
     # 3. Update workflow state
-    state = update_workflow_state("research-intake", payload_file)
+    state = update_workflow_state("research-intake", payload_file, PHASE_SCAFFOLD_CREATED)
     results.append(f"Updated runtime/workflow_state.json")
 
     return {
@@ -664,12 +882,13 @@ def _extract_keywords(topic: str) -> list[str]:
 def execute_idea_synthesis(parsed: dict, payload_file: str | None = None) -> dict:
     """Safe execution for /idea-synthesis. Creates evidence-aware scaffold, no model calls.
 
-    If literature metadata exists, scaffold references actual metadata files.
+    If --trusted flag: calls trusted_role_runner with idea_generator role.
     If no metadata, blocked with next_action to run /literature-intake.
     """
     _ensure_research_dir()
     payload = parsed["payload"]
     num_candidates = parsed["flags"].get("num-candidates", "5")
+    trusted_mode = parsed["flags"].get("trusted") == "true"
     results = []
 
     # Check prerequisites
@@ -690,6 +909,49 @@ def execute_idea_synthesis(parsed: dict, payload_file: str | None = None) -> dic
         meta_rel = str(meta_path.relative_to(ROOT)) if meta_path else "none"
     except ValueError:
         meta_rel = str(meta_path) if meta_path else "none"
+
+    # Trusted mode: call trusted_role_runner
+    if trusted_mode:
+        if not has_metadata:
+            return {
+                "status": "blocked",
+                "command": "/idea-synthesis",
+                "blocked_reason": "No literature metadata. Run /literature-intake first.",
+                "model_called": False,
+                "trusted_outputs_changed": False,
+            }
+
+        result = _run_trusted_idea_synthesis(payload, num_candidates)
+        call_id = result.get("call_id", "")
+        status = result.get("status", "failed")
+        exit_code = result.get("exit_code", 1)
+        allowed_next = result.get("allowed_next_stage", False)
+
+        if status in ("completed", "completed_with_fallback") and exit_code == 0:
+            state = update_workflow_state("idea-synthesis", payload_file, PHASE_TRUSTED_COMPLETED)
+            return {
+                "status": "trusted_completed",
+                "command": "/idea-synthesis",
+                "files_created": [f"trusted_outputs/idea_synthesis.md (call_id: {call_id})"],
+                "workflow_state": state,
+                "model_called": True,
+                "trusted_outputs_changed": True,
+                "call_id": call_id,
+                "allowed_next_stage": allowed_next,
+                "next_action": "Run /idea-audit --execute --trusted to verify novelty",
+                "note": f"Trusted idea synthesis complete. {num_candidates} candidates generated. call_id: {call_id}",
+            }
+        else:
+            error = result.get("error", "unknown error")
+            return {
+                "status": "blocked",
+                "command": "/idea-synthesis",
+                "blocked_reason": f"Trusted model call failed: {error}",
+                "model_called": True,
+                "trusted_outputs_changed": False,
+                "call_id": call_id,
+                "error": error,
+            }
 
     # Read top_k summary for evidence-aware scaffold
     top_k_summary = _read_top_k_summary() if has_metadata else "No literature metadata available."
@@ -773,8 +1035,8 @@ For each of {num_candidates} candidates:
     scaffold_file.write_text(scaffold_content, encoding="utf-8")
     results.append(f"Created runtime/{scaffold_file.name}")
 
-    # Update workflow state
-    state = update_workflow_state("idea-synthesis", payload_file)
+    # Update workflow state — scaffold only, not trusted completed
+    state = update_workflow_state("idea-synthesis", payload_file, PHASE_SCAFFOLD_CREATED)
     results.append(f"Updated runtime/workflow_state.json")
 
     return {
@@ -784,18 +1046,20 @@ For each of {num_candidates} candidates:
         "workflow_state": state,
         "model_called": False,
         "trusted_outputs_changed": False,
-        "next_action": "Run /idea-audit to verify novelty of generated ideas" if has_metadata else "Run /literature-intake first",
-        "note": f"Evidence-aware scaffold for {num_candidates} candidates. Metadata: {'available' if has_metadata else 'missing'}.",
+        "next_action": "Run /idea-synthesis --execute --trusted for real model-based synthesis, or /idea-audit to verify" if has_metadata else "Run /literature-intake first",
+        "note": f"Evidence-aware scaffold for {num_candidates} candidates. Metadata: {'available' if has_metadata else 'missing'}. Use --trusted for real model call.",
     }
 
 
 def execute_idea_audit(parsed: dict, payload_file: str | None = None) -> dict:
     """Safe execution for /idea-audit. Creates evidence-aware audit scaffold, no model calls.
 
+    If --trusted flag: calls trusted_role_runner with idea_reviewer role.
     Checks for both literature evidence and idea synthesis scaffold.
     """
     _ensure_research_dir()
     payload = parsed["payload"]
+    trusted_mode = parsed["flags"].get("trusted") == "true"
     results = []
 
     # Check prerequisites
@@ -817,8 +1081,61 @@ def execute_idea_audit(parsed: dict, payload_file: str | None = None) -> dict:
     except ValueError:
         meta_rel = str(meta_path) if meta_path else "none"
 
-    # Check for idea synthesis scaffold
-    has_synthesis = _has_idea_synthesis_scaffold()
+    # Check for idea synthesis (scaffold or trusted)
+    has_synthesis_scaffold = _has_idea_synthesis_scaffold()
+    has_trusted_synthesis = _has_trusted_idea_synthesis()
+    has_synthesis = has_synthesis_scaffold or has_trusted_synthesis
+
+    # Trusted mode: call trusted_role_runner
+    if trusted_mode:
+        blocked_reasons = []
+        if not has_metadata:
+            blocked_reasons.append("insufficient_evidence")
+        if not has_synthesis:
+            blocked_reasons.append("no_candidate_ideas")
+        if blocked_reasons:
+            return {
+                "status": "blocked",
+                "command": "/idea-audit",
+                "blocked_reason": "; ".join(blocked_reasons),
+                "model_called": False,
+                "trusted_outputs_changed": False,
+            }
+
+        result = _run_trusted_idea_audit(payload)
+        call_id = result.get("call_id", "")
+        status = result.get("status", "failed")
+        exit_code = result.get("exit_code", 1)
+        allowed_next = result.get("allowed_next_stage", False)
+
+        if status in ("completed", "completed_with_fallback") and exit_code == 0:
+            has_verdict = _has_worth_experiment_verdict()
+            phase_val = PHASE_TRUSTED_COMPLETED if has_verdict else PHASE_BLOCKED
+            state = update_workflow_state("idea-audit", payload_file, phase_val)
+            return {
+                "status": "trusted_completed",
+                "command": "/idea-audit",
+                "files_created": [f"trusted_outputs/idea_audit.md (call_id: {call_id})"],
+                "workflow_state": state,
+                "model_called": True,
+                "trusted_outputs_changed": True,
+                "call_id": call_id,
+                "allowed_next_stage": allowed_next,
+                "has_worth_experiment_plan": has_verdict,
+                "next_action": "Run /experiment to plan experiments" if has_verdict else "Audit did not produce worth_experiment_plan verdict. Revise ideas.",
+                "note": f"Trusted idea audit complete. call_id: {call_id}. Verdict: {'worth_experiment_plan' if has_verdict else 'needs_revision'}.",
+            }
+        else:
+            error = result.get("error", "unknown error")
+            return {
+                "status": "blocked",
+                "command": "/idea-audit",
+                "blocked_reason": f"Trusted model call failed: {error}",
+                "model_called": True,
+                "trusted_outputs_changed": False,
+                "call_id": call_id,
+                "error": error,
+            }
 
     # Read top_k summary for evidence-aware scaffold
     top_k_summary = _read_top_k_summary() if has_metadata else "No literature metadata available."
@@ -917,8 +1234,9 @@ For each candidate idea:
     scaffold_file.write_text(scaffold_content, encoding="utf-8")
     results.append(f"Created runtime/{scaffold_file.name}")
 
-    # Update workflow state
-    state = update_workflow_state("idea-audit", payload_file)
+    # Update workflow state — scaffold only, not trusted completed
+    phase_val = PHASE_BLOCKED if blocked_reasons else PHASE_SCAFFOLD_CREATED
+    state = update_workflow_state("idea-audit", payload_file, phase_val)
     if blocked_reasons:
         state["blocked_reason"] = "; ".join(blocked_reasons)
     results.append(f"Updated runtime/workflow_state.json")
@@ -931,16 +1249,17 @@ For each candidate idea:
         "model_called": False,
         "trusted_outputs_changed": False,
         "blocked_reasons": blocked_reasons if blocked_reasons else None,
-        "next_action": "Run /experiment after audit passes" if not blocked_reasons else f"Blocked: {'; '.join(blocked_reasons)}",
-        "note": f"Audit scaffold created. evidence={'available' if has_metadata else 'missing'}, synthesis={'available' if has_synthesis else 'missing'}.",
+        "next_action": "Run /idea-audit --execute --trusted for real model-based audit" if not blocked_reasons else f"Blocked: {'; '.join(blocked_reasons)}",
+        "note": f"Audit scaffold created. evidence={'available' if has_metadata else 'missing'}, synthesis={'available' if has_synthesis else 'missing'}. Use --trusted for real model call.",
     }
 
 
 def execute_experiment(parsed: dict, payload_file: str | None = None) -> dict:
     """Safe execution for /experiment. Generates mode-specific scaffold, no model calls.
 
+    Gate: requires trusted idea audit with worth_experiment_plan verdict.
     Mode-specific logic:
-    - lightweight: always allowed, creates sanity experiment scaffold
+    - lightweight: always allowed (after gate), creates sanity experiment scaffold
     - full: warns if no lightweight evidence, creates full experiment scaffold
     - analyze: blocked unless experiment results exist
     - revise: blocked unless failure/blocked reason exists
@@ -968,6 +1287,26 @@ def execute_experiment(parsed: dict, payload_file: str | None = None) -> dict:
             "status": "blocked",
             "command": "/experiment",
             "blocked_reason": "No raw_user_input.md found. Run /research-intake first.",
+            "model_called": False,
+            "trusted_outputs_changed": False,
+        }
+
+    # Gate: require trusted idea audit with worth_experiment_plan
+    has_trusted_audit = _has_trusted_idea_audit()
+    has_worth_verdict = _has_worth_experiment_verdict()
+    if not has_trusted_audit:
+        return {
+            "status": "blocked",
+            "command": "/experiment",
+            "blocked_reason": "No trusted idea audit found. Run /idea-audit --execute --trusted first.",
+            "model_called": False,
+            "trusted_outputs_changed": False,
+        }
+    if not has_worth_verdict:
+        return {
+            "status": "blocked",
+            "command": "/experiment",
+            "blocked_reason": "Idea audit did not produce worth_experiment_plan verdict. Revise ideas and re-audit.",
             "model_called": False,
             "trusted_outputs_changed": False,
         }
@@ -1231,19 +1570,21 @@ def execute_status(parsed: dict, payload_file: str | None = None) -> dict:
     """Safe execution for /status. Reads state, no mutations.
 
     Enhanced output includes:
-    - workflow state (phase, completed, next, blocked)
+    - workflow state (phase, completed, phase_status, next, blocked)
     - runtime files summary
     - literature metadata summary
     - trusted outputs summary
+    - experiment blocked reason
     """
     state = load_workflow_state()
+    phase_status = state.get("phase_status", {})
 
     # Read trusted outputs summary
     trusted_outputs_summary = {}
     for stage in ["raw_user_input", "input_normalization", "research_contract",
                    "literature_search", "novelty_check", "method_refinement",
                    "experiment_plan", "result_judge", "paper_writing"]:
-        path = RESEARCH_DIR / "trusted_outputs" / f"{stage}.md"
+        path = TRUSTED_OUTPUT_DIR / f"{stage}.md"
         if path.exists():
             trusted_outputs_summary[stage] = "exists"
         else:
@@ -1253,6 +1594,11 @@ def execute_status(parsed: dict, payload_file: str | None = None) -> dict:
                 trusted_outputs_summary[stage] = "scaffold"
             else:
                 trusted_outputs_summary[stage] = "missing"
+
+    # Check trusted idea synthesis and audit
+    trusted_idea_synthesis = _has_trusted_idea_synthesis()
+    trusted_idea_audit = _has_trusted_idea_audit()
+    has_worth_verdict = _has_worth_experiment_verdict()
 
     # Runtime files summary
     runtime_files = {}
@@ -1268,18 +1614,32 @@ def execute_status(parsed: dict, payload_file: str | None = None) -> dict:
     meta_path = _get_literature_metadata_path()
     if meta_path:
         lit_summary["available"] = True
-        lit_summary["path"] = str(meta_path.relative_to(ROOT))
+        try:
+            lit_summary["path"] = str(meta_path.relative_to(ROOT))
+        except ValueError:
+            lit_summary["path"] = str(meta_path)
         top_k_file = meta_path / "top_k.md"
         if top_k_file.exists():
             content = top_k_file.read_text(encoding="utf-8")
-            # Count paper entries (lines starting with "## " or "- **")
             lit_summary["top_k_count"] = content.count("## ") + content.count("- **")
+
+    # Compute experiment gate status
+    experiment_blocked_reason = None
+    if not trusted_idea_audit:
+        experiment_blocked_reason = "No trusted idea audit. Run /idea-audit --execute --trusted."
+    elif not has_worth_verdict:
+        experiment_blocked_reason = "Idea audit missing worth_experiment_plan verdict."
 
     return {
         "status": "execute_safe",
         "command": "/status",
         "workflow_state": state,
+        "phase_status": phase_status,
         "trusted_outputs_summary": trusted_outputs_summary,
+        "trusted_idea_synthesis": trusted_idea_synthesis,
+        "trusted_idea_audit": trusted_idea_audit,
+        "has_worth_experiment_plan": has_worth_verdict,
+        "experiment_blocked_reason": experiment_blocked_reason,
         "runtime_files": runtime_files,
         "literature_summary": lit_summary,
         "model_called": False,
@@ -1690,26 +2050,37 @@ def _self_test() -> bool:
             continue
         check(f"29. {cmd} has executor", cmd in EXECUTORS, f"missing executor")
 
-    # Test 30: execute experiment with valid modes
+    # Test 30: execute experiment with valid modes (requires trusted audit)
     for mode in ("lightweight", "full", "analyze", "revise"):
         with tempfile.TemporaryDirectory() as td:
             mod = _sys.modules[__name__]
             orig_dir = mod.RESEARCH_DIR
             orig_rt = mod.RUNTIME_DIR
             orig_state = mod.WORKFLOW_STATE_FILE
+            orig_trusted = mod.TRUSTED_OUTPUT_DIR
             mod.RESEARCH_DIR = Path(td) / "research" / "current"
             mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
             mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
-            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
-            p = parse_slash_command(f'/experiment "test" --mode {mode}')
-            result = execute_command(p)
-            if mode in ("analyze", "revise"):
-                check(f"30. experiment {mode} mode", result["status"] == "blocked",
-                      f"got status={result['status']} (expected blocked without results)")
-            else:
-                check(f"30. experiment {mode} mode", result["status"] == "execute_safe",
-                      f"got status={result['status']}")
+            mod.TRUSTED_OUTPUT_DIR = mod.RESEARCH_DIR / "trusted_outputs"
+            try:
+                mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+                (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
+                # Create trusted audit with worth_experiment_plan
+                mod.TRUSTED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+                (mod.TRUSTED_OUTPUT_DIR / "idea_audit.md").write_text("# Audit\nworth_experiment_plan")
+                p = parse_slash_command(f'/experiment "test" --mode {mode}')
+                result = execute_command(p)
+                if mode in ("analyze", "revise"):
+                    check(f"30. experiment {mode} mode", result["status"] == "blocked",
+                          f"got status={result['status']} (expected blocked without results)")
+                else:
+                    check(f"30. experiment {mode} mode", result["status"] == "execute_safe",
+                          f"got status={result['status']}")
+            finally:
+                mod.RESEARCH_DIR = orig_dir
+                mod.RUNTIME_DIR = orig_rt
+                mod.WORKFLOW_STATE_FILE = orig_state
+                mod.TRUSTED_OUTPUT_DIR = orig_trusted
 
     # Test 31: runtime isolation — writes go to runtime/, not research/current/
     with tempfile.TemporaryDirectory() as td:
@@ -1802,9 +2173,13 @@ def _self_test() -> bool:
         orig_dir = mod.RESEARCH_DIR
         orig_rt = mod.RUNTIME_DIR
         orig_state = mod.WORKFLOW_STATE_FILE
+        orig_lit = mod.LITERATURE_SEARCH_DIR
+        orig_runtime_lit = mod.RUNTIME_LIT_DIR
         mod.RESEARCH_DIR = Path(td) / "research" / "current"
         mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
         mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        mod.LITERATURE_SEARCH_DIR = Path(td) / "literature" / "search_runs" / "current"
+        mod.RUNTIME_LIT_DIR = Path(td) / "tmp" / "slash_lit_search"
         try:
             mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
             (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
@@ -1816,6 +2191,8 @@ def _self_test() -> bool:
             mod.RESEARCH_DIR = orig_dir
             mod.RUNTIME_DIR = orig_rt
             mod.WORKFLOW_STATE_FILE = orig_state
+            mod.LITERATURE_SEARCH_DIR = orig_lit
+            mod.RUNTIME_LIT_DIR = orig_runtime_lit
 
     # Test 36: idea-synthesis creates evidence-aware scaffold when metadata available
     with tempfile.TemporaryDirectory() as td:
@@ -1847,6 +2224,189 @@ def _self_test() -> bool:
             mod.RUNTIME_DIR = orig_rt
             mod.WORKFLOW_STATE_FILE = orig_state
             mod.LITERATURE_SEARCH_DIR = orig_lit
+
+    # Test 37: phase_status tracked in workflow_state
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        try:
+            p = parse_slash_command('/research-intake "test"')
+            result = execute_command(p)
+            state = result["workflow_state"]
+            ps = state.get("phase_status", {})
+            check("37. phase_status tracked", ps.get("research_direction_intake") == "scaffold_created",
+                  f"got phase_status={ps}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+
+    # Test 38: idea-synthesis scaffold does NOT mark as trusted_completed
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        orig_lit = mod.LITERATURE_SEARCH_DIR
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        mod.LITERATURE_SEARCH_DIR = Path(td) / "literature" / "search_runs" / "current"
+        try:
+            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
+            mod.LITERATURE_SEARCH_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.LITERATURE_SEARCH_DIR / "top_k.md").write_text("## Paper 1\nTest paper")
+            p = parse_slash_command('/idea-synthesis "test"')
+            result = execute_command(p)
+            state = result["workflow_state"]
+            ps = state.get("phase_status", {})
+            check("38. scaffold not trusted_completed", ps.get("idea_synthesis") == "scaffold_created",
+                  f"got phase_status={ps}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+            mod.LITERATURE_SEARCH_DIR = orig_lit
+
+    # Test 39: idea-synthesis --trusted blocked without metadata
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        orig_lit = mod.LITERATURE_SEARCH_DIR
+        orig_runtime_lit = mod.RUNTIME_LIT_DIR
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        mod.LITERATURE_SEARCH_DIR = Path(td) / "literature" / "search_runs" / "current"
+        mod.RUNTIME_LIT_DIR = Path(td) / "tmp" / "slash_lit_search"
+        try:
+            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
+            p = parse_slash_command('/idea-synthesis "test" --trusted true')
+            result = execute_command(p)
+            check("39. trusted synthesis blocked without metadata", result["status"] == "blocked",
+                  f"got status={result['status']}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+            mod.LITERATURE_SEARCH_DIR = orig_lit
+            mod.RUNTIME_LIT_DIR = orig_runtime_lit
+
+    # Test 40: idea-audit --trusted blocked without synthesis
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        orig_lit = mod.LITERATURE_SEARCH_DIR
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        mod.LITERATURE_SEARCH_DIR = Path(td) / "literature" / "search_runs" / "current"
+        try:
+            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
+            mod.LITERATURE_SEARCH_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.LITERATURE_SEARCH_DIR / "top_k.md").write_text("## Paper 1\nTest paper")
+            p = parse_slash_command('/idea-audit "test" --trusted true')
+            result = execute_command(p)
+            check("40. trusted audit blocked without synthesis", result["status"] == "blocked",
+                  f"got status={result['status']}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+            mod.LITERATURE_SEARCH_DIR = orig_lit
+
+    # Test 41: experiment blocked without trusted audit
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        mod.TRUSTED_OUTPUT_DIR = mod.RESEARCH_DIR / "trusted_outputs"
+        try:
+            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
+            p = parse_slash_command('/experiment "test" --mode lightweight')
+            result = execute_command(p)
+            check("41. experiment blocked without trusted audit", result["status"] == "blocked",
+                  f"got status={result['status']}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+            mod.TRUSTED_OUTPUT_DIR = RESEARCH_DIR / "trusted_outputs"
+
+    # Test 42: experiment blocked without worth_experiment_plan verdict
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        orig_trusted = mod.TRUSTED_OUTPUT_DIR
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        mod.TRUSTED_OUTPUT_DIR = mod.RESEARCH_DIR / "trusted_outputs"
+        try:
+            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
+            mod.TRUSTED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            # Create audit without worth_experiment_plan
+            (mod.TRUSTED_OUTPUT_DIR / "idea_audit.md").write_text("# Audit\nVerdict: insufficient_evidence")
+            p = parse_slash_command('/experiment "test" --mode lightweight')
+            result = execute_command(p)
+            check("42. experiment blocked without worth verdict", result["status"] == "blocked",
+                  f"got status={result['status']}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+            mod.TRUSTED_OUTPUT_DIR = orig_trusted
+
+    # Test 43: status shows phase_status and trusted info
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        orig_trusted = mod.TRUSTED_OUTPUT_DIR
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        mod.TRUSTED_OUTPUT_DIR = mod.RESEARCH_DIR / "trusted_outputs"
+        try:
+            mod.TRUSTED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.TRUSTED_OUTPUT_DIR / "idea_synthesis.md").write_text("# Ideas\nTest")
+            (mod.TRUSTED_OUTPUT_DIR / "idea_audit.md").write_text("# Audit\nworth_experiment_plan")
+            p = parse_slash_command('/status')
+            result = execute_command(p)
+            check("43. status has phase_status", "phase_status" in result,
+                  f"keys={list(result.keys())}")
+            check("43b. status has trusted_idea_synthesis", result.get("trusted_idea_synthesis") is True,
+                  f"got={result.get('trusted_idea_synthesis')}")
+            check("43c. status has has_worth_experiment_plan", result.get("has_worth_experiment_plan") is True,
+                  f"got={result.get('has_worth_experiment_plan')}")
+            check("43d. status no experiment_blocked_reason", result.get("experiment_blocked_reason") is None,
+                  f"got={result.get('experiment_blocked_reason')}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+            mod.TRUSTED_OUTPUT_DIR = orig_trusted
 
     print(f"\nSelf-test results: {tests_passed} passed, {tests_failed} failed")
     return tests_failed == 0
