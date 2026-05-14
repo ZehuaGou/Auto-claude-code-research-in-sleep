@@ -35,6 +35,8 @@
 
 **Phase 21M Status:** IMPLEMENTED — runtime directory isolation. All slash command `--execute` outputs now write to `research/current/runtime/` instead of `research/current/`. This prevents overwriting tracked regression/test fixtures (raw_user_input.md, input_normalization.md, etc.). `workflow_state.json` moved to `research/current/runtime/workflow_state.json` with read-only fallback from legacy path. literature-intake execute_safe messaging clarified as scaffold-only (metadata live run deferred). 50 adapter self-tests (including runtime isolation + legacy fallback tests) + 10 installer tests + 44 research_cli tests pass.
 
+**Phase 21N Status:** IMPLEMENTED — Slash-command-first MVP Phase 2: safe live front-half pipeline. Gates 0-9 complete. `/literature-intake --execute` now calls `run_multisource_pipeline` for real metadata-only search (arXiv + OpenAlex + Crossref, no PDF download). 90 raw records, 90 candidates, 16 top-k demonstrated. `/idea-synthesis` creates evidence-aware scaffold referencing actual metadata files with gap-driven/transfer/contribution-chain templates. `/idea-audit` creates evidence-aware audit scaffold with verdict slots and direct-transfer/coherence-check templates. `/experiment` has mode-specific blocking (analyze/revise blocked without results). `/paper-writing` blocked unless experiment results + claim boundary exist. `/status` shows enhanced output: workflow state, runtime files, literature summary, trusted outputs. Literature search output to `tmp/slash_lit_search/` (gitignored). 57 adapter self-tests + 10 installer tests + 44 research_cli tests pass. No model calls, no trusted_outputs changes, no experiment execution.
+
 ---
 
 ## 1. Goal

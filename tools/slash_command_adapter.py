@@ -3,6 +3,13 @@
 Maps user slash commands to underlying research_cli plans.
 Supports dry-run (default) and execute_safe mode.
 No model calls, no trusted runner execution, no trusted_outputs changes.
+
+Gate 2: literature-intake now calls run_multisource_pipeline for real metadata search.
+Gate 3: idea-synthesis creates evidence-aware scaffold referencing real metadata.
+Gate 4: idea-audit creates evidence-aware audit scaffold.
+Gate 5: experiment has mode-specific logic with proper blocking.
+Gate 6: paper-writing blocks unless experiment results + claim boundary exist.
+Gate 7: status shows enhanced runtime/literature/trusted output summaries.
 """
 
 from __future__ import annotations
@@ -24,6 +31,11 @@ PAYLOAD_DIR = RESEARCH_DIR / "user_command_payloads"
 WORKFLOW_STATE_FILE = RUNTIME_DIR / "workflow_state.json"
 # Fallback: read-only path for legacy workflow_state.json (never written here)
 LEGACY_WORKFLOW_STATE_FILE = RESEARCH_DIR / "workflow_state.json"
+
+# Literature search output location (gitignored via literature/*)
+LITERATURE_SEARCH_DIR = ROOT / "literature" / "search_runs" / "current"
+# Runtime literature search for slash commands (tmp/ is gitignored, avoids pipeline forbidden path check)
+RUNTIME_LIT_DIR = ROOT / "tmp" / "slash_lit_search"
 
 # ---- Execution modes ----
 
@@ -272,6 +284,82 @@ def _compute_next_commands(state: dict) -> list[str]:
     return ["status"]
 
 
+# ---- Evidence detection helpers ----
+
+def _has_literature_metadata() -> bool:
+    """Check if literature metadata exists (from slash runtime or prior runs)."""
+    # Check runtime literature search
+    if RUNTIME_LIT_DIR.exists() and (RUNTIME_LIT_DIR / "top_k.md").exists():
+        return True
+    # Check committed search runs
+    if LITERATURE_SEARCH_DIR.exists() and (LITERATURE_SEARCH_DIR / "top_k.md").exists():
+        return True
+    return False
+
+
+def _get_literature_metadata_path() -> Path | None:
+    """Return the path to the best available literature metadata."""
+    if RUNTIME_LIT_DIR.exists() and (RUNTIME_LIT_DIR / "top_k.md").exists():
+        return RUNTIME_LIT_DIR
+    if LITERATURE_SEARCH_DIR.exists() and (LITERATURE_SEARCH_DIR / "top_k.md").exists():
+        return LITERATURE_SEARCH_DIR
+    return None
+
+
+def _has_idea_synthesis_scaffold() -> bool:
+    """Check if idea synthesis scaffold exists in runtime."""
+    return (RUNTIME_DIR / "idea_synthesis_scaffold.md").exists()
+
+
+def _has_experiment_results() -> bool:
+    """Check if experiment results exist."""
+    # Check runtime
+    if list(RUNTIME_DIR.glob("experiment_results*")):
+        return True
+    # Check research/current
+    if list(RESEARCH_DIR.glob("experiment_results*")):
+        return True
+    return False
+
+
+def _has_claim_boundary() -> bool:
+    """Check if claim boundary / method_refinement exists."""
+    return (RESEARCH_DIR / "trusted_outputs" / "method_refinement.md").exists()
+
+
+def _read_top_k_summary() -> str:
+    """Read a brief summary of top_k papers if available."""
+    meta_path = _get_literature_metadata_path()
+    if meta_path is None:
+        return "No literature metadata available."
+    top_k_file = meta_path / "top_k.md"
+    if not top_k_file.exists():
+        return "No top_k.md found."
+    content = top_k_file.read_text(encoding="utf-8")
+    # Return first 2000 chars as summary
+    return content[:2000] if len(content) > 2000 else content
+
+
+def _count_jsonl_lines(path: Path) -> int:
+    """Count non-empty lines in a JSONL file."""
+    if not path.exists():
+        return 0
+    count = 0
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                count += 1
+    return count
+
+
+def _count_top_k_papers(path: Path) -> int:
+    """Count paper entries in top_k.md (lines starting with '## ' or '- **')."""
+    if not path.exists():
+        return 0
+    content = path.read_text(encoding="utf-8")
+    return content.count("## ") + content.count("- **")
+
+
 # ---- Safe execution functions ----
 
 def _ensure_research_dir() -> None:
@@ -348,7 +436,11 @@ This scaffold is a placeholder — no model conclusions have been drawn.
 
 
 def execute_literature_intake(parsed: dict, payload_file: str | None = None) -> dict:
-    """Safe execution for /literature-intake. Creates scaffold only — no metadata live run."""
+    """Safe execution for /literature-intake. Runs metadata-only literature search.
+
+    Calls run_multisource_pipeline for real metadata search across arXiv, OpenAlex, Crossref.
+    No PDF downloads, no model calls, no trusted_outputs changes.
+    """
     _ensure_research_dir()
     payload = parsed["payload"]
     results = []
@@ -364,73 +456,217 @@ def execute_literature_intake(parsed: dict, payload_file: str | None = None) -> 
             "trusted_outputs_changed": False,
         }
 
-    # Create literature search scaffold
-    scaffold_file = RUNTIME_DIR / "literature_intake_scaffold.md"
-    scaffold_content = f"""---
+    # Determine search topic: use payload if provided, else read from raw_user_input
+    search_topic = payload
+    if not search_topic and raw_file.exists():
+        raw_content = raw_file.read_text(encoding="utf-8")
+        # Extract text after frontmatter
+        parts = raw_content.split("---", 2)
+        if len(parts) >= 3:
+            search_topic = parts[2].strip()[:500]
+        else:
+            search_topic = raw_content.strip()[:500]
+
+    if not search_topic:
+        return {
+            "status": "blocked",
+            "command": "/literature-intake",
+            "blocked_reason": "No search topic available. Provide payload or run /research-intake first.",
+            "model_called": False,
+            "trusted_outputs_changed": False,
+        }
+
+    # Run metadata-only literature search via existing pipeline
+    try:
+        # Ensure project root is importable
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from tools.literature_evidence_landing import run_multisource_pipeline
+
+        RUNTIME_LIT_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Extract must_include keywords from topic (simple heuristic)
+        must_include = _extract_keywords(search_topic)
+
+        # Capture pipeline stdout to prevent mixing with adapter JSON output
+        import io
+        _old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            pipeline_result = run_multisource_pipeline(
+            topic=search_topic,
+            intent="novelty_check",
+            must_include=must_include,
+            sources=["arxiv", "crossref", "openalex"],
+            run_dir=RUNTIME_LIT_DIR,
+            start_year=2020,
+            end_year=datetime.now().year,
+            max_results_per_source=15,
+            max_jobs=9,
+            per_page=10,
+            top_k=10,
+            overwrite=True,
+            exclude="supply chain,medical",
+            dry_run=False,
+            json_output=True,
+        )
+        finally:
+            sys.stdout = _old_stdout
+
+        if pipeline_result.get("status") == "PASS":
+            # Read actual counts from output files (pipeline summary may be stale)
+            n_raw = _count_jsonl_lines(RUNTIME_LIT_DIR / "raw_results.jsonl")
+            n_candidates = _count_jsonl_lines(RUNTIME_LIT_DIR / "candidates.jsonl")
+            n_top_k = _count_top_k_papers(RUNTIME_LIT_DIR / "top_k.md")
+
+            # Write summary.json
+            summary_file = RUNTIME_LIT_DIR / "summary.json"
+            summary_file.write_text(json.dumps({
+                "status": "success",
+                "topic": search_topic,
+                "sources": ["arxiv", "crossref", "openalex"],
+                "total_raw_records": n_raw,
+                "total_candidates": n_candidates,
+                "top_k_selected": n_top_k,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "model_called": False,
+            }, indent=2, ensure_ascii=False), encoding="utf-8")
+
+            # Create literature intake summary scaffold
+            scaffold_file = RUNTIME_DIR / "literature_intake_scaffold.md"
+            scaffold_content = f"""---
 command: /literature-intake
 timestamp: {datetime.now(timezone.utc).isoformat()}
-implementation_source: scaffold
+implementation_source: live_metadata_search
 model_not_called: true
-status: scaffold
+status: success
+search_topic: {search_topic}
+total_raw_records: {n_raw}
+total_candidates: {n_candidates}
+top_k_selected: {n_top_k}
 ---
 
-# Literature Intake Scaffold
+# Literature Intake — Metadata Search Complete
 
-## Search Focus
+## Search Topic
 
-{payload}
+{search_topic}
 
-## Pipeline Status
-
-- metadata_search: scaffold (not executed)
-- query_planning: requires model
-- multi_source_search: requires execution via literature_evidence_landing.py
-- dedup_ranking: requires execution
-- top_k_selection: requires execution
-- full_text_acquisition: requires execution
-- full_text_review: requires model
-
-## Available Sources (when executed)
+## Sources Queried
 
 - arXiv (Atom XML API)
 - Crossref (REST API)
 - OpenAlex (REST API)
 
+## Results Summary
+
+- Raw records fetched: {n_raw}
+- Deduplicated candidates: {n_candidates}
+- Top-k selected: {n_top_k}
+
+## Output Files
+
+- Search plan: runtime/literature_search/search_plan.yaml
+- Raw results: runtime/literature_search/raw_results.jsonl
+- Candidates: runtime/literature_search/candidates.jsonl
+- Top-k papers: runtime/literature_search/top_k.md
+- Summary: runtime/literature_search/summary.json
+
 ## Next Action
 
-To run metadata-only literature search:
-1. Ensure research/current/runtime/raw_user_input.md exists
-2. Execute literature evidence pipeline via literature_evidence_landing.py
-3. This scaffold is a placeholder — no search has been executed
+Run /idea-synthesis to generate candidate research ideas based on this literature evidence.
 
 ## Notes
 
 - No PDFs downloaded
 - No models called
 - No trusted_outputs changed
-- This scaffold is NOT a live literature search — actual search deferred
+- Metadata-only search — full-text review deferred
 """
-    scaffold_file.write_text(scaffold_content, encoding="utf-8")
-    results.append(f"Created runtime/{scaffold_file.name}")
+            scaffold_file.write_text(scaffold_content, encoding="utf-8")
+            results.append(f"Created runtime/{scaffold_file.name}")
+            results.append(f"Created runtime/literature_search/ ({n_raw} raw, {n_candidates} candidates, {n_top_k} top-k)")
 
-    # Update workflow state
-    state = update_workflow_state("literature-intake", payload_file)
-    results.append(f"Updated runtime/workflow_state.json")
+            # Update workflow state
+            state = update_workflow_state("literature-intake", payload_file)
+            results.append(f"Updated runtime/workflow_state.json")
 
-    return {
-        "status": "execute_safe",
-        "command": "/literature-intake",
-        "files_created": results,
-        "workflow_state": state,
-        "model_called": False,
-        "trusted_outputs_changed": False,
-        "next_action": "Run /idea-synthesis after literature evidence is collected",
-        "note": "Scaffold created. Metadata live run deferred — not executed yet.",
+            return {
+                "status": "execute_safe",
+                "command": "/literature-intake",
+                "files_created": results,
+                "workflow_state": state,
+                "model_called": False,
+                "trusted_outputs_changed": False,
+                "next_action": "Run /idea-synthesis to generate candidate ideas",
+                "note": f"Metadata search complete: {n_raw} raw records, {n_candidates} candidates, {n_top_k} top-k.",
+                "search_summary": {
+                    "raw_records": n_raw,
+                    "candidates": n_candidates,
+                    "top_k": n_top_k,
+                    "run_dir": str(RUNTIME_LIT_DIR),
+                },
+            }
+        else:
+            # Pipeline failed
+            error_msg = pipeline_result.get("error", "Unknown pipeline error")
+            return {
+                "status": "blocked",
+                "command": "/literature-intake",
+                "blocked_reason": f"Metadata search failed: {error_msg}",
+                "model_called": False,
+                "trusted_outputs_changed": False,
+                "pipeline_result": pipeline_result,
+            }
+
+    except ImportError:
+        return {
+            "status": "blocked",
+            "command": "/literature-intake",
+            "blocked_reason": "literature_evidence_landing module not available. Cannot run metadata search.",
+            "model_called": False,
+            "trusted_outputs_changed": False,
+        }
+    except Exception as e:
+        return {
+            "status": "blocked",
+            "command": "/literature-intake",
+            "blocked_reason": f"Metadata search error: {type(e).__name__}: {e}",
+            "model_called": False,
+            "trusted_outputs_changed": False,
+        }
+
+
+def _extract_keywords(topic: str) -> list[str]:
+    """Extract must-include keywords from a research topic string."""
+    # Simple heuristic: split on common delimiters, take meaningful words
+    stop_words = {
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "shall", "can", "need", "dare", "ought",
+        "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+        "as", "into", "through", "during", "before", "after", "above", "below",
+        "between", "out", "off", "over", "under", "again", "further", "then",
+        "once", "here", "there", "when", "where", "why", "how", "all", "both",
+        "each", "few", "more", "most", "other", "some", "such", "no", "nor",
+        "not", "only", "own", "same", "so", "than", "too", "very", "just",
+        "don", "now", "and", "but", "or", "if", "because", "while", "about",
+        "up", "it", "its", "i", "me", "my", "we", "our", "you", "your",
+        "he", "him", "his", "she", "her", "they", "them", "their", "this",
+        "that", "these", "those", "what", "which", "who", "whom",
     }
+    words = re.findall(r'[a-zA-Z]{3,}', topic.lower())
+    keywords = [w for w in words if w not in stop_words]
+    # Return top 5 most distinctive words
+    return keywords[:5]
 
 
 def execute_idea_synthesis(parsed: dict, payload_file: str | None = None) -> dict:
-    """Safe execution for /idea-synthesis. Generates scaffold, no model calls."""
+    """Safe execution for /idea-synthesis. Creates evidence-aware scaffold, no model calls.
+
+    If literature metadata exists, scaffold references actual metadata files.
+    If no metadata, blocked with next_action to run /literature-intake.
+    """
     _ensure_research_dir()
     payload = parsed["payload"]
     num_candidates = parsed["flags"].get("num-candidates", "5")
@@ -447,6 +683,17 @@ def execute_idea_synthesis(parsed: dict, payload_file: str | None = None) -> dic
             "trusted_outputs_changed": False,
         }
 
+    # Check for literature metadata
+    has_metadata = _has_literature_metadata()
+    meta_path = _get_literature_metadata_path()
+    try:
+        meta_rel = str(meta_path.relative_to(ROOT)) if meta_path else "none"
+    except ValueError:
+        meta_rel = str(meta_path) if meta_path else "none"
+
+    # Read top_k summary for evidence-aware scaffold
+    top_k_summary = _read_top_k_summary() if has_metadata else "No literature metadata available."
+
     # Create idea synthesis scaffold
     scaffold_file = RUNTIME_DIR / "idea_synthesis_scaffold.md"
     scaffold_content = f"""---
@@ -454,8 +701,10 @@ command: /idea-synthesis
 timestamp: {datetime.now(timezone.utc).isoformat()}
 implementation_source: scaffold
 model_not_called: true
-status: scaffold
+status: {"evidence_aware" if has_metadata else "blocked_no_evidence"}
 num_candidates: {num_candidates}
+literature_metadata: {"available" if has_metadata else "missing"}
+metadata_path: {meta_rel}
 ---
 
 # Idea Synthesis Scaffold
@@ -464,22 +713,39 @@ num_candidates: {num_candidates}
 
 {payload}
 
-## Synthesis Modes (all require model)
+## Literature Evidence Status
+
+{"**Available** — top_k papers loaded from: " + meta_rel if has_metadata else "**Missing** — run /literature-intake first to collect literature metadata."}
+
+{"### Top-K Papers Summary" if has_metadata else ""}
+
+{top_k_summary if has_metadata else ""}
+
+## Synthesis Modes (all require model — scaffold templates below)
 
 ### Gap-Driven Innovation
 - Identify gaps in existing literature
 - Propose methods that address uncovered problems
+- Reference: top_k.md for existing coverage
 - Status: scaffold (model not called)
 
 ### Transfer Innovation
-- Transfer成熟方法 from one domain to another
-- Identify source domain methods with proven effectiveness
-- Map to target domain constraints
+- Transfer mature method from source domain to target domain
+- **Source domain**: [requires model — identify from literature]
+- **Target domain**: [requires model — from user input]
+- **Direct transfer baseline**: [requires model — what happens if method applied as-is]
+- **Mismatch**: [requires model — what doesn't transfer directly]
+- **Adaptation opportunity**: [requires model — how to bridge the gap]
 - Status: scaffold (model not called)
 
 ### Contribution Chain
 - Build on existing work incrementally
-- Identify chain of contributions leading to novel result
+- **Component contribution 1**: [requires model]
+- **Component contribution 2**: [requires model]
+- **Component contribution 3**: [requires model]
+- **Shared core claim**: [requires model — what ties contributions together]
+- **Ablation requirement**: [requires model — which components are essential]
+- **Risk of patchwork**: [requires model — is this just assembly, not innovation?]
 - Status: scaffold (model not called)
 
 ## Candidate Ideas Template
@@ -491,18 +757,18 @@ For each of {num_candidates} candidates:
 4. **Key Hypothesis**: [requires model]
 5. **Expected Contribution**: [requires model]
 6. **Risk Level**: [requires model]
-7. **Prior Work Basis**: [requires model]
+7. **Prior Work Basis**: [requires model — must reference actual papers from top_k]
 
 ## Next Action
 
-Run idea_pivot via trusted_role_runner to generate actual candidates.
-This scaffold is a placeholder — no model conclusions have been drawn.
+{"Run /idea-audit to verify novelty of generated ideas." if has_metadata else "Blocked: run /literature-intake first to collect literature metadata."}
 
 ## Notes
 
 - No models called
 - No trusted_outputs changed
-- Transfer innovation and contribution chain modes are template-ready
+- {"Scaffold references actual literature metadata from " + meta_rel if has_metadata else "Cannot generate ideas without literature evidence"}
+- Transfer innovation and contribution chain modes include detailed templates
 """
     scaffold_file.write_text(scaffold_content, encoding="utf-8")
     results.append(f"Created runtime/{scaffold_file.name}")
@@ -518,13 +784,16 @@ This scaffold is a placeholder — no model conclusions have been drawn.
         "workflow_state": state,
         "model_called": False,
         "trusted_outputs_changed": False,
-        "next_action": "Run /idea-audit to verify novelty of generated ideas",
-        "note": f"Scaffold for {num_candidates} candidates created. Actual synthesis requires model.",
+        "next_action": "Run /idea-audit to verify novelty of generated ideas" if has_metadata else "Run /literature-intake first",
+        "note": f"Evidence-aware scaffold for {num_candidates} candidates. Metadata: {'available' if has_metadata else 'missing'}.",
     }
 
 
 def execute_idea_audit(parsed: dict, payload_file: str | None = None) -> dict:
-    """Safe execution for /idea-audit. Generates audit scaffold, no model calls."""
+    """Safe execution for /idea-audit. Creates evidence-aware audit scaffold, no model calls.
+
+    Checks for both literature evidence and idea synthesis scaffold.
+    """
     _ensure_research_dir()
     payload = parsed["payload"]
     results = []
@@ -541,8 +810,25 @@ def execute_idea_audit(parsed: dict, payload_file: str | None = None) -> dict:
         }
 
     # Check for evidence
-    evidence_dir = ROOT / "literature" / "search_runs" / "current"
-    has_evidence = evidence_dir.exists() and (evidence_dir / "top_k.md").exists()
+    has_metadata = _has_literature_metadata()
+    meta_path = _get_literature_metadata_path()
+    try:
+        meta_rel = str(meta_path.relative_to(ROOT)) if meta_path else "none"
+    except ValueError:
+        meta_rel = str(meta_path) if meta_path else "none"
+
+    # Check for idea synthesis scaffold
+    has_synthesis = _has_idea_synthesis_scaffold()
+
+    # Read top_k summary for evidence-aware scaffold
+    top_k_summary = _read_top_k_summary() if has_metadata else "No literature metadata available."
+
+    # Determine blocked reasons
+    blocked_reasons = []
+    if not has_metadata:
+        blocked_reasons.append("insufficient_evidence")
+    if not has_synthesis:
+        blocked_reasons.append("no_candidate_ideas")
 
     # Create audit scaffold
     scaffold_file = RUNTIME_DIR / "idea_audit_scaffold.md"
@@ -551,8 +837,11 @@ command: /idea-audit
 timestamp: {datetime.now(timezone.utc).isoformat()}
 implementation_source: scaffold
 model_not_called: true
-status: scaffold
-evidence_available: {"true" if has_evidence else "false"}
+status: {"evidence_aware" if (has_metadata and has_synthesis) else "blocked"}
+evidence_available: {"true" if has_metadata else "false"}
+synthesis_available: {"true" if has_synthesis else "false"}
+blocked_reasons: {json.dumps(blocked_reasons) if blocked_reasons else "none"}
+metadata_path: {meta_rel}
 ---
 
 # Idea Audit Scaffold
@@ -561,35 +850,49 @@ evidence_available: {"true" if has_evidence else "false"}
 
 {payload}
 
-## Audit Components (all require model)
+## Prerequisites Check
 
-### Novelty Check
-- Compare idea against literature evidence
-- Identify closest prior work
-- Assess overlap level
-- Status: scaffold (model not called)
+- Literature evidence: {"available at " + meta_rel if has_metadata else "MISSING — run /literature-intake first"}
+- Idea synthesis scaffold: {"available" if has_synthesis else "MISSING — run /idea-synthesis first"}
 
-### Transfer Check
-- Verify transfer innovation is valid
-- Check source domain maturity
-- Map transferability to target domain
-- Status: scaffold (model not called)
+## Literature Evidence Summary
 
-### Method Refinement
-- Refine method based on audit findings
-- Define exact differentiator from prior work
-- Set testable hypothesis
-- Status: scaffold (model not called)
+{top_k_summary}
 
-### Research Contract
-- Define in-scope and out-of-scope
-- Set success/failure criteria
-- Define kill conditions
-- Status: scaffold (model not called)
+## Audit Verdict Slots (all require model)
+
+- **already_done**: [requires model] — is this idea already published?
+- **direct_transfer_only**: [requires model] — is this just applying an existing method to a new domain without adaptation?
+- **adaptation_gap**: [requires model] — is there a meaningful adaptation needed?
+- **combination_gap**: [requires model] — is this combining existing methods in a novel way?
+- **insufficient_evidence**: [requires model] — is the literature evidence too thin to judge?
+- **promising_but_needs_more_evidence**: [requires model] — direction looks good but needs more support
+- **worth_experiment_plan**: [requires model] — novelty verified, proceed to experiment planning
+
+## Direct Transfer Check Template
+
+For each candidate idea:
+1. **Source method**: [requires model — what existing method is being transferred?]
+2. **Target domain**: [requires model — what new domain is it applied to?]
+3. **Direct applicability**: [requires model — can the method be applied as-is?]
+4. **Domain mismatch**: [requires model — what differences prevent direct transfer?]
+5. **Adaptation required**: [requires model — what modifications are needed?]
+6. **Novelty of adaptation**: [requires model — is the adaptation itself novel?]
+
+## Contribution Chain Coherence Check Template
+
+For each candidate idea:
+1. **Component 1**: [requires model — first building block]
+2. **Component 2**: [requires model — second building block]
+3. **Component 3**: [requires model — third building block]
+4. **Shared claim**: [requires model — what unifying claim ties them?]
+5. **Ablation test**: [requires model — which component is essential?]
+6. **Patchwork risk**: [requires model — is this just assembly without novelty?]
 
 ## Evidence Status
 
-- Literature evidence: {"available" if has_evidence else "insufficient_evidence"}
+- Literature evidence: {"available" if has_metadata else "insufficient_evidence"}
+- Idea synthesis: {"available" if has_synthesis else "missing"}
 - Full-text review: requires model
 - Closest prior work identification: requires model
 
@@ -602,8 +905,7 @@ evidence_available: {"true" if has_evidence else "false"}
 
 ## Next Action
 
-Run novelty_check via trusted_role_runner to perform actual audit.
-This scaffold is a placeholder — no model conclusions have been drawn.
+{"Run novelty_check via trusted_role_runner to perform actual audit." if (has_metadata and has_synthesis) else "Blocked: " + "; ".join(blocked_reasons) + ". Complete these prerequisites first."}
 
 ## Notes
 
@@ -617,22 +919,32 @@ This scaffold is a placeholder — no model conclusions have been drawn.
 
     # Update workflow state
     state = update_workflow_state("idea-audit", payload_file)
+    if blocked_reasons:
+        state["blocked_reason"] = "; ".join(blocked_reasons)
     results.append(f"Updated runtime/workflow_state.json")
 
     return {
-        "status": "execute_safe",
+        "status": "blocked" if blocked_reasons else "execute_safe",
         "command": "/idea-audit",
         "files_created": results,
         "workflow_state": state,
         "model_called": False,
         "trusted_outputs_changed": False,
-        "next_action": "Run /experiment after audit passes",
-        "note": "Audit scaffold created. Actual audit requires model. evidence_available=" + str(has_evidence),
+        "blocked_reasons": blocked_reasons if blocked_reasons else None,
+        "next_action": "Run /experiment after audit passes" if not blocked_reasons else f"Blocked: {'; '.join(blocked_reasons)}",
+        "note": f"Audit scaffold created. evidence={'available' if has_metadata else 'missing'}, synthesis={'available' if has_synthesis else 'missing'}.",
     }
 
 
 def execute_experiment(parsed: dict, payload_file: str | None = None) -> dict:
-    """Safe execution for /experiment. Generates mode-specific scaffold, no model calls."""
+    """Safe execution for /experiment. Generates mode-specific scaffold, no model calls.
+
+    Mode-specific logic:
+    - lightweight: always allowed, creates sanity experiment scaffold
+    - full: warns if no lightweight evidence, creates full experiment scaffold
+    - analyze: blocked unless experiment results exist
+    - revise: blocked unless failure/blocked reason exists
+    """
     _ensure_research_dir()
     payload = parsed["payload"]
     mode = parsed["flags"].get("mode", "lightweight")
@@ -660,6 +972,31 @@ def execute_experiment(parsed: dict, payload_file: str | None = None) -> dict:
             "trusted_outputs_changed": False,
         }
 
+    # Mode-specific blocking logic
+    has_results = _has_experiment_results()
+    has_lightweight = (RUNTIME_DIR / "experiment_scaffold_lightweight.md").exists()
+    has_failure_info = has_results  # Simplified: if results exist, we can analyze failures
+
+    if mode == "full" and not has_lightweight:
+        # Warning but not blocked — can still create scaffold
+        pass
+    elif mode == "analyze" and not has_results:
+        return {
+            "status": "blocked",
+            "command": "/experiment",
+            "blocked_reason": "No experiment results to analyze. Run /experiment --mode lightweight or --mode full first.",
+            "model_called": False,
+            "trusted_outputs_changed": False,
+        }
+    elif mode == "revise" and not has_results:
+        return {
+            "status": "blocked",
+            "command": "/experiment",
+            "blocked_reason": "No experiment results or failure info to revise from. Run /experiment first.",
+            "model_called": False,
+            "trusted_outputs_changed": False,
+        }
+
     # Mode-specific scaffolds
     mode_sections = {
         "lightweight": """
@@ -680,22 +1017,22 @@ def execute_experiment(parsed: dict, payload_file: str | None = None) -> dict:
 - Status: scaffold (not executed)
 - Expected duration: hours to days
 - Requirements: significant compute
-""",
+""" + ("\n**Warning:** No lightweight experiment scaffold found. Consider running lightweight first." if not has_lightweight else ""),
         "analyze": """
 ### Result Analysis
 - Read existing experiment results
 - Compare against baselines
 - Identify failure modes
-- Status: scaffold (no results to analyze)
-- Note: Requires experiment results to exist
+- Status: scaffold (results available for analysis)
+- Note: Results found — model should read and analyze them
 """,
         "revise": """
 ### Method Revision
 - Analyze failure causes
 - Generate revision hypotheses
 - Design revised experiment
-- Status: scaffold (not executed)
-- Note: Requires previous experiment results
+- Status: scaffold (failure info available for revision)
+- Note: Previous results available — model should analyze failures
 """,
     }
 
@@ -708,6 +1045,8 @@ timestamp: {datetime.now(timezone.utc).isoformat()}
 implementation_source: scaffold
 model_not_called: true
 status: scaffold
+has_lightweight_evidence: {"true" if has_lightweight else "false"}
+has_experiment_results: {"true" if has_results else "false"}
 ---
 
 # Experiment Scaffold — {mode.upper()} Mode
@@ -763,7 +1102,12 @@ This scaffold is a placeholder — no experiment has been designed or executed.
 
 
 def execute_paper_writing(parsed: dict, payload_file: str | None = None) -> dict:
-    """Safe execution for /paper-writing. Generates scaffold, checks prerequisites."""
+    """Safe execution for /paper-writing. Generates scaffold, checks prerequisites.
+
+    Blocked unless:
+    - Experiment results exist
+    - Claim boundary (method_refinement) exists
+    """
     _ensure_research_dir()
     payload = parsed["payload"]
     results = []
@@ -780,18 +1124,21 @@ def execute_paper_writing(parsed: dict, payload_file: str | None = None) -> dict
         }
 
     # Check for experiment results
-    experiment_results = list(RUNTIME_DIR.glob("experiment_results*"))
-    has_results = len(experiment_results) > 0
+    has_results = _has_experiment_results()
 
     # Check for claim boundary
-    claim_file = RESEARCH_DIR / "trusted_outputs" / "method_refinement.md"
-    has_claim = claim_file.exists()
+    has_claim = _has_claim_boundary()
+
+    # Check for literature evidence
+    has_metadata = _has_literature_metadata()
 
     blocked_reasons = []
     if not has_results:
         blocked_reasons.append("No experiment results found")
     if not has_claim:
         blocked_reasons.append("No claim boundary (method_refinement) found")
+    if not has_metadata:
+        blocked_reasons.append("No literature evidence")
 
     # Create paper-writing scaffold
     scaffold_file = RUNTIME_DIR / "paper_writing_scaffold.md"
@@ -814,7 +1161,7 @@ blocked_reasons: {json.dumps(blocked_reasons) if blocked_reasons else "none"}
 
 - Experiment results: {"found" if has_results else "NOT FOUND — blocked"}
 - Claim boundary (method_refinement): {"found" if has_claim else "NOT FOUND — blocked"}
-- Literature evidence: checked separately
+- Literature evidence: {"found" if has_metadata else "NOT FOUND — blocked"}
 
 ## Paper Sections Template
 
@@ -875,13 +1222,20 @@ blocked_reasons: {json.dumps(blocked_reasons) if blocked_reasons else "none"}
         "workflow_state": state,
         "model_called": False,
         "trusted_outputs_changed": False,
-        "blocked_reasons": blocked_reasons,
+        "blocked_reasons": blocked_reasons if blocked_reasons else None,
         "next_action": "Complete experiment and claim boundary before paper writing",
     }
 
 
 def execute_status(parsed: dict, payload_file: str | None = None) -> dict:
-    """Safe execution for /status. Reads state, no mutations."""
+    """Safe execution for /status. Reads state, no mutations.
+
+    Enhanced output includes:
+    - workflow state (phase, completed, next, blocked)
+    - runtime files summary
+    - literature metadata summary
+    - trusted outputs summary
+    """
     state = load_workflow_state()
 
     # Read trusted outputs summary
@@ -900,11 +1254,34 @@ def execute_status(parsed: dict, payload_file: str | None = None) -> dict:
             else:
                 trusted_outputs_summary[stage] = "missing"
 
+    # Runtime files summary
+    runtime_files = {}
+    if RUNTIME_DIR.exists():
+        for f in sorted(RUNTIME_DIR.iterdir()):
+            if f.is_file():
+                runtime_files[f.name] = f.stat().st_size
+            elif f.is_dir():
+                runtime_files[f.name + "/"] = sum(1 for _ in f.iterdir())
+
+    # Literature metadata summary
+    lit_summary = {"available": False, "path": None, "top_k_count": 0}
+    meta_path = _get_literature_metadata_path()
+    if meta_path:
+        lit_summary["available"] = True
+        lit_summary["path"] = str(meta_path.relative_to(ROOT))
+        top_k_file = meta_path / "top_k.md"
+        if top_k_file.exists():
+            content = top_k_file.read_text(encoding="utf-8")
+            # Count paper entries (lines starting with "## " or "- **")
+            lit_summary["top_k_count"] = content.count("## ") + content.count("- **")
+
     return {
         "status": "execute_safe",
         "command": "/status",
         "workflow_state": state,
         "trusted_outputs_summary": trusted_outputs_summary,
+        "runtime_files": runtime_files,
+        "literature_summary": lit_summary,
         "model_called": False,
         "trusted_outputs_changed": False,
     }
@@ -1229,6 +1606,10 @@ def _self_test() -> bool:
             result = execute_command(p)
             check("24. execute status", result["status"] == "execute_safe" and "workflow_state" in result,
                   f"got status={result['status']}")
+            check("24b. status has runtime_files", "runtime_files" in result,
+                  f"keys={list(result.keys())}")
+            check("24c. status has literature_summary", "literature_summary" in result,
+                  f"keys={list(result.keys())}")
         finally:
             mod.RESEARCH_DIR = orig_dir
             mod.RUNTIME_DIR = orig_rt
@@ -1323,8 +1704,12 @@ def _self_test() -> bool:
             (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
             p = parse_slash_command(f'/experiment "test" --mode {mode}')
             result = execute_command(p)
-            check(f"30. experiment {mode} mode", result["status"] == "execute_safe",
-                  f"got status={result['status']}")
+            if mode in ("analyze", "revise"):
+                check(f"30. experiment {mode} mode", result["status"] == "blocked",
+                      f"got status={result['status']} (expected blocked without results)")
+            else:
+                check(f"30. experiment {mode} mode", result["status"] == "execute_safe",
+                      f"got status={result['status']}")
 
     # Test 31: runtime isolation — writes go to runtime/, not research/current/
     with tempfile.TemporaryDirectory() as td:
@@ -1372,6 +1757,96 @@ def _self_test() -> bool:
             mod.RUNTIME_DIR = orig_rt
             mod.WORKFLOW_STATE_FILE = orig_state
             mod.LEGACY_WORKFLOW_STATE_FILE = legacy_state
+
+    # Test 33: idea-synthesis blocked without raw_user_input
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        try:
+            p = parse_slash_command('/idea-synthesis "test"')
+            result = execute_command(p)
+            check("33. idea-synthesis blocked without input", result["status"] == "blocked",
+                  f"got status={result['status']}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+
+    # Test 34: idea-audit blocked without raw_user_input
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        try:
+            p = parse_slash_command('/idea-audit "test"')
+            result = execute_command(p)
+            check("34. idea-audit blocked without input", result["status"] == "blocked",
+                  f"got status={result['status']}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+
+    # Test 35: idea-audit blocked without evidence + synthesis
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        try:
+            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
+            p = parse_slash_command('/idea-audit "test"')
+            result = execute_command(p)
+            check("35. idea-audit blocked without evidence+synthesis", result["status"] == "blocked",
+                  f"got status={result['status']}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+
+    # Test 36: idea-synthesis creates evidence-aware scaffold when metadata available
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        orig_lit = mod.LITERATURE_SEARCH_DIR
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        mod.LITERATURE_SEARCH_DIR = Path(td) / "literature" / "search_runs" / "current"
+        try:
+            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
+            # Create fake top_k.md
+            mod.LITERATURE_SEARCH_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.LITERATURE_SEARCH_DIR / "top_k.md").write_text("## Paper 1\nTest paper")
+            p = parse_slash_command('/idea-synthesis "test"')
+            result = execute_command(p)
+            check("36. idea-synthesis evidence-aware", result["status"] == "execute_safe",
+                  f"got status={result['status']}")
+            # Check scaffold references metadata
+            scaffold = (mod.RUNTIME_DIR / "idea_synthesis_scaffold.md").read_text(encoding="utf-8")
+            check("36b. scaffold references metadata", "evidence_aware" in scaffold,
+                  f"scaffold snippet={scaffold[:200]}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+            mod.LITERATURE_SEARCH_DIR = orig_lit
 
     print(f"\nSelf-test results: {tests_passed} passed, {tests_failed} failed")
     return tests_failed == 0

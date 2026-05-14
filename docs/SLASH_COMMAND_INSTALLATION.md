@@ -80,11 +80,18 @@ research/current/runtime/         (local — gitignored, all runtime outputs)
   ├── raw_user_input.md           (created by /research-intake --execute)
   ├── input_normalization_scaffold.md
   ├── literature_intake_scaffold.md
-  ├── idea_synthesis_scaffold.md
-  ├── idea_audit_scaffold.md
-  ├── experiment_scaffold_*.md
-  ├── paper_writing_scaffold.md
+  ├── idea_synthesis_scaffold.md  (evidence-aware, references literature metadata)
+  ├── idea_audit_scaffold.md      (evidence-aware, checks for synthesis + evidence)
+  ├── experiment_scaffold_*.md    (mode-specific: lightweight/full/analyze/revise)
+  ├── paper_writing_scaffold.md   (blocked unless results + claim boundary)
   └── workflow_state.json         (tracks user phase)
+
+tmp/slash_lit_search/             (local — gitignored, literature metadata search output)
+  ├── search_plan.yaml
+  ├── raw_results.jsonl
+  ├── candidates.jsonl
+  ├── top_k.md
+  └── summary.json
 
 research/current/user_command_payloads/  (local — gitignored, command payloads)
 ```
