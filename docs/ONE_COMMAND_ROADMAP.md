@@ -37,13 +37,14 @@
 
 **Phase 21N Status:** IMPLEMENTED — Slash-command-first MVP Phase 2: safe live front-half pipeline. Gates 0-9 complete. `/literature-intake --execute` now calls `run_multisource_pipeline` for real metadata-only search (arXiv + OpenAlex + Crossref, no PDF download). 90 raw records, 90 candidates, 16 top-k demonstrated. `/idea-synthesis` creates evidence-aware scaffold referencing actual metadata files with gap-driven/transfer/contribution-chain templates. `/idea-audit` creates evidence-aware audit scaffold with verdict slots and direct-transfer/coherence-check templates. `/experiment` has mode-specific blocking (analyze/revise blocked without results). `/paper-writing` blocked unless experiment results + claim boundary exist. `/status` shows enhanced output: workflow state, runtime files, literature summary, trusted outputs. Literature search output to `tmp/slash_lit_search/` (gitignored). 57 adapter self-tests + 10 installer tests + 44 research_cli tests pass. No model calls, no trusted_outputs changes, no experiment execution.
 
-**Phase 3 Status:** IMPLEMENTED — Trusted Idea Synthesis + Trusted Idea Audit integration. 6 gates complete:
-- Gate 0: `phase_status` field added to workflow_state (`not_started`/`scaffold_created`/`trusted_completed`/`blocked`). Scaffold creation no longer marks phase as completed for experiment gating.
-- Gate 1: Trusted output format defined — `trusted_outputs/idea_synthesis.md` and `trusted_outputs/idea_audit.md` with YAML frontmatter headers.
-- Gate 2: `/idea-synthesis --execute --trusted` calls `trusted_role_runner` with `idea_generator` role (deepseek-v4-pro, thinking enabled). Writes trusted output with ledger call_id.
-- Gate 3: `/idea-audit --execute --trusted` calls `trusted_role_runner` with `idea_reviewer` role (Codex preferred, deepseek-v4-pro fallback). Checks for `worth_experiment_plan` verdict.
-- Gate 4: `/experiment` gate fixed — requires trusted idea audit with `worth_experiment_plan` verdict. Blocks without trusted audit or without verdict.
-- Gate 5: `/status` enhanced — shows `phase_status`, `trusted_idea_synthesis`, `trusted_idea_audit`, `has_worth_experiment_plan`, `experiment_blocked_reason`.
+**Phase 3 Status:** IMPLEMENTED — Trusted Idea Synthesis + Trusted Idea Audit integration. Code paths implemented, not live-validated (no real model calls in this commit).
+- Gate 0: `phase_status` field added to workflow_state with 6 values: `not_started`/`safe_completed`/`metadata_completed`/`scaffold_created`/`trusted_completed`/`blocked`. Only `safe_completed`/`metadata_completed`/`trusted_completed` count as "completed" for phase advancement. `scaffold_created` and `blocked` do NOT enter `completed_user_phases`.
+- Gate 1: Trusted output format defined — `trusted_outputs/idea_synthesis.md` and `trusted_outputs/idea_audit.md` with YAML frontmatter headers from `trusted_role_runner`.
+- Gate 2: `/idea-synthesis --execute --trusted` code path calls `trusted_role_runner` with `idea_generator` role (deepseek-v4-pro, thinking enabled). Writes trusted output with ledger call_id. **Live model invocation not performed in this commit.**
+- Gate 3: `/idea-audit --execute --trusted` code path calls `trusted_role_runner` with `idea_reviewer` role (Codex preferred, deepseek-v4-pro fallback). Checks for `worth_experiment_plan` verdict. **Live model invocation not performed in this commit.**
+- Gate 4: `/experiment` gate — requires `phase_status.idea_audit == trusted_completed` AND `has_worth_experiment_plan == true` AND trusted output file exists. Blocks otherwise with clear reason.
+- Gate 5: `/status` enhanced — shows `phase_status`, `completed_user_phases`, `next_allowed_commands`, `trusted_idea_synthesis`, `trusted_idea_audit`, `has_worth_experiment_plan`, `experiment_blocked_reason`.
+- Real trusted completion requires explicit `--trusted` call, ledger `call_id`, and `validate_model_invocation`.
 - 67 adapter self-tests + 10 installer tests + 44 research_cli tests pass.
 
 ---

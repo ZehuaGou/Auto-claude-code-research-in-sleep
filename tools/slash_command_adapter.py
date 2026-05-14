@@ -42,9 +42,24 @@ RUNTIME_LIT_DIR = ROOT / "tmp" / "slash_lit_search"
 
 # Phase status values
 PHASE_NOT_STARTED = "not_started"
+PHASE_SAFE_COMPLETED = "safe_completed"
+PHASE_METADATA_COMPLETED = "metadata_completed"
 PHASE_SCAFFOLD_CREATED = "scaffold_created"
 PHASE_TRUSTED_COMPLETED = "trusted_completed"
 PHASE_BLOCKED = "blocked"
+
+# Only these statuses count as "completed" for phase advancement
+_COMPLETION_STATUSES = {PHASE_SAFE_COMPLETED, PHASE_METADATA_COMPLETED, PHASE_TRUSTED_COMPLETED}
+
+# Allowed phase transitions: phase -> minimum status needed to unlock next phase
+_PHASE_ADVANCEMENT = {
+    "research_direction_intake": PHASE_SAFE_COMPLETED,
+    "literature_intake": PHASE_METADATA_COMPLETED,
+    "idea_synthesis": PHASE_TRUSTED_COMPLETED,
+    "idea_audit": PHASE_TRUSTED_COMPLETED,
+    "experiment_and_analysis": PHASE_SAFE_COMPLETED,
+    "paper_writing": PHASE_SAFE_COMPLETED,
+}
 
 # ---- Execution modes ----
 
@@ -256,10 +271,19 @@ def save_workflow_state(state: dict) -> None:
     WORKFLOW_STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def update_workflow_state(command: str, payload_file: str | None = None, phase_status_value: str | None = None) -> dict:
+def update_workflow_state(
+    command: str,
+    payload_file: str | None = None,
+    phase_status_value: str | None = None,
+    *,
+    has_worth_experiment_plan: bool | None = None,
+) -> dict:
     """Update workflow state after a command execution. Returns updated state.
 
     phase_status_value: if provided, sets phase_status[phase] = phase_status_value.
+    Only adds to completed_user_phases if phase_status_value is a completion status
+    (safe_completed, metadata_completed, trusted_completed).
+    has_worth_experiment_plan: if provided, stored in state for _compute_next_commands.
     """
     state = load_workflow_state()
     phase = USER_PHASES.get(command)
@@ -268,10 +292,20 @@ def update_workflow_state(command: str, payload_file: str | None = None, phase_s
         state["latest_payload_file"] = payload_file
     if phase and phase != "status_check":
         state["current_user_phase"] = phase
-        if phase not in state["completed_user_phases"]:
-            state["completed_user_phases"].append(phase)
+        # Always update phase_status
         if phase_status_value:
             state.setdefault("phase_status", {})[phase] = phase_status_value
+        # Only mark as completed if status is a true completion
+        if phase_status_value in _COMPLETION_STATUSES:
+            if phase not in state["completed_user_phases"]:
+                state["completed_user_phases"].append(phase)
+        elif phase_status_value == PHASE_BLOCKED:
+            # Remove from completed if it was previously there and now blocked
+            if phase in state.get("completed_user_phases", []):
+                state["completed_user_phases"].remove(phase)
+    # Track worth_experiment_plan
+    if has_worth_experiment_plan is not None:
+        state["has_worth_experiment_plan"] = has_worth_experiment_plan
     # Compute next allowed commands
     state["next_allowed_commands"] = _compute_next_commands(state)
     save_workflow_state(state)
@@ -279,25 +313,59 @@ def update_workflow_state(command: str, payload_file: str | None = None, phase_s
 
 
 def _compute_next_commands(state: dict) -> list[str]:
-    """Compute which commands are allowed next based on current phase and phase_status."""
-    completed = set(state.get("completed_user_phases", []))
+    """Compute which commands are allowed next based on phase_status.
+
+    Rules:
+    - research_direction_intake: safe_completed unlocks literature-intake
+    - literature_intake: metadata_completed unlocks idea-synthesis
+    - idea_synthesis: scaffold_created allows idea-synthesis --trusted / status
+                      trusted_completed unlocks idea-audit
+    - idea_audit: scaffold_created allows idea-audit --trusted / status
+                  trusted_completed + worth_experiment_plan unlocks experiment
+                  trusted_completed without worth_experiment_plan: back to idea-synthesis
+    - experiment_and_analysis: safe_completed unlocks paper-writing
+    - paper_writing: safe_completed unlocks status only
+    """
     phase_status = state.get("phase_status", {})
-    phase_order = [
-        "research_direction_intake",
-        "literature_intake",
-        "idea_synthesis",
-        "idea_audit",
-        "experiment_and_analysis",
-        "paper_writing",
-    ]
     phase_to_cmd = {v: k for k, v in USER_PHASES.items() if k != "status"}
 
-    for phase in phase_order:
-        if phase not in completed:
-            cmd = phase_to_cmd.get(phase, "research-intake")
-            return [cmd, "status"]
+    # Check each phase in order
+    ri_status = phase_status.get("research_direction_intake", PHASE_NOT_STARTED)
+    if ri_status not in _COMPLETION_STATUSES:
+        return ["research-intake", "status"]
 
-    # All phases completed — allow status only
+    li_status = phase_status.get("literature_intake", PHASE_NOT_STARTED)
+    if li_status not in _COMPLETION_STATUSES:
+        return ["literature-intake", "status"]
+
+    is_status = phase_status.get("idea_synthesis", PHASE_NOT_STARTED)
+    if is_status == PHASE_SCAFFOLD_CREATED:
+        # Scaffold only — allow trusted re-run or status
+        return ["idea-synthesis", "status"]
+    if is_status not in _COMPLETION_STATUSES:
+        return ["idea-synthesis", "status"]
+
+    ia_status = phase_status.get("idea_audit", PHASE_NOT_STARTED)
+    if ia_status == PHASE_SCAFFOLD_CREATED:
+        return ["idea-audit", "status"]
+    if ia_status == PHASE_TRUSTED_COMPLETED:
+        # Check worth_experiment_plan
+        has_worth = state.get("has_worth_experiment_plan", False)
+        if has_worth:
+            return ["experiment", "status"]
+        # Audit done but no worth_experiment_plan — back to synthesis
+        return ["idea-synthesis", "status"]
+    if ia_status not in _COMPLETION_STATUSES:
+        return ["idea-audit", "status"]
+
+    exp_status = phase_status.get("experiment_and_analysis", PHASE_NOT_STARTED)
+    if exp_status not in _COMPLETION_STATUSES:
+        return ["experiment", "status"]
+
+    pw_status = phase_status.get("paper_writing", PHASE_NOT_STARTED)
+    if pw_status not in _COMPLETION_STATUSES:
+        return ["paper-writing", "status"]
+
     return ["status"]
 
 
@@ -638,8 +706,8 @@ This scaffold is a placeholder — no model conclusions have been drawn.
     scaffold_file.write_text(scaffold_content, encoding="utf-8")
     results.append(f"Created runtime/{scaffold_file.name}")
 
-    # 3. Update workflow state
-    state = update_workflow_state("research-intake", payload_file, PHASE_SCAFFOLD_CREATED)
+    # 3. Update workflow state — safe live execution counts as safe_completed
+    state = update_workflow_state("research-intake", payload_file, PHASE_SAFE_COMPLETED)
     results.append(f"Updated runtime/workflow_state.json")
 
     return {
@@ -805,8 +873,8 @@ Run /idea-synthesis to generate candidate research ideas based on this literatur
             results.append(f"Created runtime/{scaffold_file.name}")
             results.append(f"Created runtime/literature_search/ ({n_raw} raw, {n_candidates} candidates, {n_top_k} top-k)")
 
-            # Update workflow state
-            state = update_workflow_state("literature-intake", payload_file)
+            # Update workflow state — metadata search counts as metadata_completed
+            state = update_workflow_state("literature-intake", payload_file, PHASE_METADATA_COMPLETED)
             results.append(f"Updated runtime/workflow_state.json")
 
             return {
@@ -1110,8 +1178,8 @@ def execute_idea_audit(parsed: dict, payload_file: str | None = None) -> dict:
 
         if status in ("completed", "completed_with_fallback") and exit_code == 0:
             has_verdict = _has_worth_experiment_verdict()
-            phase_val = PHASE_TRUSTED_COMPLETED if has_verdict else PHASE_BLOCKED
-            state = update_workflow_state("idea-audit", payload_file, phase_val)
+            phase_val = PHASE_TRUSTED_COMPLETED
+            state = update_workflow_state("idea-audit", payload_file, phase_val, has_worth_experiment_plan=has_verdict)
             return {
                 "status": "trusted_completed",
                 "command": "/idea-audit",
@@ -1294,19 +1362,28 @@ def execute_experiment(parsed: dict, payload_file: str | None = None) -> dict:
     # Gate: require trusted idea audit with worth_experiment_plan
     has_trusted_audit = _has_trusted_idea_audit()
     has_worth_verdict = _has_worth_experiment_verdict()
+
+    # Check phase_status from workflow_state
+    state = load_workflow_state()
+    phase_status = state.get("phase_status", {})
+    ia_status = phase_status.get("idea_audit", PHASE_NOT_STARTED)
+    is_status = phase_status.get("idea_synthesis", PHASE_NOT_STARTED)
+
+    blocked_reasons = []
+    if is_status != PHASE_TRUSTED_COMPLETED:
+        blocked_reasons.append("idea_synthesis not trusted_completed")
+    if ia_status != PHASE_TRUSTED_COMPLETED:
+        blocked_reasons.append("idea_audit not trusted_completed")
     if not has_trusted_audit:
-        return {
-            "status": "blocked",
-            "command": "/experiment",
-            "blocked_reason": "No trusted idea audit found. Run /idea-audit --execute --trusted first.",
-            "model_called": False,
-            "trusted_outputs_changed": False,
-        }
+        blocked_reasons.append("no trusted idea_audit output file")
     if not has_worth_verdict:
+        blocked_reasons.append("idea audit missing worth_experiment_plan verdict")
+
+    if blocked_reasons:
         return {
             "status": "blocked",
             "command": "/experiment",
-            "blocked_reason": "Idea audit did not produce worth_experiment_plan verdict. Revise ideas and re-audit.",
+            "blocked_reason": "; ".join(blocked_reasons),
             "model_called": False,
             "trusted_outputs_changed": False,
         }
@@ -1423,8 +1500,8 @@ This scaffold is a placeholder — no experiment has been designed or executed.
     scaffold_file.write_text(scaffold_content, encoding="utf-8")
     results.append(f"Created runtime/{scaffold_file.name}")
 
-    # Update workflow state
-    state = update_workflow_state("experiment", payload_file)
+    # Update workflow state — safe scaffold creation
+    state = update_workflow_state("experiment", payload_file, PHASE_SAFE_COMPLETED)
     results.append(f"Updated runtime/workflow_state.json")
 
     return {
@@ -1549,7 +1626,8 @@ blocked_reasons: {json.dumps(blocked_reasons) if blocked_reasons else "none"}
     results.append(f"Created runtime/{scaffold_file.name}")
 
     # Update workflow state
-    state = update_workflow_state("paper-writing", payload_file)
+    phase_val = PHASE_BLOCKED if blocked_reasons else PHASE_SAFE_COMPLETED
+    state = update_workflow_state("paper-writing", payload_file, phase_val)
     if blocked_reasons:
         state["blocked_reason"] = "; ".join(blocked_reasons)
     results.append(f"Updated runtime/workflow_state.json")
@@ -2050,7 +2128,7 @@ def _self_test() -> bool:
             continue
         check(f"29. {cmd} has executor", cmd in EXECUTORS, f"missing executor")
 
-    # Test 30: execute experiment with valid modes (requires trusted audit)
+    # Test 30: execute experiment with valid modes (requires trusted audit + phase_status)
     for mode in ("lightweight", "full", "analyze", "revise"):
         with tempfile.TemporaryDirectory() as td:
             mod = _sys.modules[__name__]
@@ -2068,6 +2146,20 @@ def _self_test() -> bool:
                 # Create trusted audit with worth_experiment_plan
                 mod.TRUSTED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
                 (mod.TRUSTED_OUTPUT_DIR / "idea_audit.md").write_text("# Audit\nworth_experiment_plan")
+                # Write workflow_state with trusted phase_status
+                import json as _json
+                mod.WORKFLOW_STATE_FILE.write_text(_json.dumps({
+                    "current_user_phase": "experiment_and_analysis",
+                    "completed_user_phases": ["research_direction_intake", "literature_intake"],
+                    "phase_status": {
+                        "research_direction_intake": "safe_completed",
+                        "literature_intake": "metadata_completed",
+                        "idea_synthesis": "trusted_completed",
+                        "idea_audit": "trusted_completed",
+                    },
+                    "has_worth_experiment_plan": True,
+                    "next_allowed_commands": ["experiment", "status"],
+                }), encoding="utf-8")
                 p = parse_slash_command(f'/experiment "test" --mode {mode}')
                 result = execute_command(p)
                 if mode in ("analyze", "revise"):
@@ -2225,7 +2317,7 @@ def _self_test() -> bool:
             mod.WORKFLOW_STATE_FILE = orig_state
             mod.LITERATURE_SEARCH_DIR = orig_lit
 
-    # Test 37: phase_status tracked in workflow_state
+    # Test 37: phase_status tracked in workflow_state (safe_completed for research-intake)
     with tempfile.TemporaryDirectory() as td:
         mod = _sys.modules[__name__]
         orig_dir = mod.RESEARCH_DIR
@@ -2239,14 +2331,16 @@ def _self_test() -> bool:
             result = execute_command(p)
             state = result["workflow_state"]
             ps = state.get("phase_status", {})
-            check("37. phase_status tracked", ps.get("research_direction_intake") == "scaffold_created",
+            check("37. phase_status tracked (safe_completed)", ps.get("research_direction_intake") == "safe_completed",
                   f"got phase_status={ps}")
+            check("37b. in completed_user_phases", "research_direction_intake" in state.get("completed_user_phases", []),
+                  f"got completed={state.get('completed_user_phases', [])}")
         finally:
             mod.RESEARCH_DIR = orig_dir
             mod.RUNTIME_DIR = orig_rt
             mod.WORKFLOW_STATE_FILE = orig_state
 
-    # Test 38: idea-synthesis scaffold does NOT mark as trusted_completed
+    # Test 38: idea-scaffold does NOT mark as trusted_completed or completed_user_phases
     with tempfile.TemporaryDirectory() as td:
         mod = _sys.modules[__name__]
         orig_dir = mod.RESEARCH_DIR
@@ -2266,8 +2360,13 @@ def _self_test() -> bool:
             result = execute_command(p)
             state = result["workflow_state"]
             ps = state.get("phase_status", {})
+            completed = state.get("completed_user_phases", [])
             check("38. scaffold not trusted_completed", ps.get("idea_synthesis") == "scaffold_created",
                   f"got phase_status={ps}")
+            check("38b. scaffold NOT in completed_user_phases", "idea_synthesis" not in completed,
+                  f"got completed={completed}")
+            check("38c. next does not include experiment", "/experiment" not in state.get("next_allowed_commands", []),
+                  f"got next={state.get('next_allowed_commands', [])}")
         finally:
             mod.RESEARCH_DIR = orig_dir
             mod.RUNTIME_DIR = orig_rt
@@ -2402,6 +2501,46 @@ def _self_test() -> bool:
                   f"got={result.get('has_worth_experiment_plan')}")
             check("43d. status no experiment_blocked_reason", result.get("experiment_blocked_reason") is None,
                   f"got={result.get('experiment_blocked_reason')}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+            mod.TRUSTED_OUTPUT_DIR = orig_trusted
+
+    # Test 44: scaffold idea_audit does NOT allow /experiment
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        orig_trusted = mod.TRUSTED_OUTPUT_DIR
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        mod.TRUSTED_OUTPUT_DIR = mod.RESEARCH_DIR / "trusted_outputs"
+        try:
+            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
+            # Write workflow_state with scaffold idea_audit
+            import json as _json
+            mod.WORKFLOW_STATE_FILE.write_text(_json.dumps({
+                "current_user_phase": "idea_audit",
+                "completed_user_phases": ["research_direction_intake", "literature_intake"],
+                "phase_status": {
+                    "research_direction_intake": "safe_completed",
+                    "literature_intake": "metadata_completed",
+                    "idea_synthesis": "trusted_completed",
+                    "idea_audit": "scaffold_created",
+                },
+                "next_allowed_commands": ["idea-audit", "status"],
+            }), encoding="utf-8")
+            p = parse_slash_command('/experiment "test" --mode lightweight')
+            result = execute_command(p)
+            check("44. experiment blocked when idea_audit scaffold", result["status"] == "blocked",
+                  f"got status={result['status']}")
+            check("44b. blocked_reason mentions trusted_completed",
+                  "not trusted_completed" in result.get("blocked_reason", ""),
+                  f"got reason={result.get('blocked_reason', '')}")
         finally:
             mod.RESEARCH_DIR = orig_dir
             mod.RUNTIME_DIR = orig_rt

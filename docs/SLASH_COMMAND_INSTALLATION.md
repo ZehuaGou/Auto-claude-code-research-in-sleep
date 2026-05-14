@@ -16,8 +16,15 @@ This project provides 7 slash commands for Claude Code / Happy:
 
 All commands support three modes:
 - **Default (dry-run)**: Generates execution plan, saves payload. No files created.
-- **`--execute`**: Creates scaffold files, updates workflow state. No model calls, no experiments, no trusted_outputs changes.
-- **`--execute --trusted`** (idea-synthesis, idea-audit only): Calls `trusted_role_runner` for real model-based synthesis/audit. Writes to `trusted_outputs/`. Reports `call_id`.
+- **`--execute`**: Creates scaffold files, updates workflow state. No model calls, no experiments, no trusted_outputs changes. Sets `phase_status = scaffold_created`.
+- **`--execute --trusted`** (idea-synthesis, idea-audit only): Code path calls `trusted_role_runner` for real model-based synthesis/audit. Writes to `trusted_outputs/`. Reports `call_id`. Sets `phase_status = trusted_completed`. **Live model invocation requires explicit user action.**
+
+**Phase status semantics:**
+- `scaffold_created`: File created, no model called. Does NOT count as completed. Cannot advance to next phase.
+- `safe_completed`: Safe execution completed (e.g., research-intake, experiment scaffold). Counts as completed.
+- `metadata_completed`: Metadata search completed (literature-intake). Counts as completed.
+- `trusted_completed`: Trusted model call completed. Counts as completed. Required for idea-synthesis, idea-audit.
+- `blocked`: Phase blocked. Removed from completed phases.
 
 ## How It Works
 
