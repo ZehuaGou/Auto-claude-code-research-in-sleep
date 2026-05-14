@@ -1,8 +1,9 @@
 # 可信科研自动化系统目标设计文档
 
-> 版本：v1.0
+> 版本：v1.1
 > 定位：Agent 驱动的可信科研自动化系统目标蓝图
 > 用途：作为后续系统设计、项目改造、功能裁剪、阶段验收的统一依据
+> v1.1 变更：新增执行摘要、先轻量后丰富原则、自适应文献发现策略、reading card 方法、不足来源处理、非单测试用例绑定、复杂度预算
 
 ---
 
@@ -52,6 +53,32 @@
 
 借鉴 ARIS 的研究智慧和命令体验；
 重建更可靠、更可控、更可追踪的科研自动化内核。
+
+### 1.1 执行摘要（v1.1 新增）
+
+本系统是 **受 ARIS 启发的可信科研自动化系统**，核心产品目标是：**用户一条命令启动任意研究想法的自动化科研流程**。
+
+当前系统状态（v1.1）：
+
+| 能力 | 状态 |
+|------|------|
+| 一键启动 CLI（status/validate/repair-queue/start dry-run） | 已实现 |
+| 多源文献搜索（arXiv + OpenAlex + Crossref） | 已实现 |
+| 全文获取 MVP（open-access arXiv/PDF/HTML） | 已实现 |
+| 全文可信审阅（full_text_review） | 已实现 |
+| 可信模型调用 + ledger + validator | 已实现 |
+| 上下文隔离 + forbidden context | 已实现 |
+| Stage output contract + role boundary | 已实现 |
+| 一键 live start（不需要 --dry-run） | 待实现 |
+| 端到端完整流程（raw_user_input → experiment_plan） | 待实现（当前 test case 被 paywall 阻塞） |
+
+**关键约束：**
+
+1. **hallucination trajectory（幻觉轨迹检测）只是回归测试用例，不是产品。** 系统产品是通用可信科研自动化。
+2. **先轻量后丰富。** MVP 只保留核心流程，不追求功能完整。
+3. **自适应文献发现。** 先 metadata 后全文，先广后深，按 topic 类型调整搜索范围。
+4. **Reading card 够用，不上数据库。** 50 篇 paper 的 reading card 用 grep 搜索即可。
+5. **复杂度有预算。** 36 个 Python 文件目标裁剪到 ~16 个活跃文件。
 
 ---
 
@@ -117,6 +144,9 @@
 | 失败必须停止 | 不允许失败后伪装成功继续推进 |
 | 关键节点允许人工确认 | 防止系统自动把错误越滚越大 |
 | 支持完整目标和 MVP 裁剪 | 先有完整蓝图，再按阶段实现 |
+| 先轻量后丰富（v1.1） | MVP 只保留核心流程；broad scan、literature memory、citation graph 等丰富功能在核心流程跑通后再加 |
+| 不绑定单一测试用例（v1.1） | hallucination trajectory 是回归测试，不是产品；系统必须能处理任意研究想法 |
+| 复杂度有预算（v1.1） | 活跃文件数目标 ~16；超过则先裁剪再加新功能 |
 
 ---
 
@@ -860,6 +890,156 @@ novelty-check 是最依赖文献搜索的阶段。
 7. 搜索过程和阅读材料必须保存；
 8. 最终 novelty verdict 必须来自可信模型调用。
 
+### 8.17 自适应文献发现策略（v1.1 新增）
+
+文献搜索不应一刀切。不同 topic 的文献量差异巨大，搜索范围应自适应调整。
+
+#### 核心原则：先 metadata，后全文；先广后深
+
+| Pass | 内容 | 模型调用 | 目的 |
+|------|------|---------|------|
+| Pass 1 | metadata only（title + abstract + year + venue + citation_count + DOI） | 不调用 | 广泛覆盖，deterministic scoring |
+| Pass 2 | top 10-25 的全文 acquisition + trusted review | 调用 full_text_reviewer | 深度验证 closest prior work |
+
+#### Adaptive Sizing
+
+| Topic 类型 | 特征 | 建议搜索范围 | 理由 |
+|-----------|------|-------------|------|
+| 小众方向 | 新领域、交叉学科、few papers | 30-80 篇 | 超过 80 篇大概率是噪音 |
+| 普通方向 | 有明确 baseline 和竞争工作 | 80-200 篇 | 覆盖主要会议 + workshop |
+| 大方向 | 热门领域（如 LLM、diffusion） | 先聚类，不全读 | 200+ 篇不可能全读，必须 cluster → sample → deep review |
+
+Adaptive sizing 实现方式：
+1. 首次搜索返回 N 篇（N 由 topic 特征决定）
+2. 如果 N < 30：`low_literature_yield`，不硬凑
+3. 如果 30 ≤ N ≤ 200：正常流程
+4. 如果 N > 200：先 cluster（按 venue + year + keywords），每个 cluster 选 top 3-5，总 deep review 不超过 25 篇
+
+#### Stop Rules
+
+| Rule | 触发条件 | 动作 |
+|------|---------|------|
+| Relevance decay | 连续 3 篇 relevance score < 0.3 | 停止搜索 |
+| Duplicate saturation | 连续 10 篇都是已见过的 closest prior work | 停止搜索 |
+| Cluster saturation | 新 cluster 数量在最近 10 篇中为 0 | 停止搜索 |
+| No new method family | 连续 5 篇属于同一个 method family | 停止搜索 |
+| Time budget | 搜索时间超过 5 分钟 | 停止搜索，记录 partial results |
+
+#### Broad scan 只读 metadata，不默认全文读
+
+- Pass 1：metadata only（title, abstract, year, venue, citation_count, DOI）
+- Scoring：deterministic（keyword match + recency + citation count + venue tier）
+- 不调用模型
+- 不做全文 acquisition
+- 只选 top 10-25 进入 Pass 2
+
+#### Deep review 只选 top 10-25
+
+- 全文 acquisition（arXiv source > PDF > open HTML）
+- Trusted review（full_text_reviewer）
+- 这是现有的 Phase 21 flow，不需要新基础设施
+
+#### MVP 阶段 broad scan 策略
+
+**MVP 不实现自动化 broad scan。** 原因：
+1. 当前 MVP 还没跑通一次完整流程
+2. broad scan 是优化，不是基础能力
+3. 先让核心流程跑通，再考虑扩大搜索范围
+
+当前 multi-source pipeline（arXiv + OpenAlex + Crossref）已足够做 novelty risk assessment。broad scan 作为 Phase 22+ 的增强功能。
+
+### 8.18 Reading Card 方法（v1.1 新增）
+
+#### 问题：是否需要 literature memory？
+
+对于 MVP，**不需要复杂的 literature memory 系统**（数据库、向量库、知识图谱）。
+
+原因：
+1. 10-50 篇 paper 的 metadata 很小（< 100KB），每次重新读的 token 成本可忽略
+2. 真正烧 token 的是模型调用（trusted review），不是读 metadata
+3. 50 篇 paper 的 reading card 用 grep 搜索即可
+4. 数据库/向量库的维护成本（schema migration、index maintenance、cache invalidation）远超收益
+
+#### Reading Card Schema
+
+每篇 paper 一个 reading card（.md 文件）：
+
+```markdown
+---
+paper_id: ftq_006
+title: "ICR Probe: ..."
+authors: ["Author A", "Author B"]
+year: 2025
+relevance_to_idea: 0.85
+closeness_to_our_method: high
+key_finding: "Uses internal classifier for hallucination detection"
+gap_we_address: "No trajectory-based approach"
+review_date: 2026-05-14
+reviewer: full_text_reviewer
+---
+
+## Summary
+One paragraph summary of the paper.
+
+## Method
+Brief method description.
+
+## Overlap with Our Idea
+What overlaps and what doesn't.
+
+## Evidence for Novelty Check
+Supports or contradicts novelty claim.
+```
+
+#### 目录结构
+
+```
+literature/
+  reading_cards/
+    ftq_001.md
+    ftq_002.md
+    ...
+  evidence_maps/
+    current_idea.md    # 当前 idea 的 evidence map
+```
+
+#### 什么时候才值得实现更复杂的系统？
+
+当以下条件**同时**满足时：
+1. 系统已经跑通完整流程（experiment_plan → paper_writing）
+2. 同一个 topic 需要跨 3+ 次 session 重复搜索
+3. Paper 数量超过 100 篇，grep 开始变慢
+4. 有明确的 "我上次读过这篇" 的需求
+
+目前这些条件都不满足。
+
+### 8.19 来源不足处理（v1.1 新增）
+
+当文献搜索结果不足以支撑 strong novelty claim 时，系统应：
+
+#### 判断标准
+
+| 情况 | 处理 |
+|------|------|
+| 搜索结果 < 30 篇 | `low_literature_yield`，建议用户补充搜索方向 |
+| closest prior work 无全文 | 标记 `evidence_gap`，不给 `confirmed_novel` |
+| 关键竞争工作在付费墙后 | 标记 `paywall_blocked`，建议用户通过合法渠道获取 |
+| 搜索结果全是高相关 | 不硬凑 `confirmed_novel`，输出 `likely_incremental` 或 `insufficient_evidence` |
+
+#### 系统不应做的事
+
+1. 不应为了凑数而降低 relevance threshold
+2. 不应把低相关论文强行纳入 closest prior work
+3. 不应绕过付费墙获取全文
+4. 不应在 evidence 不足时强行给出 novelty verdict
+
+#### 系统应做的事
+
+1. 如实报告搜索覆盖范围和不足
+2. 建议用户补充搜索方向或手动获取关键论文
+3. 将不足来源记录到 repair queue
+4. 在 novelty check 中明确标注 evidence gap
+
 ---
 
 ## 9. 第三层：Workflow Discipline Layer（Workflow 执行纪律层）
@@ -1511,7 +1691,25 @@ MVP 只做：
 | trusted output | 必须 |
 | status | 必须 |
 
-### 15.3 MVP 后扩展
+### 15.3 复杂度预算（v1.1 新增）
+
+MVP 的活跃文件数应控制在 ~16 个。超过则先裁剪再加新功能。
+
+| Category | 当前数量 | 目标数量 | 操作 |
+|----------|---------|---------|------|
+| Core CLI + config | 2 | 2 | 保留 |
+| Trust boundary（runner, ledger, route, validator, isolation） | 5 | 5 | 保留 |
+| Literature pipeline（拆分后） | 4 | 4 | 保留（已拆分） |
+| Workflow engine | 1 | 1 | 保留 |
+| Adapters（arXiv, OpenAlex, Crossref） | 3 | 3 | 保留 |
+| Supplementary tools | 24 | 6-8 | 归档或删除 |
+| **Total active** | **36** | **~16** | **裁剪 ~20 个文件** |
+
+20 个 supplementary files 应 archive 到 `tools/archive/` 或删除。它们不被核心流程使用，增加认知负担。
+
+**原则：新功能必须先证明不超出复杂度预算，才能加入。** 如果加一个新功能需要加一个新文件，则必须先归档一个旧文件。
+
+### 15.4 MVP 后扩展
 
 **P1：**
 
@@ -1559,7 +1757,35 @@ MVP 只做：
 
 ---
 
-## 17. 最终目标句
+## 17. 不绑定单一测试用例（v1.1 新增）
+
+hallucination trajectory（幻觉轨迹检测）是本系统的**回归测试用例**，不是产品。
+
+### 17.1 为什么不能绑定单一测试用例
+
+1. 单一测试用例的文献覆盖、paywall 情况、竞争工作分布是特定的，不能代表通用场景
+2. 如果系统设计围绕单一测试用例优化，会过度拟合该用例的特殊需求
+3. 系统产品是"任意研究想法的可信科研自动化"，不是"幻觉轨迹检测自动化"
+
+### 17.2 当前 test case 的局限
+
+当前 hallucination trajectory test case 的局限是**测试用例的局限，不是系统的局限**：
+
+| 局限 | 原因 | 系统能否解决 |
+|------|------|-------------|
+| ftq_007/ftq_009 在付费墙后 | IEEE ICMLA/ICASSP 论文无开放版本 | 合法渠道获取，或选其他 test case |
+| high_risk_overlap with ICR Probe | 该方向已有密集竞争工作 | 这是 novelty check 的正常输出 |
+| experiment_plan 被阻塞 | 上述两个局限的组合结果 | 换一个文献充足的 test case 即可 |
+
+### 17.3 系统验证策略
+
+1. 用 hallucination trajectory 作为回归测试（验证系统行为正确）
+2. 选一个文献充足的 topic 作为端到端测试（验证系统能跑通完整流程）
+3. 最终用任意用户想法作为产品测试（验证系统通用性）
+
+---
+
+## 18. 最终目标句
 
 本系统的理想形态是：
 

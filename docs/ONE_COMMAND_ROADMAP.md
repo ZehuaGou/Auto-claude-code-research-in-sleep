@@ -19,6 +19,8 @@
 
 **Phase 21E Status:** IMPLEMENTED — close remaining full-text evidence gaps. ftq_007 (Detection of LLM Hallucinations Using Late Internal Representations, ICMLA 2025) and ftq_009 (MixHD, ICASSP 2025) confirmed fully paywall_blocked after exhaustive legal OA search (arXiv, OpenAlex, Crossref, Semantic Scholar, author pages). No open access version found by current configured sources/search pass. Queue and manifest notes cleaned of Sci-Hub references. LRQ-023 added. experiment_plan blocked for current test case due to high_risk_overlap with ICR Probe and two papers behind paywall. This is a regression test case limitation, not a system limitation — the generic system can proceed with any idea that has sufficient literature evidence.
 
+**Phase 21F Status:** IMPLEMENTED — literature module split + documentation consolidation. `literature_evidence_landing.py` split into `tools/literature/{store.py, extraction.py, manual_ingest.py}` with backward-compatible delegation wrappers. 88+ self-tests pass. Documentation v1.1: TRUSTED_RESEARCH_AUTOMATION_TARGET.md updated with executive summary, lightweight-first principle, adaptive broad literature discovery strategy, reading card approach, insufficient source handling, non-test-case binding, and complexity budget. TARGET_ALIGNMENT_AUDIT.md and ARCHITECTURE_COMPLEXITY_AUDIT.md synced.
+
 ---
 
 ## 1. Goal

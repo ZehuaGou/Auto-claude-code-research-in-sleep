@@ -1,7 +1,7 @@
 # Architecture Complexity Audit
 
 **Date:** 2026-05-14
-**HEAD:** b596802
+**HEAD:** 23b9a37
 
 ---
 
@@ -11,7 +11,7 @@
 
 | 区域 | 复杂度表现 | 严重程度 |
 |------|-----------|---------|
-| `literature_evidence_landing.py` | 7800+ 行，包含 query planning、job management、normalization、candidate scoring、top-k、full-text acquisition、extraction、store validation、manifest management、review notes、CLI | **高** — 单文件过大，debug 路径长 |
+| `literature_evidence_landing.py` | 已拆分：`tools/literature/{store.py, extraction.py, manual_ingest.py}` + delegation wrappers。原文件仍 7500+ 行但核心逻辑已分离 | **中** — 拆分后 debug 路径缩短 |
 | Stage 数量 | 12+ 个 stage（raw_user_input → paper_writing），每个有 allowed_input_files、forbidden_context、stage_output_contract | **中** — 每个 stage 本身简单，但组合后状态空间大 |
 | Validator 数量 | input_normalizer、contract_reviewer、literature_scout、novelty_checker、method_refiner、idea_pivoter、full_text_reviewer — 每个 stage 后都有 validate_model_invocation | **中** — 必要但增加维护成本 |
 | 状态文件 | trusted_outputs/ 下多个 .md、manifest.json、full_text_queue.json、review_notes.md、repair queue、evidence summary | **中** — 文件多但每个有明确用途 |
@@ -33,7 +33,7 @@
 | 复杂度 | 问题 |
 |--------|------|
 | 36 个 Python 文件 | 对 MVP 来说太多。核心流程只需要 ~16 个文件。其余 20 个是 supplementary tools，不被核心流程使用。 |
-| `literature_evidence_landing.py` 单文件 7800+ 行 | 应该拆成 3-4 个模块。当前所有功能挤在一个文件里，改一处可能影响全局。 |
+| `literature_evidence_landing.py` 单文件 7800+ 行 | 已拆分为 4 个模块（store, extraction, manual_ingest + delegation wrappers）。核心逻辑已分离。 |
 | Repair queue 23 个条目 | 部分条目是历史遗留（如 LRQ-001 到 LRQ-010），部分是新发现的。维护成本高。 |
 | 每个 stage 都有完整的 forbidden_context 列表 | 部分 stage 的 forbidden_context 重复度高，可以提取公共规则。 |
 
@@ -71,7 +71,7 @@
 | 5 | **Model Route** | `model_route.py` | `core_mvp` | 关键 — role-to-model 路由 | 低 | 零 | 低 | 易 | 否 | 是 |
 | 6 | **Validate Model Invocation** | `validate_model_invocation.py` | `core_mvp` | 关键 — 调用后验证 | 低 | 零 | 低 | 易 | 否 | 是 |
 | 7 | **Context Isolation** | `context_isolation_check.py` | `core_mvp` | 关键 — forbidden context 执行 | 低 | 零 | 低 | 易 | 否 | 是 |
-| 8 | **Literature Evidence Pipeline** | `literature_evidence_landing.py` | `core_mvp` | 关键 — 证据获取 | 高 | 中 | 高 | 中 — 7800+ 行 | 否，但文件大小是风险 | 是，但需拆分 |
+| 8 | **Literature Evidence Pipeline** | `literature_evidence_landing.py` + `tools/literature/{store,extraction,manual_ingest}.py` | `core_mvp` | 关键 — 证据获取 | 高 | 中 | 中 — 已拆分为 4 个模块 | 易 — 每个模块 < 350 行 | 否 | 是 |
 | 9 | **Research Workflow** | `research_workflow.py` | `core_mvp` | 关键 — stage preparation | 低 | 零 | 中 | 中 | 否 | 是 |
 | 10 | **arXiv/OpenAlex/Crossref** | `arxiv_fetch.py` 等 | `core_mvp` | 关键 — 多源证据 | 高 | 中 | 低 | 易 | 否 | 是 |
 | 11 | **Idea Pivot** | workflow config stage | `near_term` | 重要 — 证据驱动的 pivot | 高 — 解锁 blocked case | 低 | 低 | 易 | 否 | 是 |
@@ -408,7 +408,7 @@ literature/
 |----------|---------|--------|--------|
 | Core CLI + config | 2 | 2 | Keep |
 | Trust boundary (runner, ledger, route, validator, isolation) | 5 | 5 | Keep |
-| Literature pipeline | 1 (7800 lines) | 4 (split) | Refactor |
+| Literature pipeline | 4 (split from 1) | 4 | DONE — `literature_evidence_landing.py` split into `tools/literature/{store.py, extraction.py, manual_ingest.py}` with backward-compatible delegation |
 | Workflow engine | 1 | 1 | Keep |
 | Adapters (arXiv, OpenAlex, Crossref) | 3 | 3 | Keep |
 | Supplementary tools | 24 | 6-8 | Deprecate or archive |

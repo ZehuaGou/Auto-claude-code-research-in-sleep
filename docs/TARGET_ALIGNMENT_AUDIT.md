@@ -1,7 +1,7 @@
 # Target Alignment Audit
 
-**Date:** 2026-05-13
-**Against:** docs/TRUSTED_RESEARCH_AUTOMATION_TARGET.md v1.0
+**Date:** 2026-05-14
+**Against:** docs/TRUSTED_RESEARCH_AUTOMATION_TARGET.md v1.1
 
 ---
 
@@ -128,6 +128,9 @@ Gaps:
 - ftq_007/ftq_009 IEEE paywall fully blocked — no open access exists (LRQ-023)
 - full_text_review found high_risk_overlap with ICR Probe (ftq_006) — current test case blocked from experiment_plan
 - Manual local full-text ingestion not yet supported
+- Adaptive broad literature scan: designed (Section 8.17 v1.1) but deferred — MVP runs core flow first
+- Literature memory / reading card: designed (Section 8.18 v1.1) but deferred — grep sufficient for < 100 papers
+- Literature module split: DONE — `literature_evidence_landing.py` split into `tools/literature/{store.py, extraction.py, manual_ingest.py}` with backward-compatible delegation
 
 ### Status Tracking Layer
 
@@ -177,6 +180,11 @@ Gaps:
 | Core workflow tests | Section 9 | Limited (LRQ-010) |
 | Codex MCP route | Section 10.7 | Not usable (self-test failures) |
 | Call age / route drift policy | Section 10 | Needs formal definition |
+| Adaptive broad literature discovery | Section 8.17 (v1.1) | DESIGNED — metadata-first, adaptive sizing, stop rules defined; implementation deferred to Phase 22+ |
+| Reading card / literature memory | Section 8.18 (v1.1) | DESIGNED — .md reading card schema defined; no database; implementation deferred until 100+ papers |
+| Insufficient source handling | Section 8.19 (v1.1) | DESIGNED — judgment criteria and system prohibitions defined |
+| Non-test-case binding | Section 17 (v1.1) | ACKNOWLEDGED — hallucination trajectory is regression test, not product |
+| Complexity budget | Section 15.3 (v1.1) | TRACKING — 36 files → ~16 active target; literature module already split |
 
 ---
 
