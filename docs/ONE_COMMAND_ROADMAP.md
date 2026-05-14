@@ -29,6 +29,8 @@
 
 **Phase 21J Status:** IMPLEMENTED — slash command adapter MVP. `tools/slash_command_adapter.py` with COMMAND_MAP (7 commands), parser (`/command "payload" --flags`), plan generator, payload persistence, 21 self-tests pass. Parser: quoted payload + flag extraction. Plan generator: CLI action plans with internal_stages mapping. Payload saved to safe temp dir. No model calls, no trusted_outputs changes. research_cli.py: 44 self-tests pass, system validation PASS.
 
+**Phase 21K Status:** IMPLEMENTED — slash command installation system. `templates/claude_commands/` with 7 command templates (committed). `tools/install_slash_commands.py` installer with --force, gitignore check, 8 self-tests. `docs/SLASH_COMMAND_INSTALLATION.md` created. .claude/ remains gitignored. Templates are safe (no API keys, no local paths, all plan-only). 27 adapter self-tests + 8 installer self-tests pass.
+
 ---
 
 ## 1. Goal
