@@ -31,6 +31,8 @@
 
 **Phase 21K Status:** IMPLEMENTED — slash command installation system. `templates/claude_commands/` with 7 command templates (committed). `tools/install_slash_commands.py` installer with --force, gitignore check, 8 self-tests. `docs/SLASH_COMMAND_INSTALLATION.md` created. .claude/ remains gitignored. Templates are safe (no API keys, no local paths, all plan-only). 27 adapter self-tests + 8 installer self-tests pass.
 
+**Phase 21L Status:** IMPLEMENTED — slash-command-first MVP with safe execution. `tools/slash_command_adapter.py` upgraded: `--execute` flag, 4 execution modes (dry_run/execute_safe/blocked/plan_only), 7 safe executors (research-intake, literature-intake, idea-synthesis, idea-audit, experiment, paper-writing, status). `research/current/workflow_state.json` tracks user phase, completed phases, next commands. All commands create scaffolds (no model calls, no trusted_outputs changes). experiment supports 4 modes (lightweight/full/analyze/revise). paper-writing blocked without results. 48 adapter self-tests + 10 installer self-tests + 44 research_cli tests pass.
+
 ---
 
 ## 1. Goal

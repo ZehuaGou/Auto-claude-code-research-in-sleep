@@ -10,8 +10,8 @@ User arguments:
 
 Requirements:
 - Treat this slash command as `/paper-writing $ARGUMENTS`.
-- Run: `python tools/slash_command_adapter.py '/paper-writing $ARGUMENTS' --save-payload-dir research/current/user_command_payloads`
-- Display the plan output to the user.
-- This is DRY-RUN only: no model calls, no trusted runner execution, no trusted_outputs changes.
-- Do NOT execute the plan. Only show what would happen.
-- Paper writing requires verified experiment results and approved claim boundary.
+- Default: run `python tools/slash_command_adapter.py '/paper-writing $ARGUMENTS' --save-payload-dir research/current/user_command_payloads` (dry-run, plan only).
+- If user says "execute" or "run it": add `--execute` flag to create scaffold files (no model calls).
+- Display the output to the user.
+- This command NEVER calls models, writes paper sections, fabricates results, or changes trusted_outputs.
+- Paper writing requires verified experiment results and approved claim boundary — will be blocked otherwise.

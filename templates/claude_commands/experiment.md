@@ -10,9 +10,9 @@ User arguments:
 
 Requirements:
 - Treat this slash command as `/experiment $ARGUMENTS`.
-- Run: `python tools/slash_command_adapter.py '/experiment $ARGUMENTS' --save-payload-dir research/current/user_command_payloads`
-- Display the plan output to the user.
-- This is DRY-RUN only: no model calls, no trusted runner execution, no trusted_outputs changes.
-- Do NOT execute the plan. Only show what would happen.
+- Default: run `python tools/slash_command_adapter.py '/experiment $ARGUMENTS' --save-payload-dir research/current/user_command_payloads` (dry-run, plan only).
+- If user says "execute" or "run it": add `--execute` flag to create scaffold files (no model calls, no code execution).
+- Display the output to the user.
+- This command NEVER calls models, runs code, executes experiments, or changes trusted_outputs.
 - Supports `--mode` flag: lightweight (default), full, analyze, revise.
 - lightweight = quick signal check; full = complete baseline + ablation; analyze = review results; revise = adjust method.

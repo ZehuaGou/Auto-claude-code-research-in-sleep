@@ -181,14 +181,16 @@ def _self_test() -> bool:
             break
     check("7. all templates call slash_command_adapter.py", all_call_adapter)
 
-    # Test 8: all templates are plan-only (DRY-RUN)
-    all_dry_run = True
+    # Test 8: all templates are plan-only or safe-execute (no model calls, no trusted_outputs)
+    all_safe = True
     for f in TEMPLATE_DIR.glob("*.md"):
         content = f.read_text(encoding="utf-8")
-        if "DRY-RUN" not in content:
-            all_dry_run = False
+        has_no_model = "NEVER calls models" in content or "no model calls" in content.lower()
+        has_no_trusted = "trusted_outputs" in content
+        if not (has_no_model and has_no_trusted):
+            all_safe = False
             break
-    check("8. all templates are DRY-RUN", all_dry_run)
+    check("8. all templates are safe (no model calls, no trusted_outputs)", all_safe)
 
     print(f"\nSelf-test results: {tests_passed} passed, {tests_failed} failed")
     return tests_failed == 0
