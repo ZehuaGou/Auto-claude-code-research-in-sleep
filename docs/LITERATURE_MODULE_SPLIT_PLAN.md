@@ -1,7 +1,7 @@
 # Literature Module Split Plan
 
 **Date:** 2026-05-14
-**HEAD:** dee8671 → pending commit (Round 2 complete)
+**HEAD:** dae1d15 → pending commit (Round 3)
 **Goal:** Continue reducing `literature_evidence_landing.py` by extracting source adapters and scoring helpers.
 
 ---
@@ -99,11 +99,50 @@ tools/
 
 ---
 
+## Round 3 (current)
+
+### What was extracted this round
+
+| Module | Functions | Lines (approx) | Risk |
+|--------|-----------|----------------|------|
+| `tools/literature/multisource.py` | `_execute_jobs_by_source`, `run_multisource_pipeline` | ~264 | Low — orchestrator, delegates to adapters + main-file pipeline steps |
+
+**Net change:** `literature_evidence_landing.py` 6318 → 6117 lines (-201).
+
+### What stays in literature_evidence_landing.py
+
+Same as Round 2, minus the two multisource functions. Key items still in main:
+- `_check_run_dir_safe` + `_DANGEROUS_DIR_NAMES` — shared by `run_openalex_pipeline`
+- All pipeline step functions (`build_search_plan`, `build_search_jobs`, `validate_job_results`, etc.)
+- JSONL helpers, validation, candidate/top-k building
+- Full-text acquisition, DOI resolvers, LaTeX conversion
+- Self-test, CLI argparse
+
+### New module structure
+
+```
+tools/
+  literature/
+    __init__.py              # Package marker
+    store.py                 # Store validation + summary (Round 1)
+    extraction.py            # PDF text extraction (Round 1)
+    manual_ingest.py         # Manual local file ingestion (Round 1)
+    scoring.py               # Title normalization, dedup, relevance scoring (Round 2)
+    multisource.py           # Multi-source pipeline orchestrator (Round 3)
+    adapters/
+      __init__.py            # Package marker
+      openalex.py            # OpenAlex API adapter (Round 2)
+      arxiv.py               # arXiv API adapter (Round 2)
+      crossref.py            # Crossref API adapter (Round 2)
+  literature_evidence_landing.py  # CLI facade (all old commands still work)
+```
+
+---
+
 ## Future rounds (not now)
 
 | Module | Functions | When |
 |--------|-----------|------|
-| `tools/literature/multisource.py` | `_execute_jobs_by_source`, `run_multisource_pipeline` | After adapters are stable |
 | `tools/literature/acquisition.py` | `acquire_open_fulltext`, `acquire_alternative_fulltext`, DOI resolvers, LaTeX conversion | After full-text flow is tested |
 | `tools/literature/validators.py` | `validate_raw`, `validate_candidates`, `validate_job_results`, etc. | After candidate/validator flow is tested |
 
