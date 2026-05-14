@@ -889,7 +889,7 @@ def _write_top_k_md(path: Path, top_k_records: list, filtered_low: list,
 
 def _generate_query_variants(topic: str, must_include: list[str], exclude: str = "") -> list[str]:
     """Deterministic query variant generation from topic + must_include. No model, no network.
-    Produces focused variants that combine core concept groups."""
+    Produces focused variants that combine terms from the actual topic — no hardcoded domain terms."""
     variants = []
     seen = set()
 
@@ -899,48 +899,32 @@ def _generate_query_variants(topic: str, must_include: list[str], exclude: str =
             seen.add(q.lower())
             variants.append(q)
 
-    # Core concept groups for this research domain
-    hallucination_terms = ["hallucination detection", "factuality detection", "truthfulness detection",
-                           "hallucination uncertainty"]
-    internal_terms = ["hidden states", "internal states", "activations", "representations",
-                      "representation trajectory", "layerwise representations"]
-    token_terms = ["token-level", "per-token", "token uncertainty", "generation step"]
-    detection_terms = ["anomaly detection", "outlier detection", "confidence estimation",
-                       "uncertainty estimation"]
-    model_terms = ["LLM", "language model"]
+    # 1. Topic itself (may contain multiple semicolon-separated queries)
+    for part in topic.split(";"):
+        part = part.strip()
+        if part:
+            _add(part)
 
-    # 1. Topic itself
-    _add(topic)
-
-    # 2. must_include terms combined
+    # 2. must_include terms combined as single query
     if must_include:
         _add(" ".join(must_include))
 
-    # 3. Core combinations: hallucination × internal × model
-    for h in hallucination_terms[:2]:
-        for i in internal_terms[:2]:
-            for m in model_terms[:1]:
-                _add(f"{m} {h} {i}")
-
-    # 4. Token-level hallucination combinations
-    for t in token_terms[:2]:
-        for h in hallucination_terms[:2]:
-            _add(f"{t} {h} hidden states")
-
-    # 5. Detection/anomaly with internal states
-    for d in detection_terms[:2]:
-        for i in internal_terms[:2]:
-            _add(f"LLM hallucination {d} {i}")
-
-    # 6. Pair combinations of must_include terms (limited)
+    # 3. Pair combinations of must_include terms
     for i, a in enumerate(must_include):
         for b in must_include[i + 1:]:
             _add(f"{a} {b}")
 
-    # 7. Shortened topic + key terms
-    topic_words = topic.split()
-    if len(topic_words) > 3 and must_include:
-        _add(" ".join(topic_words[:3]) + " hidden states")
+    # 4. Triple combinations of must_include terms
+    if len(must_include) >= 3:
+        for i, a in enumerate(must_include):
+            for j, b in enumerate(must_include[i + 1:], i + 1):
+                for c in must_include[j + 1:]:
+                    _add(f"{a} {b} {c}")
+
+    # 5. Topic words combined with must_include (take first 3 topic words)
+    topic_words = [w for w in topic.replace(";", " ").split() if len(w) > 2]
+    if topic_words and must_include:
+        _add(" ".join(topic_words[:3]) + " " + must_include[0])
 
     # Limit to 12 variants
     return variants[:12]

@@ -39,6 +39,8 @@ LEGACY_WORKFLOW_STATE_FILE = RESEARCH_DIR / "workflow_state.json"
 LITERATURE_SEARCH_DIR = ROOT / "literature" / "search_runs" / "current"
 # Runtime literature search for slash commands (tmp/ is gitignored, avoids pipeline forbidden path check)
 RUNTIME_LIT_DIR = ROOT / "tmp" / "slash_lit_search"
+# Latest literature run metadata (tracks which run is current)
+LATEST_LIT_RUN_FILE = RUNTIME_DIR / "latest_literature_run.json"
 
 # Phase status values
 PHASE_NOT_STARTED = "not_started"
@@ -355,7 +357,8 @@ def _compute_next_commands(state: dict) -> list[str]:
     if ia_status == PHASE_SCAFFOLD_CREATED:
         return ["idea-audit", "status"]
     if ia_status == PHASE_TRUSTED_COMPLETED:
-        has_worth = state.get("has_worth_experiment_plan", False)
+        # Gate A: check artifact truth, not just cached state
+        has_worth = _has_worth_experiment_verdict()
         validation_pass = state.get("idea_reviewer_validation_pass", False)
         if has_worth and validation_pass:
             return ["experiment", "status"]
@@ -378,6 +381,12 @@ def _compute_next_commands(state: dict) -> list[str]:
 
 def _has_literature_metadata() -> bool:
     """Check if literature metadata exists (from slash runtime or prior runs)."""
+    # Check latest_literature_run.json first
+    latest = _load_latest_literature_run()
+    if latest and latest.get("run_dir"):
+        run_dir = Path(latest["run_dir"])
+        if run_dir.exists() and (run_dir / "top_k.md").exists():
+            return True
     # Check runtime literature search
     if RUNTIME_LIT_DIR.exists() and (RUNTIME_LIT_DIR / "top_k.md").exists():
         return True
@@ -385,15 +394,6 @@ def _has_literature_metadata() -> bool:
     if LITERATURE_SEARCH_DIR.exists() and (LITERATURE_SEARCH_DIR / "top_k.md").exists():
         return True
     return False
-
-
-def _get_literature_metadata_path() -> Path | None:
-    """Return the path to the best available literature metadata."""
-    if RUNTIME_LIT_DIR.exists() and (RUNTIME_LIT_DIR / "top_k.md").exists():
-        return RUNTIME_LIT_DIR
-    if LITERATURE_SEARCH_DIR.exists() and (LITERATURE_SEARCH_DIR / "top_k.md").exists():
-        return LITERATURE_SEARCH_DIR
-    return None
 
 
 def _has_idea_synthesis_scaffold() -> bool:
@@ -469,6 +469,130 @@ def _has_worth_experiment_verdict() -> bool:
         return False
     content = audit_path.read_text(encoding="utf-8")
     return "worth_experiment_plan" in content.lower()
+
+
+def reconcile_workflow_state(state: dict) -> tuple[dict, list[str]]:
+    """Reconcile workflow state against actual artifact files.
+
+    Returns (repaired_state, list_of_warnings).
+    Artifact truth overrides cached state.
+    """
+    warnings = []
+    repaired = dict(state)
+
+    # Check has_worth_experiment_plan against actual audit file
+    cached_worth = state.get("has_worth_experiment_plan", False)
+    actual_worth = _has_worth_experiment_verdict()
+    if cached_worth and not actual_worth:
+        repaired["has_worth_experiment_plan"] = False
+        warnings.append("stale_state_detected: has_worth_experiment_plan was true but audit file has no worth_experiment_plan verdict — repaired to false")
+        warnings.append("repaired_fields: ['has_worth_experiment_plan']")
+        # Also clear experiment_and_analysis from completed if it was there
+        if "experiment_and_analysis" in repaired.get("completed_user_phases", []):
+            repaired["completed_user_phases"].remove("experiment_and_analysis")
+            warnings.append("repaired_fields: ['completed_user_phases'] — removed experiment_and_analysis")
+        # Recompute next_allowed_commands
+        repaired["next_allowed_commands"] = _compute_next_commands(repaired)
+
+    return repaired, warnings
+
+
+def _check_evidence_quality(lit_dir: Path) -> dict:
+    """Check literature quality — keyword-based domain relevance (no model calls).
+
+    Checks paper titles in top_k.md for domain relevance.
+    Returns dict with domain_match_score, counts, and quality_verdict.
+    """
+    top_k_file = lit_dir / "top_k.md"
+    if not top_k_file.exists():
+        return {"quality_verdict": "wrong_domain_blocked", "reason": "no top_k.md found"}
+
+    content = top_k_file.read_text(encoding="utf-8")
+
+    # Extract paper titles (lines starting with "title: ")
+    import re as _re
+    titles = _re.findall(r'^title:\s*(.+)$', content, _re.MULTILINE)
+    titles_lower = [t.lower() for t in titles]
+
+    if not titles:
+        return {"quality_verdict": "wrong_domain_blocked", "reason": "no paper titles found"}
+
+    # Keyword families — check against titles only
+    diffusion_kw = ["diffusion", "score-based", "denoising", "generative", "ddpm", "ddim", "score matching", "latent diffusion"]
+    ts_kw = ["time series", "temporal", "multivariate", "sensor", "forecasting", "time-series", "timeseries"]
+    anomaly_kw = ["anomaly detection", "outlier detection", "fault detection", "anomaly", "outlier", "abnormal"]
+    wrong_domain_kw = ["hallucination", "language model", "llm", "token-level", "internal state"]
+
+    def _count_title_hits(keywords: list[str]) -> int:
+        return sum(1 for t in titles_lower if any(kw in t for kw in keywords))
+
+    n_diffusion = _count_title_hits(diffusion_kw)
+    n_ts = _count_title_hits(ts_kw)
+    n_anomaly = _count_title_hits(anomaly_kw)
+    n_wrong = _count_title_hits(wrong_domain_kw)
+    n_total = len(titles)
+
+    # Scoring: count of titles matching each family
+    score = min(n_diffusion, 5) + min(n_ts, 5) + min(n_anomaly, 5)
+
+    # Blocking rules:
+    # - If majority of titles are wrong domain → blocked
+    # - If no titles match diffusion AND no titles match time series → blocked
+    if n_total > 0 and n_wrong > n_total * 0.5:
+        verdict = "wrong_domain_blocked"
+    elif n_ts == 0 and n_diffusion == 0:
+        verdict = "wrong_domain_blocked"
+    elif score >= 6:
+        verdict = "sufficient_for_idea_synthesis"
+    elif score >= 3:
+        verdict = "weak_but_usable"
+    else:
+        verdict = "wrong_domain_blocked"
+
+    return {
+        "domain_match_score": score,
+        "n_time_series_related": n_ts,
+        "n_diffusion_related": n_diffusion,
+        "n_anomaly_related": n_anomaly,
+        "n_wrong_domain_llm": n_wrong,
+        "n_total_papers": n_total,
+        "quality_verdict": verdict,
+    }
+
+
+def _load_latest_literature_run() -> dict | None:
+    """Load latest_literature_run.json if it exists."""
+    if not LATEST_LIT_RUN_FILE.exists():
+        return None
+    try:
+        return json.loads(LATEST_LIT_RUN_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _save_latest_literature_run(run_meta: dict) -> None:
+    """Save latest_literature_run.json."""
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    LATEST_LIT_RUN_FILE.write_text(json.dumps(run_meta, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _get_literature_metadata_path() -> Path | None:
+    """Return the path to the best available literature metadata.
+
+    Priority: latest_literature_run.json run_dir > RUNTIME_LIT_DIR > LITERATURE_SEARCH_DIR.
+    """
+    # Check latest_literature_run.json first
+    latest = _load_latest_literature_run()
+    if latest and latest.get("run_dir"):
+        run_dir = Path(latest["run_dir"])
+        if run_dir.exists() and (run_dir / "top_k.md").exists():
+            return run_dir
+    # Fallback to legacy paths
+    if RUNTIME_LIT_DIR.exists() and (RUNTIME_LIT_DIR / "top_k.md").exists():
+        return RUNTIME_LIT_DIR
+    if LITERATURE_SEARCH_DIR.exists() and (LITERATURE_SEARCH_DIR / "top_k.md").exists():
+        return LITERATURE_SEARCH_DIR
+    return None
 
 
 def _build_idea_synthesis_input(payload: str, num_candidates: str) -> str:
@@ -732,6 +856,8 @@ def execute_literature_intake(parsed: dict, payload_file: str | None = None) -> 
 
     Calls run_multisource_pipeline for real metadata search across arXiv, OpenAlex, Crossref.
     No PDF downloads, no model calls, no trusted_outputs changes.
+
+    Gate B: Creates run-specific dir and writes latest_literature_run.json.
     """
     _ensure_research_dir()
     payload = parsed["payload"]
@@ -768,6 +894,13 @@ def execute_literature_intake(parsed: dict, payload_file: str | None = None) -> 
             "trusted_outputs_changed": False,
         }
 
+    # Gate B: Create run-specific directory
+    import hashlib as _hashlib
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    topic_hash = _hashlib.sha256(search_topic.encode("utf-8")).hexdigest()[:8]
+    run_dir_name = f"{timestamp}_{topic_hash}"
+    run_dir = ROOT / "tmp" / "slash_lit_search" / run_dir_name
+
     # Run metadata-only literature search via existing pipeline
     try:
         # Ensure project root is importable
@@ -775,7 +908,7 @@ def execute_literature_intake(parsed: dict, payload_file: str | None = None) -> 
             sys.path.insert(0, str(ROOT))
         from tools.literature_evidence_landing import run_multisource_pipeline
 
-        RUNTIME_LIT_DIR.mkdir(parents=True, exist_ok=True)
+        run_dir.mkdir(parents=True, exist_ok=True)
 
         # Extract must_include keywords from topic (simple heuristic)
         must_include = _extract_keywords(search_topic)
@@ -790,13 +923,13 @@ def execute_literature_intake(parsed: dict, payload_file: str | None = None) -> 
             intent="novelty_check",
             must_include=must_include,
             sources=["arxiv", "crossref", "openalex"],
-            run_dir=RUNTIME_LIT_DIR,
+            run_dir=run_dir,
             start_year=2020,
             end_year=datetime.now().year,
-            max_results_per_source=15,
+            max_results_per_source=30,
             max_jobs=9,
             per_page=10,
-            top_k=10,
+            top_k=20,
             overwrite=True,
             exclude="supply chain,medical",
             dry_run=False,
@@ -807,12 +940,35 @@ def execute_literature_intake(parsed: dict, payload_file: str | None = None) -> 
 
         if pipeline_result.get("status") == "PASS":
             # Read actual counts from output files (pipeline summary may be stale)
-            n_raw = _count_jsonl_lines(RUNTIME_LIT_DIR / "raw_results.jsonl")
-            n_candidates = _count_jsonl_lines(RUNTIME_LIT_DIR / "candidates.jsonl")
-            n_top_k = _count_top_k_papers(RUNTIME_LIT_DIR / "top_k.md")
+            n_raw = _count_jsonl_lines(run_dir / "raw_results.jsonl")
+            n_candidates = _count_jsonl_lines(run_dir / "candidates.jsonl")
+            n_top_k = _count_top_k_papers(run_dir / "top_k.md")
 
-            # Write summary.json
-            summary_file = RUNTIME_LIT_DIR / "summary.json"
+            # Gate D: Evidence quality check
+            evidence_quality = _check_evidence_quality(run_dir)
+
+            # Gate B: Write latest_literature_run.json
+            run_meta = {
+                "run_id": run_dir_name,
+                "topic": search_topic,
+                "topic_hash": topic_hash,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "payload_file": payload_file or "",
+                "raw_user_input_file": str(raw_file),
+                "sources": ["arxiv", "crossref", "openalex"],
+                "query_strings": must_include,
+                "output_dir": str(run_dir),
+                "run_dir": str(run_dir),
+                "raw_count": n_raw,
+                "candidates_count": n_candidates,
+                "top_k_count": n_top_k,
+                "evidence_quality": evidence_quality,
+                "model_called": False,
+            }
+            _save_latest_literature_run(run_meta)
+
+            # Write summary.json in run dir
+            summary_file = run_dir / "summary.json"
             summary_file.write_text(json.dumps({
                 "status": "success",
                 "topic": search_topic,
@@ -822,6 +978,7 @@ def execute_literature_intake(parsed: dict, payload_file: str | None = None) -> 
                 "top_k_selected": n_top_k,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "model_called": False,
+                "run_id": run_dir_name,
             }, indent=2, ensure_ascii=False), encoding="utf-8")
 
             # Create literature intake summary scaffold
@@ -836,6 +993,9 @@ search_topic: {search_topic}
 total_raw_records: {n_raw}
 total_candidates: {n_candidates}
 top_k_selected: {n_top_k}
+run_id: {run_dir_name}
+run_dir: {run_dir}
+evidence_quality: {evidence_quality['quality_verdict']}
 ---
 
 # Literature Intake — Metadata Search Complete
@@ -843,6 +1003,10 @@ top_k_selected: {n_top_k}
 ## Search Topic
 
 {search_topic}
+
+## Run ID
+
+{run_dir_name}
 
 ## Sources Queried
 
@@ -856,13 +1020,19 @@ top_k_selected: {n_top_k}
 - Deduplicated candidates: {n_candidates}
 - Top-k selected: {n_top_k}
 
+## Evidence Quality
+
+- Domain match score: {evidence_quality['domain_match_score']}
+- Time series related: {evidence_quality['n_time_series_related']}
+- Diffusion related: {evidence_quality['n_diffusion_related']}
+- Anomaly related: {evidence_quality['n_anomaly_related']}
+- Wrong domain (LLM): {evidence_quality['n_wrong_domain_llm']}
+- Verdict: {evidence_quality['quality_verdict']}
+
 ## Output Files
 
-- Search plan: runtime/literature_search/search_plan.yaml
-- Raw results: runtime/literature_search/raw_results.jsonl
-- Candidates: runtime/literature_search/candidates.jsonl
-- Top-k papers: runtime/literature_search/top_k.md
-- Summary: runtime/literature_search/summary.json
+- Run dir: {run_dir}
+- Latest run metadata: runtime/latest_literature_run.json
 
 ## Next Action
 
@@ -877,7 +1047,8 @@ Run /idea-synthesis to generate candidate research ideas based on this literatur
 """
             scaffold_file.write_text(scaffold_content, encoding="utf-8")
             results.append(f"Created runtime/{scaffold_file.name}")
-            results.append(f"Created runtime/literature_search/ ({n_raw} raw, {n_candidates} candidates, {n_top_k} top-k)")
+            results.append(f"Created {run_dir.name}/ ({n_raw} raw, {n_candidates} candidates, {n_top_k} top-k)")
+            results.append(f"Created runtime/latest_literature_run.json")
 
             # Update workflow state — metadata search counts as metadata_completed
             state = update_workflow_state("literature-intake", payload_file, PHASE_METADATA_COMPLETED)
@@ -896,7 +1067,9 @@ Run /idea-synthesis to generate candidate research ideas based on this literatur
                     "raw_records": n_raw,
                     "candidates": n_candidates,
                     "top_k": n_top_k,
-                    "run_dir": str(RUNTIME_LIT_DIR),
+                    "run_dir": str(run_dir),
+                    "run_id": run_dir_name,
+                    "evidence_quality": evidence_quality,
                 },
             }
         else:
@@ -994,6 +1167,19 @@ def execute_idea_synthesis(parsed: dict, payload_file: str | None = None) -> dic
                 "model_called": False,
                 "trusted_outputs_changed": False,
             }
+
+        # Gate D: Check evidence quality before allowing trusted synthesis
+        if meta_path:
+            eq = _check_evidence_quality(meta_path)
+            if eq["quality_verdict"] == "wrong_domain_blocked":
+                return {
+                    "status": "blocked",
+                    "command": "/idea-synthesis",
+                    "blocked_reason": f"Evidence quality gate failed: {eq['quality_verdict']}. Literature is not relevant to the research topic. Re-run /literature-intake with correct domain queries.",
+                    "model_called": False,
+                    "trusted_outputs_changed": False,
+                    "evidence_quality": eq,
+                }
 
         result = _run_trusted_idea_synthesis(payload, num_candidates)
         call_id = result.get("call_id", "")
@@ -1700,8 +1886,16 @@ def execute_status(parsed: dict, payload_file: str | None = None) -> dict:
     - literature metadata summary
     - trusted outputs summary
     - experiment blocked reason
+    - stale state reconciliation warnings
     """
     state = load_workflow_state()
+
+    # Gate A: reconcile state against artifacts
+    state, reconciliation_warnings = reconcile_workflow_state(state)
+    # Save repaired state if any warnings
+    if reconciliation_warnings:
+        save_workflow_state(state)
+
     phase_status = state.get("phase_status", {})
 
     # Read trusted outputs summary
@@ -1748,6 +1942,18 @@ def execute_status(parsed: dict, payload_file: str | None = None) -> dict:
             content = top_k_file.read_text(encoding="utf-8")
             lit_summary["top_k_count"] = content.count("## ") + content.count("- **")
 
+    # Latest literature run info
+    latest_lit_run = _load_latest_literature_run()
+    if latest_lit_run:
+        lit_summary["latest_run_topic"] = latest_lit_run.get("topic", "")
+        lit_summary["latest_run_topic_hash"] = latest_lit_run.get("topic_hash", "")
+        lit_summary["latest_run_id"] = latest_lit_run.get("run_id", "")
+        # Evidence quality check
+        run_dir = Path(latest_lit_run.get("run_dir", "")) if latest_lit_run.get("run_dir") else None
+        if run_dir and run_dir.exists():
+            eq = _check_evidence_quality(run_dir)
+            lit_summary["evidence_domain_check"] = eq
+
     # Compute experiment gate status
     experiment_blocked_reason = None
     if not trusted_idea_audit:
@@ -1755,7 +1961,7 @@ def execute_status(parsed: dict, payload_file: str | None = None) -> dict:
     elif not has_worth_verdict:
         experiment_blocked_reason = "Idea audit missing worth_experiment_plan verdict."
 
-    return {
+    result = {
         "status": "execute_safe",
         "command": "/status",
         "workflow_state": state,
@@ -1770,6 +1976,10 @@ def execute_status(parsed: dict, payload_file: str | None = None) -> dict:
         "model_called": False,
         "trusted_outputs_changed": False,
     }
+    if reconciliation_warnings:
+        result["reconciliation_warnings"] = reconciliation_warnings
+        result["stale_state_detected"] = True
+    return result
 
 
 # ---- Plan generation ----
@@ -2597,6 +2807,172 @@ def _self_test() -> bool:
             mod.RUNTIME_DIR = orig_rt
             mod.WORKFLOW_STATE_FILE = orig_state
             mod.TRUSTED_OUTPUT_DIR = orig_trusted
+
+    # Test 45: reconcile_workflow_state repairs stale has_worth_experiment_plan
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_trusted = mod.TRUSTED_OUTPUT_DIR
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.TRUSTED_OUTPUT_DIR = mod.RESEARCH_DIR / "trusted_outputs"
+        try:
+            mod.TRUSTED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            # Audit file has NO worth_experiment_plan
+            (mod.TRUSTED_OUTPUT_DIR / "idea_audit.md").write_text("# Audit\nVerdict: insufficient_evidence")
+            state = {"has_worth_experiment_plan": True, "phase_status": {}, "completed_user_phases": []}
+            repaired, warnings = reconcile_workflow_state(state)
+            check("45. reconcile repairs stale has_worth", repaired["has_worth_experiment_plan"] is False,
+                  f"got has_worth={repaired.get('has_worth_experiment_plan')}")
+            check("45b. reconcile produces warnings", len(warnings) > 0,
+                  f"got warnings={warnings}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.TRUSTED_OUTPUT_DIR = orig_trusted
+
+    # Test 46: reconcile_workflow_state does NOT repair when audit has verdict
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_trusted = mod.TRUSTED_OUTPUT_DIR
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.TRUSTED_OUTPUT_DIR = mod.RESEARCH_DIR / "trusted_outputs"
+        try:
+            mod.TRUSTED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.TRUSTED_OUTPUT_DIR / "idea_audit.md").write_text("# Audit\nworth_experiment_plan")
+            state = {"has_worth_experiment_plan": True, "phase_status": {}, "completed_user_phases": []}
+            repaired, warnings = reconcile_workflow_state(state)
+            check("46. reconcile keeps valid has_worth", repaired["has_worth_experiment_plan"] is True,
+                  f"got has_worth={repaired.get('has_worth_experiment_plan')}")
+            check("46b. reconcile no warnings when valid", len(warnings) == 0,
+                  f"got warnings={warnings}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.TRUSTED_OUTPUT_DIR = orig_trusted
+
+    # Test 47: _check_evidence_quality with good titles
+    with tempfile.TemporaryDirectory() as td:
+        top_k = Path(td) / "top_k.md"
+        top_k.write_text("# Top-K\n\n### Paper 1\ntitle: Diffusion Model for Time Series Anomaly Detection\nauthors: Test\nyear: 2024\nsource: arxiv\n\n### Paper 2\ntitle: Score-Based Generative Model for Temporal Outlier Detection\nauthors: Test\nyear: 2024\nsource: arxiv\n")
+        eq = _check_evidence_quality(Path(td))
+        check("47. evidence quality good titles", eq["quality_verdict"] == "sufficient_for_idea_synthesis",
+              f"got verdict={eq['quality_verdict']}, score={eq['domain_match_score']}")
+        check("47b. evidence quality title counts", eq["n_diffusion_related"] >= 2 and eq["n_time_series_related"] >= 1,
+              f"got diffusion={eq['n_diffusion_related']}, ts={eq['n_time_series_related']}")
+
+    # Test 48: _check_evidence_quality with wrong domain titles (LLM hallucination)
+    with tempfile.TemporaryDirectory() as td:
+        top_k = Path(td) / "top_k.md"
+        top_k.write_text("# Top-K\n\n### Paper 1\ntitle: LLM Hallucination Detection via Internal States\nauthors: Test\nyear: 2024\nsource: arxiv\n\n### Paper 2\ntitle: Large Language Model Internal State Analysis\nauthors: Test\nyear: 2024\nsource: arxiv\n\n### Paper 3\ntitle: Token-Level Hidden State Hallucination Detection\nauthors: Test\nyear: 2024\nsource: arxiv\n")
+        eq = _check_evidence_quality(Path(td))
+        check("48. evidence quality wrong domain blocked", eq["quality_verdict"] == "wrong_domain_blocked",
+              f"got verdict={eq['quality_verdict']}, wrong={eq['n_wrong_domain_llm']}")
+
+    # Test 49: _check_evidence_quality with no top_k.md
+    with tempfile.TemporaryDirectory() as td:
+        eq = _check_evidence_quality(Path(td))
+        check("49. evidence quality no file blocked", eq["quality_verdict"] == "wrong_domain_blocked",
+              f"got verdict={eq['quality_verdict']}")
+
+    # Test 50: latest_literature_run.json save and load
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_rt = mod.RUNTIME_DIR
+        mod.RUNTIME_DIR = Path(td)
+        try:
+            run_meta = {"run_id": "test123", "topic": "test topic", "topic_hash": "abc123", "run_dir": "/tmp/test"}
+            _save_latest_literature_run(run_meta)
+            loaded = _load_latest_literature_run()
+            check("50. save/load latest_literature_run", loaded is not None and loaded["run_id"] == "test123",
+                  f"got loaded={loaded}")
+        finally:
+            mod.RUNTIME_DIR = orig_rt
+
+    # Test 51: _get_literature_metadata_path uses latest_literature_run.json
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_rt = mod.RUNTIME_DIR
+        orig_lit = mod.LITERATURE_SEARCH_DIR
+        orig_runtime_lit = mod.RUNTIME_LIT_DIR
+        mod.RUNTIME_DIR = Path(td) / "runtime"
+        mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        mod.LITERATURE_SEARCH_DIR = Path(td) / "lit_search"
+        mod.RUNTIME_LIT_DIR = Path(td) / "tmp_slash"
+        # Create run dir with top_k
+        run_dir = Path(td) / "custom_run"
+        run_dir.mkdir()
+        (run_dir / "top_k.md").write_text("## Paper 1\ntest")
+        # Write latest_literature_run.json
+        mod.LATEST_LIT_RUN_FILE = mod.RUNTIME_DIR / "latest_literature_run.json"
+        mod.LATEST_LIT_RUN_FILE.write_text(json.dumps({"run_dir": str(run_dir)}))
+        result_path = _get_literature_metadata_path()
+        check("51. metadata path uses latest_literature_run", result_path == run_dir,
+              f"got path={result_path}, expected={run_dir}")
+        mod.RUNTIME_DIR = orig_rt
+        mod.LITERATURE_SEARCH_DIR = orig_lit
+        mod.RUNTIME_LIT_DIR = orig_runtime_lit
+
+    # Test 52: experiment blocked when audit has no worth verdict (artifact truth)
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_dir = mod.RESEARCH_DIR
+        orig_rt = mod.RUNTIME_DIR
+        orig_state = mod.WORKFLOW_STATE_FILE
+        orig_trusted = mod.TRUSTED_OUTPUT_DIR
+        mod.RESEARCH_DIR = Path(td) / "research" / "current"
+        mod.RUNTIME_DIR = mod.RESEARCH_DIR / "runtime"
+        mod.WORKFLOW_STATE_FILE = mod.RUNTIME_DIR / "workflow_state.json"
+        mod.TRUSTED_OUTPUT_DIR = mod.RESEARCH_DIR / "trusted_outputs"
+        try:
+            mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            (mod.RUNTIME_DIR / "raw_user_input.md").write_text("test")
+            mod.TRUSTED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            # Audit has NO worth_experiment_plan
+            (mod.TRUSTED_OUTPUT_DIR / "idea_audit.md").write_text("# Audit\nVerdict: insufficient_evidence")
+            # But state claims it does (stale!)
+            mod.WORKFLOW_STATE_FILE.write_text(json.dumps({
+                "current_user_phase": "idea_audit",
+                "completed_user_phases": ["research_direction_intake", "literature_intake"],
+                "phase_status": {
+                    "idea_synthesis": "trusted_completed",
+                    "idea_audit": "trusted_completed",
+                },
+                "has_worth_experiment_plan": True,
+                "idea_reviewer_validation_pass": True,
+                "next_allowed_commands": ["experiment", "status"],
+            }), encoding="utf-8")
+            p = parse_slash_command('/experiment "test" --mode lightweight')
+            result = execute_command(p)
+            check("52. experiment blocked by artifact truth not cached state", result["status"] == "blocked",
+                  f"got status={result['status']}")
+        finally:
+            mod.RESEARCH_DIR = orig_dir
+            mod.RUNTIME_DIR = orig_rt
+            mod.WORKFLOW_STATE_FILE = orig_state
+            mod.TRUSTED_OUTPUT_DIR = orig_trusted
+
+    # Test 53: _has_literature_metadata checks latest_literature_run.json
+    with tempfile.TemporaryDirectory() as td:
+        mod = _sys.modules[__name__]
+        orig_rt = mod.RUNTIME_DIR
+        orig_lit = mod.LITERATURE_SEARCH_DIR
+        orig_runtime_lit = mod.RUNTIME_LIT_DIR
+        mod.RUNTIME_DIR = Path(td) / "runtime"
+        mod.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        mod.LITERATURE_SEARCH_DIR = Path(td) / "lit_search"
+        mod.RUNTIME_LIT_DIR = Path(td) / "tmp_slash"
+        mod.LATEST_LIT_RUN_FILE = mod.RUNTIME_DIR / "latest_literature_run.json"
+        # No latest_literature_run.json, no other dirs
+        check("53. no metadata when nothing exists", not _has_literature_metadata(),
+              "should be false")
+        mod.RUNTIME_DIR = orig_rt
+        mod.LITERATURE_SEARCH_DIR = orig_lit
+        mod.RUNTIME_LIT_DIR = orig_runtime_lit
 
     print(f"\nSelf-test results: {tests_passed} passed, {tests_failed} failed")
     return tests_failed == 0
