@@ -72,6 +72,127 @@ The system should explicitly support:
 
 The intended outcome is not prettier prompts. The intended outcome is higher-quality candidate ideas that are more likely to survive novelty check, pilot experiments, and reviewer scrutiny.
 
+#### Goal A.1 — Idea quality is the front-loaded bottleneck
+
+For this project, the most important stage is not paper writing and not heavy experiments. The most important stage is finding a strong research idea.
+
+A strong idea can make later experiments and paper writing tractable. A weak idea cannot be rescued by large experiments or polished writing.
+
+Therefore, changes should prioritize:
+
+- better problem framing;
+- stronger novelty reasoning;
+- clearer adaptation gap discovery;
+- better rejection of weak ideas;
+- better formation of coherent contribution chains;
+- better pilot-readiness judgment.
+
+Experiment planning matters, but it is downstream. It should verify and refine a promising idea; it should not compensate for a weak idea.
+
+#### Goal A.2 — Transfer innovation doctrine
+
+Transfer innovation is valid when it follows this pattern:
+
+```text
+source-domain mature method
+→ target-domain opportunity
+→ direct-transfer baseline
+→ observed or predicted mismatch
+→ target-specific adaptation
+→ ablation proving the adaptation matters
+```
+
+A transfer idea should not be judged by whether it borrows from another field. It should be judged by whether the transfer reveals and solves a real target-domain mismatch.
+
+A weak transfer idea says:
+
+```text
+Use method X from domain A on domain B.
+```
+
+A strong transfer idea says:
+
+```text
+Method X works in domain A because of assumption P.
+Domain B violates or stresses assumption P in way Q.
+Directly transferring X produces failure mode R.
+We adapt X by mechanism S to address Q/R.
+A direct-transfer baseline and ablation can test whether S is necessary.
+```
+
+Required fields for every transfer idea:
+
+1. Source-domain mature method.
+2. Why the method is strong in the source domain.
+3. Target-domain opportunity.
+4. Direct-transfer baseline.
+5. Target-domain mismatch.
+6. Adaptation mechanism.
+7. Expected empirical signal.
+8. Required ablation.
+9. Closest-prior-work risk.
+10. Reviewer attack point.
+
+Reject or revise any transfer idea that lacks a direct-transfer baseline or target-domain mismatch.
+
+#### Goal A.3 — Contribution-chain doctrine
+
+A paper may be built from two or three medium-strength contributions if they serve one coherent core claim.
+
+This is acceptable only when the components are causally or logically connected.
+
+A valid contribution chain has:
+
+1. Shared core claim.
+2. Main contribution.
+3. Auxiliary contribution(s).
+4. Explanation of why the components belong together.
+5. Explanation of why this is not patchwork.
+6. Required ablation for each component.
+7. A minimal pilot that can test the shared claim.
+
+Invalid patchwork looks like:
+
+```text
+Add trick A, trick B, and trick C because each sounds useful.
+```
+
+A valid contribution chain looks like:
+
+```text
+Core claim: target-domain structure matters for diffusion-based anomaly detection.
+Contribution 1 adapts the diffusion process to preserve temporal structure.
+Contribution 2 uses the adapted denoising dynamics to localize anomalies.
+Each ablation tests one part of the same claim.
+```
+
+Reject or revise any contribution chain that lacks a shared core claim.
+
+#### Goal A.4 — Innovation verification doctrine
+
+The heavy fork's novelty-check work contains one useful principle: evidence quality must constrain novelty claims.
+
+Do not migrate the heavy workflow, but preserve this doctrine:
+
+- `insufficient_evidence` cannot become `confirmed_novel`.
+- `template_only` or weak literature evidence cannot support strong novelty claims.
+- `valid_with_gaps` evidence should produce caution, not overconfidence.
+- `already_done` must stop or force a pivot.
+- `direct_transfer_only` should not be promoted to pilot-ready.
+- A contribution chain must be checked for patchwork before pilot.
+- A transfer idea must be checked against prior work that may already have transferred the same method.
+
+Novelty checking should answer these questions:
+
+1. Has the source method already been transferred to the target domain?
+2. Has the same target-domain mismatch already been identified?
+3. Has the same adaptation already been proposed?
+4. Is the proposed change merely a direct transfer?
+5. Is the contribution chain one coherent claim or a patchwork bundle?
+6. What evidence would be needed before the idea can be called pilot-ready?
+
+This is one of the few parts of the heavy fork worth preserving conceptually: use evidence state to cap the strength of the novelty verdict.
+
 ### Goal B — Minimal trust / context-contamination hardening
 
 This goal is secondary and should not dominate the project.
@@ -177,7 +298,22 @@ If Skill text alone does not reliably shape better ideas, add lightweight templa
 
 These templates should force structure, not create a new workflow engine.
 
-### 5.3 Optional model-call evidence helper
+### 5.3 Innovation-verdict guardrails
+
+Borrow the useful novelty-check ideas from the heavy fork without migrating the heavy workflow.
+
+Possible lightweight guardrails:
+
+- evidence state caps allowed novelty verdict;
+- `insufficient_evidence` cannot be upgraded to `confirmed_novel`;
+- `direct_transfer_only` cannot be pilot-ready;
+- `already_done` forces stop or pivot;
+- `valid_with_gaps` requires explicit risk disclosure;
+- contribution-chain candidates must pass a patchwork check.
+
+These guardrails should be added to Skill instructions first. Add a validator only if the Skill-only version proves insufficient.
+
+### 5.4 Optional model-call evidence helper
 
 Possible small helper, not a workflow engine:
 
@@ -190,7 +326,7 @@ Possible small helper, not a workflow engine:
 
 Purpose: improve auditability of reviewer calls, not replace ARIS review protocol.
 
-### 5.4 Optional evidence-topic binding check
+### 5.5 Optional evidence-topic binding check
 
 This addresses a real failure observed in the heavy fork: old hallucination/internal-state evidence was accidentally reused for a time-series diffusion topic.
 
@@ -221,6 +357,12 @@ Modify upstream Skill text first:
 
 Add transfer innovation and contribution-chain requirements.
 
+Also add novelty-verdict guardrails:
+
+- evidence quality constrains novelty strength;
+- direct-transfer-only ideas cannot become pilot-ready;
+- contribution chains require shared core claim and ablations.
+
 No Python changes in Phase 1 unless the Skill edit cannot express the necessary quality gate.
 
 ### Phase 2 — Evaluate whether the Skill patch improves outputs
@@ -234,7 +376,8 @@ Evaluate whether generated ideas now include:
 - adaptation mechanisms;
 - ablation requirements;
 - coherent contribution chains;
-- clear rejection of patchwork and simple apply-X-to-Y ideas.
+- clear rejection of patchwork and simple apply-X-to-Y ideas;
+- novelty verdicts that respect evidence quality.
 
 If output quality improves enough, stop. Do not add more machinery.
 
@@ -244,7 +387,11 @@ If output remains generic or weak, proceed to Phase 3.
 
 Only if Phase 2 is insufficient, add transfer idea card / contribution-chain templates.
 
-### Phase 4 — Decide whether trust hardening is worth adding
+### Phase 4 — Add lightweight novelty guard validators only if needed
+
+Only if Skill/template instructions still allow weak ideas to pass as pilot-ready, add a small validator that checks idea cards for required fields and forbidden verdict upgrades.
+
+### Phase 5 — Decide whether trust hardening is worth adding
 
 Before adding Python trust hardening:
 
@@ -253,7 +400,7 @@ Before adding Python trust hardening:
 3. If no meaningful failure is observed, do not add Python hardening.
 4. If a repeatable failure occurs, add the smallest possible helper.
 
-### Phase 5 — Optional evidence-topic binding helper
+### Phase 6 — Optional evidence-topic binding helper
 
 Only if the old-evidence problem appears in upstream usage, add a small helper or checklist that warns when literature evidence and current topic diverge.
 
@@ -288,7 +435,9 @@ Use the purpose-driven hybrid route:
 ```text
 Upstream ARIS as the main system
 + transfer/contribution-chain Skill patch first
++ novelty-verdict guardrails in Skill text
 + templates only if Skill text is insufficient
++ optional validators only if weak ideas still pass
 + optional minimal evidence/trust hardening only after real failures are observed
 ```
 
@@ -300,6 +449,6 @@ Do not treat smallness as the goal. Treat research-idea quality as the goal.
 
 ## 9. Immediate next action
 
-Next commit on this branch should modify `skills/idea-creator/SKILL.md`, and optionally `skills/novelty-check/SKILL.md` / `skills/experiment-plan/SKILL.md`, to add transfer innovation and contribution-chain quality requirements.
+Next commit on this branch should modify `skills/idea-creator/SKILL.md`, and optionally `skills/novelty-check/SKILL.md` / `skills/experiment-plan/SKILL.md`, to add transfer innovation, contribution-chain quality requirements, and novelty-verdict guardrails.
 
 Do not add Python in the next commit unless the change cannot be expressed at the Skill/template level.
