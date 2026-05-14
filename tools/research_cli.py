@@ -450,10 +450,13 @@ def compute_next_allowed(trusted_outputs: dict, validators: dict, repair_queue: 
     blockers: list[str] = []
     warnings: list[str] = []
 
+    # Use merged stage list (STAGE_ORDER + workflow-config-only stages)
+    wf_config = load_workflow_config()
+    all_stages = _get_all_valid_stages(wf_config)
+
     # Determine completed stages by presence of trusted outputs
     completed = []
-    for stage in STAGE_ORDER:
-        path_key = STAGE_ORDER.index(stage)
+    for stage in all_stages:
         to = trusted_outputs.get(stage, {})
         if to.get("exists"):
             completed.append(stage)
@@ -514,7 +517,7 @@ def compute_next_allowed(trusted_outputs: dict, validators: dict, repair_queue: 
 
     # Find next stage
     next_stage = None
-    for stage in STAGE_ORDER:
+    for stage in all_stages:
         if stage not in completed:
             next_stage = stage
             break
@@ -1130,22 +1133,63 @@ def build_novelty_risk_plan(idea: str) -> dict[str, Any]:
 # ─────────────────────────────────────────────────────────
 # Continue dry-run plan builder
 # ─────────────────────────────────────────────────────────
+def _get_all_valid_stages(wf_config: dict[str, Any]) -> list[str]:
+    """Return merged stage list preserving workflow config ordering.
+
+    Workflow config is authoritative for ordering of stages it defines.
+    STAGE_ORDER fills in stages not in the config (e.g. raw_user_input, literature_notes).
+    Non-config stages are placed at their natural STAGE_ORDER position relative to
+    the nearest config stage.
+    """
+    if not wf_config:
+        return list(STAGE_ORDER)
+
+    config_order = list(wf_config.keys())
+    cfg_set = set(config_order)
+
+    # Start with config stages in order
+    merged = list(config_order)
+
+    # For each non-config STAGE_ORDER stage, find its insertion point
+    for so_stage in STAGE_ORDER:
+        if so_stage in cfg_set:
+            continue
+
+        # Walk STAGE_ORDER from so_stage's position forward to find the next config stage
+        so_pos = STAGE_ORDER.index(so_stage)
+        insert_before = None
+        for j in range(so_pos + 1, len(STAGE_ORDER)):
+            if STAGE_ORDER[j] in cfg_set:
+                insert_before = STAGE_ORDER[j]
+                break
+
+        if insert_before and insert_before in merged and so_stage not in merged:
+            idx = merged.index(insert_before)
+            merged.insert(idx, so_stage)
+        elif so_stage not in merged:
+            merged.append(so_stage)
+
+    return merged
+
+
 def build_continue_plan(target_stage: str, json_output: bool = False) -> dict[str, Any]:
     """Build a dry-run plan for continuing to a specific stage. No model calls, no file writes."""
-    if target_stage not in STAGE_ORDER:
-        return {"error": f"Unknown stage: {target_stage}. Valid stages: {', '.join(STAGE_ORDER)}"}
+    wf_config = load_workflow_config()
+    all_stages = _get_all_valid_stages(wf_config)
+
+    if target_stage not in all_stages:
+        return {"error": f"Unknown stage: {target_stage}. Valid stages: {', '.join(all_stages)}"}
 
     status = build_status()
     completed = status.get("completed_stages", [])
     next_allowed = status.get("next_allowed_stage")
-    wf_config = load_workflow_config()
 
     # Check if target stage is behind current stage (already completed)
     if target_stage in completed:
         return {"error": f"Stage '{target_stage}' is already completed. Cannot continue to a completed stage."}
 
     # Find target stage index
-    target_idx = STAGE_ORDER.index(target_stage)
+    target_idx = all_stages.index(target_stage)
 
     # Build execution plan from next allowed to target
     execution_steps = []
@@ -1154,7 +1198,7 @@ def build_continue_plan(target_stage: str, json_output: bool = False) -> dict[st
 
     # Check if we can reach the target stage
     if next_allowed and next_allowed != target_stage:
-        next_idx = STAGE_ORDER.index(next_allowed) if next_allowed in STAGE_ORDER else -1
+        next_idx = all_stages.index(next_allowed) if next_allowed in all_stages else -1
         if next_idx > target_idx:
             return {
                 "error": f"Cannot continue to '{target_stage}' — next allowed stage is '{next_allowed}' which is after '{target_stage}' in the workflow.",
@@ -1163,11 +1207,11 @@ def build_continue_plan(target_stage: str, json_output: bool = False) -> dict[st
 
     # Build steps from next_allowed to target
     start_stage = next_allowed or target_stage
-    start_idx = STAGE_ORDER.index(start_stage) if start_stage in STAGE_ORDER else 0
+    start_idx = all_stages.index(start_stage) if start_stage in all_stages else 0
 
     # For each stage from start to target, describe what would run
     for i in range(start_idx, target_idx + 1):
-        stage = STAGE_ORDER[i]
+        stage = all_stages[i]
         is_completed = stage in completed
         resolved = _resolve_stage_from_config(stage, wf_config)
 
@@ -1300,8 +1344,10 @@ def cmd_continue(target_stage: str, dry_run: bool, json_output: bool) -> None:
         sys.exit(1)
 
     if not target_stage:
+        wf_config = load_workflow_config()
+        all_stages = _get_all_valid_stages(wf_config)
         print("ERROR: --stage is required.")
-        print(f"  Valid stages: {', '.join(STAGE_ORDER)}")
+        print(f"  Valid stages: {', '.join(all_stages)}")
         sys.exit(1)
 
     plan = build_continue_plan(target_stage)
@@ -1338,12 +1384,28 @@ def _print_continue_plan_text(plan: dict) -> None:
         exec_type = step.get("execution_type", "?")
         src = step.get("source", "?")
         role = step.get("role") or "none"
+        output = step.get("output_file", "?")
         missing = step.get("missing_inputs", [])
+        allowed = step.get("allowed_input_files", [])
+        forbidden_count = step.get("forbidden_context_count", 0)
         contract = "contract" if step.get("has_output_contract") else ""
         validate = "validate" if step.get("require_validate") else ""
         flags = " ".join(f for f in [contract, validate] if f)
         missing_str = f" MISSING:{len(missing)}" if missing else ""
         print(f"  {i:2d}. [{exec_type}] {step['stage_id']}  role={role}  ({src}){missing_str}  {flags}  {status_mark}")
+        print(f"      output: {output}")
+        if allowed:
+            print(f"      allowed_input_files: {len(allowed)} file(s)")
+            for af in allowed[:5]:
+                print(f"        - {af}")
+            if len(allowed) > 5:
+                print(f"        ... +{len(allowed)-5} more")
+        if forbidden_count:
+            print(f"      forbidden_context: {forbidden_count} rule(s)")
+        if missing:
+            print(f"      missing_inputs:")
+            for mf in missing[:5]:
+                print(f"        - {mf}")
     print()
     print("  Legend: * = already completed, > = will execute")
     print()
@@ -1540,11 +1602,13 @@ def self_test() -> bool:
         failed += 1
 
     # Test 7: compute_next_allowed allows experiment_plan after method_refinement and idea_pivot
-    trusted2 = {stage: {"exists": False} for stage in STAGE_ORDER}
-    for stage in STAGE_ORDER:
+    wf_cfg7 = load_workflow_config()
+    all_stages7 = _get_all_valid_stages(wf_cfg7)
+    trusted2 = {stage: {"exists": False} for stage in all_stages7}
+    for stage in all_stages7:
         if stage in ("raw_user_input", "input_normalization", "research_contract",
                       "literature_notes", "literature_search", "novelty_check",
-                      "method_refinement", "idea_pivot", "experiment_plan"):
+                      "method_refinement", "full_text_review", "idea_pivot", "experiment_plan"):
             trusted2[stage] = {"exists": True, "allowed_next_stage": "True"}
     trusted2["implementation_plan"] = {"exists": False}
     result2 = compute_next_allowed(trusted2, {}, {"high_severity_open": 0})
@@ -2099,6 +2163,31 @@ def self_test() -> bool:
         passed += 1
     else:
         print(f"  [FAIL] 43. validate default should exit 0, got: {exit_code43}")
+        failed += 1
+
+    # Test 44: full_text_review is recognized as valid stage with correct config resolution
+    wf_cfg = load_workflow_config()
+    all_stages = _get_all_valid_stages(wf_cfg)
+    if "full_text_review" in all_stages:
+        resolved44 = _resolve_stage_from_config("full_text_review", wf_cfg)
+        if (resolved44.get("role") == "full_text_reviewer"
+                and resolved44.get("output_file")
+                and resolved44.get("has_output_contract")):
+            print("  [PASS] 44. full_text_review resolves from config: role=full_text_reviewer, has output contract")
+            passed += 1
+        else:
+            print(f"  [FAIL] 44. full_text_review resolve: {resolved44}")
+            failed += 1
+    else:
+        print("  [FAIL] 44. full_text_review not in merged stages")
+        failed += 1
+
+    # Test 45: _get_all_valid_stages includes both STAGE_ORDER and config-only stages
+    if "full_text_review" in all_stages and "raw_user_input" in all_stages and "literature_search" in all_stages:
+        print("  [PASS] 45. _get_all_valid_stages merges STAGE_ORDER + workflow config stages")
+        passed += 1
+    else:
+        print(f"  [FAIL] 45. merged stages missing expected entries: {all_stages}")
         failed += 1
 
     print(f"\nSelf-test results: {passed} passed, {failed} failed")
