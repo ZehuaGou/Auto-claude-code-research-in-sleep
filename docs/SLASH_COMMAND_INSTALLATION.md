@@ -126,10 +126,13 @@ research/current/user_command_payloads/  (local — gitignored, command payloads
 
 ## Important Notes
 
-- `.claude/` is in `.gitignore` — never committed.
+- `.claude/` is local install target — **must not be tracked by git**. If any `.claude` files were ever tracked, run `git rm --cached -r .claude/` to untrack them.
+- `templates/claude_commands/` is the committed source of truth. `install_slash_commands.py` copies templates to `.claude/commands/` locally.
 - `research/current/runtime/` is in `.gitignore` — all runtime outputs go here.
-- Templates in `templates/claude_commands/` are the source of truth.
 - All commands are safe: no model calls, no experiments, no trusted_outputs changes.
+- Trusted mode (`--trusted`) requires `validate_model_invocation` PASS for `/experiment` gate. `PASS_WITH_WARNINGS` (e.g., fallback was used) is accepted only when context isolation checks (`forbidden_context_checked`, `contamination_scan_status`) pass.
+- `/status` surfaces fallback warnings — not silently treated as clean PASS.
+- Trusted outputs (`trusted_outputs/*.md`) should not be committed until human-reviewed.
 - Python scripts (`tools/slash_command_adapter.py`, `tools/research_cli.py`) are Agent-facing backend.
 - Scaffold files are placeholders — they do not contain model conclusions.
 - `--execute` creates files in `runtime/`; default mode only shows plan.

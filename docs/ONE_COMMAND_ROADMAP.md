@@ -52,6 +52,7 @@
 - `_build_fallback_route` in `model_route.py` now passes `api_key_env` (env var name) instead of raw `api_key` value.
 - Self-tests are all offline (72 tests, no real API calls). Trusted mode code paths are separately live-validated.
 - 67 adapter self-tests + 10 installer tests + 44 research_cli tests pass.
+- `.claude/` files were previously tracked by git; all untracked via `git rm --cached -r .claude/`. Templates in `templates/claude_commands/` remain the committed source of truth. `install_slash_commands.py` copies templates to `.claude/commands/` locally.
 
 ---
 

@@ -29,6 +29,7 @@ The system is useful but incomplete. The primary gap is user experience: there i
 - `repair-queue` parses and displays the full repair queue table.
 - `/status` slash command still via `register_slash_commands.py` + `skills/status/SKILL.md` but research_cli.py provides the core functionality.
 - `continue --stage` and live `start` remain future work (Phase 18D). Dry-run is not live orchestration.
+- `.claude/` is local install target — must not be tracked by git. All `.claude` files untracked via `git rm --cached -r .claude/`. Templates in `templates/claude_commands/` are the committed source of truth.
 
 ### Skill Method Layer
 
@@ -99,6 +100,8 @@ Gaps:
 - `call_too_old` policy needs clarification
 - Trusted outputs (`trusted_outputs/*.md`) should NOT be committed until human-reviewed
 - Self-tests are all offline (72 tests, no real API calls); trusted mode code paths are separately live-validated
+- `PASS_WITH_WARNINGS` (e.g., fallback was used) is accepted for `/experiment` gate only when context isolation checks (`forbidden_context_checked`, `contamination_scan_status`) pass
+- `/status` surfaces fallback warnings — not silently treated as clean PASS
 
 ### Literature Layer
 
