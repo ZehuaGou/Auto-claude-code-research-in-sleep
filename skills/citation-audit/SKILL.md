@@ -44,6 +44,7 @@ The dangerous citation problems are **not** wildly fake citations — those are 
 - **OUTPUT = `CITATION_AUDIT.md`** — Human-readable per-entry verdict report.
 - **STATE = `CITATION_AUDIT.json`** — Machine-readable verdict ledger consumable by downstream tools.
 - **SOFT_ONLY = `false`** — When true (set via `— soft-only` / `— soft_only` flag), the audit runs all three layers normally but **forbids any `.bib` file mutation**. Findings that would otherwise mutate the bib (FIX / REPLACE / REMOVE) are translated into per-occurrence sentence-rewrite proposals against the citing `*.tex` files. Used by `/resubmit-pipeline` Phase 1 to honor the user's hard "freeze the bib" constraint.
+- **RENDER_HTML = true** — When `true` (default), auto-render `CITATION_AUDIT.md` to HTML after writing the report. Uses **full Codex review gate** (audit-class artifact — render-fidelity check matches the skill's cross-model audit invariant). Set `false` to skip, or pass `— render html: false`.
 
 ## Workflow
 
@@ -248,7 +249,7 @@ When `--uncited` is set:
 - `CITATION_AUDIT.md` gains a `## Uncited Entries (opt-in)` section listing the keys with a one-line suggestion each: `prune` (entry is dead weight; recommend deleting) or `check` (entry might be intentional; flag for user review). Default suggestion is `prune`; only emit `check` when there is concrete local evidence (e.g., a TODO comment in a `.tex` file mentioning the key, or a recently removed `\cite` visible in `git diff`). Do not infer intent from the bib key string alone.
 - `CITATION_AUDIT.json` `details` gains an `uncited_entries` array; see "Submission Artifact Emission" below for the schema.
 - The top-level `verdict` is **unchanged**: uncited entries do not upgrade or downgrade the PASS / WARN / FAIL / etc. classification. The `reason_code` and `summary` are likewise unchanged in shape; only the `details.uncited_entries` field appears.
-- Verifier gates and downstream skills (`paper-writing` Phase 6, `tools/verify_paper_audits.sh`) MUST NOT treat the presence of `uncited_entries` as a blocking signal.
+- Verifier gates and downstream skills (`paper-writing` Phase 6, `verify_paper_audits.sh`) MUST NOT treat the presence of `uncited_entries` as a blocking signal.
 
 ### When opt-in is appropriate
 
@@ -273,7 +274,7 @@ If the bib file cannot be read well enough to audit even the cited entries, fall
 - **Web access required** — the reviewer must do real lookups, not memory pattern-match
 - **Wrong-context > metadata** — a real paper used to support a wrong claim is more dangerous than a typo in author name
 - **REPLACE/REMOVE require human approval** — never auto-modify content claims
-- **Always emit, never block** — this skill always writes `CITATION_AUDIT.json` with a verdict; the decision to block finalization lives in `paper-writing` Phase 6 + `tools/verify_paper_audits.sh`, driven by the `assurance` level. See "Submission Artifact Emission" below.
+- **Always emit, never block** — this skill always writes `CITATION_AUDIT.json` with a verdict; the decision to block finalization lives in `paper-writing` Phase 6 + `verify_paper_audits.sh`, driven by the `assurance` level. See "Submission Artifact Emission" below.
 - **Run once per submission** — the audit is wall-clock expensive (web lookups for each entry); not for every save
 - **Uncited detection is opt-in only** — never auto-enable; never block on uncited entries; existing callers must observe identical output if they do not pass `--uncited`
 - **Under `--soft-only`, citation-audit emits text-rewrite proposals only; bib files are never mutated regardless of finding severity.** The audit semantics (existence + metadata + context) and the per-entry KEEP/FIX/REPLACE/REMOVE ledger are preserved verbatim; only the action layer is translated to per-occurrence sentence rewrites in the citing `*.tex` files. Refuse any downstream-proposed bib edit while `--soft-only` is set.
@@ -298,7 +299,7 @@ Together: code → result → numerical claim → cited claim. Each layer has cr
 
 ## Review Tracing
 
-After each `mcp__codex__codex` reviewer call, save the trace following `shared-references/review-tracing.md`. Use `tools/save_trace.sh` or write files directly to `.aris/traces/citation-audit/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+After each `mcp__codex__codex` reviewer call, save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/citation-audit/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
 
 ## Output Contract
 
@@ -307,6 +308,7 @@ After each `mcp__codex__codex` reviewer call, save the trace following `shared-r
 - `.aris/traces/citation-audit/<date>_runNN/` (per-entry review traces)
 - Optional: applied fixes to `references.bib` + `sec/*.tex` (with `--apply` flag)
 - Optional: `details.uncited_entries` field in JSON + `## Uncited Entries (opt-in)` MD section (with `--uncited` flag; field absent and section omitted when flag is unset)
+- `CITATION_AUDIT.html` (when `RENDER_HTML = true`, default) — auto-rendered single-file HTML view via `/render-html "CITATION_AUDIT.md" --json "CITATION_AUDIT.json"`. Full review gate. Sidecar `.review.json` carries render-fidelity verdict. **Non-blocking**: if `/render-html` fails (helper missing, Codex MCP unavailable, file write error), log the failure and treat the audit as complete — the JSON + MD ledger are the canonical outputs.
 
 ## Optional: Soft-Only Mode (— soft-only)
 
@@ -395,7 +397,7 @@ The existing per-entry verdict table in the Summary block is **kept** but FIX/RE
 This skill **always** writes `paper/CITATION_AUDIT.json`, regardless of
 caller or detector outcome. A paper with no `.bib` file or no `\cite{...}`
 usage emits verdict `NOT_APPLICABLE`; silent skip is forbidden.
-`paper-writing` Phase 6 and `tools/verify_paper_audits.sh` both rely on
+`paper-writing` Phase 6 and `verify_paper_audits.sh` both rely on
 this artifact existing at a predictable path.
 
 The artifact conforms to the schema in `shared-references/assurance-contract.md`:
@@ -454,7 +456,7 @@ paths — if you need to stage extracted contexts, materialize them under
 `paper/.aris/` so the verifier can rehash reproducibly. Do NOT hash
 repo-wide unions or the reviewer's self-reported opened subset.
 
-**Path convention** (must match `tools/verify_paper_audits.sh`): keys are
+**Path convention** (must match `verify_paper_audits.sh`): keys are
 **paths relative to the paper directory** (no `paper/` prefix — the
 verifier already resolves relative to the paper dir; prefixing produces
 `paper/paper/...` and false-fails as STALE). Use **absolute paths** for
